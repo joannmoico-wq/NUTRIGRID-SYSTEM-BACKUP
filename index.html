@@ -44,22 +44,40 @@
   <body>
     <div id="root"></div>
     
-    <!-- React App -->
-    <script type="module" src="/src/main.jsx"></script>
-    
-    <!-- Service Worker Registration -->
-    <script>
-      if ('serviceWorker' in navigator) {
-        window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
-            .then((registration) => {
-              console.log('✅ Service Worker registered');
-            })
-            .catch((error) => {
-              console.error('❌ Service Worker registration failed:', error);
+    <!-- Clear stale PWA assets before loading Vite modules in development. -->
+    <script type="module">
+      async function bootstrap() {
+        if ('serviceWorker' in navigator) {
+          if (import.meta.env.DEV) {
+            const registrations = await navigator.serviceWorker.getRegistrations();
+            const appScope = new URL('/', window.location.origin).href;
+            await Promise.all(
+              registrations
+                .filter((registration) => registration.scope === appScope)
+                .map((registration) => registration.unregister())
+            );
+
+            if ('caches' in window) {
+              const cacheNames = await caches.keys();
+              await Promise.all(
+                cacheNames
+                  .filter((cacheName) => cacheName.startsWith('nutrigrid-'))
+                  .map((cacheName) => caches.delete(cacheName))
+              );
+            }
+          } else {
+            window.addEventListener('load', () => {
+              navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
+                .then(() => console.log('NutriGrid service worker registered'))
+                .catch((error) => console.error('NutriGrid service worker registration failed:', error));
             });
-        });
+          }
+        }
+
+        await import('/src/main.jsx');
       }
+
+      bootstrap();
     </script>
   </body>
 </html>

@@ -186,11 +186,7 @@ export default function AdminReportTable({
                   {columnKeys.map((key) => (
                     <td
                       key={key}
-                      className={`${tdClass} ${
-                        ['week1', 'month1', 'month2', 'month3', 'month4', 'month5'].includes(key)
-                          ? 'text-center font-semibold'
-                          : ''
-                      }`}
+                      className={`${tdClass} text-center`}
                     >
                       {cellValue(row, key)}
                     </td>

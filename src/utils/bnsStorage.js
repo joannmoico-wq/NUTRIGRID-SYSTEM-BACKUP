@@ -13,6 +13,7 @@ export const STORAGE_KEYS = {
   pendingVisits: 'pendingVisits',
   accountProfiles: 'nutrigrid_account_profiles',
   activeAccount: 'nutrigrid_active_account',
+  pendingRecordDeletions: 'nutrigrid_pending_record_deletions',
 };
 
 const CATEGORY_TABLES = {
@@ -196,24 +197,64 @@ export function getRecords(key) {
   }
 }
 
-export function setRecords(key, records) {
+export function setRecords(key, records, change = null) {
   publishRecords(key, records);
   persistCategoryRecords(key, records);
+  if (change) {
+    window.dispatchEvent(new CustomEvent('bns-records-changed', { detail: { key, ...change } }));
+  }
 }
 
 export function deleteRecordById(key, id) {
   setRecords(
     key,
-    getRecords(key).filter((r) => r.id !== id)
+    getRecords(key).filter((r) => String(r.id) !== String(id)),
+    { operation: 'delete', recordId: String(id) }
   );
 }
 
 export function upsertRecord(key, record) {
+  const category = categoryIdForStorageKey(key);
+  if (category) removePendingRecordDeletion(category, record.id);
   const list = getRecords(key);
-  const idx = list.findIndex((r) => r.id === record.id);
+  const idx = list.findIndex((r) => String(r.id) === String(record.id));
   if (idx >= 0) list[idx] = { ...list[idx], ...record };
   else list.push(record);
-  setRecords(key, list);
+  setRecords(key, list, { operation: 'upsert', record });
+}
+
+export function getPendingRecordDeletions() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.pendingRecordDeletions) || '[]');
+  } catch (error) {
+    console.error('Could not read pending record deletions:', error);
+    return [];
+  }
+}
+
+export function queueRecordDeletion(category, recordId, remoteExpected = false) {
+  const deletions = getPendingRecordDeletions();
+  const existing = deletions.find(
+    (item) => item.category === category && String(item.recordId) === String(recordId)
+  );
+  if (existing) {
+    existing.remoteExpected = existing.remoteExpected || remoteExpected;
+  } else {
+    deletions.push({
+      category,
+      recordId: String(recordId),
+      remoteExpected,
+      queuedAt: new Date().toISOString(),
+    });
+  }
+  localStorage.setItem(STORAGE_KEYS.pendingRecordDeletions, JSON.stringify(deletions));
+}
+
+export function removePendingRecordDeletion(category, recordId) {
+  const deletions = getPendingRecordDeletions().filter(
+    (item) => item.category !== category || String(item.recordId) !== String(recordId)
+  );
+  localStorage.setItem(STORAGE_KEYS.pendingRecordDeletions, JSON.stringify(deletions));
 }
 
 export function nextRecordId() {
@@ -357,7 +398,8 @@ export function countPendingAcrossCategories() {
     });
   });
   const visits = getRecords(STORAGE_KEYS.pendingVisits).filter((v) => !v.synced);
-  return pending + visits.length;
+  const queuedDeletions = getPendingRecordDeletions().length;
+  return pending + visits.length + queuedDeletions;
 }
 
 // --- Admin table mappers (read from field-worker shape) ---
@@ -414,6 +456,7 @@ export function fromAdminInfantFeeding(row) {
     ...raw,
     id: row.id || nextRecordId(),
     category: 'infantfeeding',
+    purok: row.purok,
     mother_name: row.motherName,
     child_name: row.childName,
     feeding_1_week: row.week1,
@@ -461,6 +504,7 @@ export function fromAdminLactating(row) {
     ...raw,
     id: row.id || nextRecordId(),
     category: 'lactatingwoman',
+    purok: row.purok,
     date_of_registration: row.dateRegistration,
     family_serial_number: row.familySerial,
     last_name: row.lastName,
@@ -518,6 +562,7 @@ export function fromAdminPregnant(row) {
     ...raw,
     id: row.id || nextRecordId(),
     category: 'pregnantwoman',
+    purok: row.purok,
     date_of_registration: row.dateRegistration,
     family_serial_number: row.familySerial,
     last_name: row.lastName,
@@ -569,6 +614,7 @@ export function fromAdminNatality(row) {
     ...raw,
     id: row.id || nextRecordId(),
     category: 'monthlynatal',
+    purok: row.purok,
     mother_name: row.motherName,
     mother_age: row.age,
     child_name: row.childName,

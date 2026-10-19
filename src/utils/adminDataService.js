@@ -1,6 +1,10 @@
 import { supabase } from './supabaseClient';
 import {
+  getPendingRecordDeletions,
+  getRecords,
   reloadAllAdminData,
+  setRecords,
+  STORAGE_KEYS,
   toAdminEnvironmental,
   toAdminInfantFeeding,
   toAdminLactating,
@@ -60,6 +64,37 @@ const COLUMN_MAPS = {
   },
 };
 
+const STORAGE_KEY_BY_CATEGORY = {
+  residents: STORAGE_KEYS.residents,
+  environmental: STORAGE_KEYS.environmental,
+  infantfeeding: STORAGE_KEYS.infantfeeding,
+  lactatingwoman: STORAGE_KEYS.lactatingwoman,
+  pregnantwoman: STORAGE_KEYS.pregnantwoman,
+  monthlynatal: STORAGE_KEYS.monthlynatal,
+};
+
+function cacheSharedRecords(category, remoteRecords) {
+  const key = STORAGE_KEY_BY_CATEGORY[category];
+  const deletedIds = new Set(
+    getPendingRecordDeletions()
+      .filter((item) => item.category === category)
+      .map((item) => String(item.recordId))
+  );
+  const remoteById = new Map(
+    remoteRecords
+      .filter((record) => !deletedIds.has(String(record.id)))
+      .map((record) => [String(record.id), record])
+  );
+
+  getRecords(key)
+    .filter((record) => !record.synced && !deletedIds.has(String(record.id)))
+    .forEach((record) => remoteById.set(String(record.id), record));
+
+  const records = Array.from(remoteById.values());
+  setRecords(key, records);
+  return records;
+}
+
 async function readAllRows(category, { table, idColumn }) {
   const rows = [];
   let offset = 0;
@@ -88,6 +123,7 @@ async function readAllRows(category, { table, idColumn }) {
       }
     });
 
+    record.purok = row.purok ?? record.purok ?? '';
     record.id = payload.id ?? row.local_id ?? row[idColumn];
     record.created_at = row.created_at || payload.created_at;
     record.status = row.status || payload.status || 'Synced';
@@ -114,12 +150,12 @@ export async function loadAdminDataFromSupabase() {
   ]);
 
   return {
-    households: toAdminResidents(households),
-    environmentalSanitationData: toAdminEnvironmental(environmentalSanitationData),
-    infantFeedingData: toAdminInfantFeeding(infantFeedingData),
-    lactatingWomenData: toAdminLactating(lactatingWomenData),
-    pregnantWomenData: toAdminPregnant(pregnantWomenData),
-    natalityData: toAdminNatality(natalityData),
+    households: toAdminResidents(cacheSharedRecords('residents', households)),
+    environmentalSanitationData: toAdminEnvironmental(cacheSharedRecords('environmental', environmentalSanitationData)),
+    infantFeedingData: toAdminInfantFeeding(cacheSharedRecords('infantfeeding', infantFeedingData)),
+    lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData)),
+    pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData)),
+    natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData)),
     monthlyReportData: reloadAllAdminData().monthlyReportData,
   };
 }

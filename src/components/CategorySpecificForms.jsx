@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Check, Camera, MapPin, X } from 'lucide-react';
+import { PUROK_OPTIONS } from '../utils/purok';
 
 /**
  * CATEGORY-SPECIFIC FORMS FOR NUTRIGRID
@@ -92,14 +93,15 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
-          <input
-            type="text"
+          <select
             required
             value={formData.purok}
             onChange={(e) => setFormData({...formData, purok: e.target.value})}
             className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            placeholder="Purok 1"
-          />
+          >
+            <option value="">Select Purok</option>
+            {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+          </select>
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Total HH *</label>
@@ -503,14 +505,15 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
     <form onSubmit={handleSubmit} className="space-y-4">
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
-        <input
-          type="text"
+        <select
           required
           value={formData.purok}
           onChange={(e) => setFormData({ ...formData, purok: e.target.value })}
           className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg"
-          placeholder="Purok 1"
-        />
+        >
+          <option value="">Select Purok</option>
+          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+        </select>
       </div>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Head (Household Head) *</label>
@@ -597,6 +600,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
   const fieldClass = 'w-full px-4 py-2 border-2 border-purple-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
+    purok: '',
     date_of_registration: new Date().toISOString().split('T')[0],
     family_serial_number: '',
     last_name: '',
@@ -658,6 +662,13 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
+        <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
+          <option value="">Select Purok</option>
+          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+        </select>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Date of Registration *</label>
@@ -796,6 +807,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
   const fieldClass = 'w-full px-4 py-2 border-2 border-red-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
+    purok: '',
     date_of_registration: new Date().toISOString().split('T')[0],
     family_serial_number: '',
     last_name: '',
@@ -852,6 +864,13 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
+        <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
+          <option value="">Select Purok</option>
+          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+        </select>
+      </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Date of Registration *</label>
@@ -984,6 +1003,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
   const fieldClass = 'w-full px-4 py-2 border-2 border-amber-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
+    purok: '',
     month: new Date().toISOString().slice(0, 7),
     mother_name: '',
     mother_age: '',
@@ -1048,6 +1068,13 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         Monthly Natality with Weight &amp; Height — Barangay Camambugan
       </p>
 
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
+        <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
+          <option value="">Select Purok</option>
+          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+        </select>
+      </div>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Month *</label>
         <input type="month" required value={formData.month} onChange={(e) => updateField('month', e.target.value)} className={fieldClass} />
@@ -1141,6 +1168,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
   const fieldClass = 'w-full px-4 py-2 border-2 border-pink-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
+    purok: '',
     mother_name: '',
     child_name: '',
     feeding_1_week: '',
@@ -1188,6 +1216,13 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
         Edad ng Sanggol sa Pagbisita — Paraan ng Pagpapakain o Pagpapainom
       </p>
 
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
+        <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
+          <option value="">Select Purok</option>
+          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+        </select>
+      </div>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Pangalan ng Nanay *</label>
         <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} />

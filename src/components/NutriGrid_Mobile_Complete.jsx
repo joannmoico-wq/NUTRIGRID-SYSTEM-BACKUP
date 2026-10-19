@@ -1,3 +1,4 @@
+import { registerPushToken } from '../utils/pushNotifications';
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Camera, 
@@ -33,6 +34,7 @@ import {
   buildSavedRecords,
   performRecordSearch,
   getRecordDisplayTitle,
+  queueRecordDeletion,
 } from '../utils/bnsStorage';
 import {
   registerWithSupabase,
@@ -41,13 +43,14 @@ import {
   signOutSupabase,
 } from '../utils/supabaseAuth';
 import {
-  deleteRemoteRecord,
   getSharedHouseholdCountsByPurok,
   syncPendingRecords,
   syncSingleRecord,
 } from '../utils/syncService';
+import { syncPendingTasks } from '../utils/taskSyncService';
 import ReportRowActions from './ReportRowActions';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
+import { PUROK_OPTIONS } from '../utils/purok';
 import BnsSearchBar from './BnsSearchBar';
 import WelcomePage from './WelcomePage';
 import SignInPage from './SignInPage';
@@ -72,6 +75,27 @@ const MOBILE = {
   coral: NUTRI_GRID_THEME.accentPink,
   bg: NUTRI_GRID_THEME.main,
 };
+
+const LEGACY_RECORD_KEYS = {
+  infantfeeding: 'records_infant_feeding',
+  lactatingwoman: 'records_lactating_woman',
+  pregnantwoman: 'records_pregnant_woman',
+};
+
+function removeLegacyRecord(category, id) {
+  const key = LEGACY_RECORD_KEYS[category];
+  if (!key) return;
+
+  try {
+    const records = JSON.parse(localStorage.getItem(key) || '[]');
+    localStorage.setItem(
+      key,
+      JSON.stringify(records.filter((record) => String(record.id) !== String(id)))
+    );
+  } catch (error) {
+    console.error(`Could not remove legacy ${category} record from localStorage:`, error);
+  }
+}
 
 const fieldHeaderStyle = {
   background: NUTRI_GRID_THEME.sidebarGradient,
@@ -234,8 +258,8 @@ const RecordsList = ({
 
   const RecordActions = ({ record }) => (
     <ReportRowActions
-      onEdit={() => startEditRecord(record)}
-      onDelete={() => deleteCategoryRecord(selectedCategory, record.id)}
+      onEdit={() => startEditRecord(record, selectedCategory)}
+      onDelete={() => deleteCategoryRecord(selectedCategory, record)}
     />
   );
 
@@ -313,7 +337,7 @@ const RecordsList = ({
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[520px]">
-                <div className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_4.5rem] gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wide">
+                <div className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_4.5rem] gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wide text-center">
                   <span>Purok</span>
                   <span>Head</span>
                   <span>Members</span>
@@ -329,7 +353,7 @@ const RecordsList = ({
                   categoryRecords.map((record) => (
                     <div
                       key={record.id}
-                      className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_4.5rem] gap-2 px-4 py-3 border-b border-gray-100 text-sm text-gray-800 items-center"
+                      className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_4.5rem] gap-2 px-4 py-3 border-b border-gray-100 text-sm text-gray-800 items-center text-center"
                     >
                       <span className="font-medium truncate">{record.purok || '—'}</span>
                       <span className="truncate">{record.household_head || '—'}</span>
@@ -365,6 +389,7 @@ const RecordsList = ({
     const pwHeader = [
       'Date Reg',
       'FSN',
+      'Purok',
       'Last',
       'First',
       'Middle',
@@ -401,9 +426,9 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1400px]">
-                <div className="grid grid-cols-[repeat(18,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
-                  {pwHeader.map((label) => (
+              <div className="min-w-[1550px]">
+                <div className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                  {[...pwHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">
                       {label}
                     </span>
@@ -417,10 +442,11 @@ const RecordsList = ({
                   allPwRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(18,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center"
+                      className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{formatTableDate(record.date_of_registration)}</span>
                       <span className="truncate">{record.family_serial_number || '—'}</span>
+                      <span>{record.purok || '—'}</span>
                       <span className="truncate">{record.last_name || '—'}</span>
                       <span className="truncate">{record.first_name || '—'}</span>
                       <span className="truncate">{record.middle_name || '—'}</span>
@@ -437,6 +463,7 @@ const RecordsList = ({
                       <span>{record.height ?? '—'}</span>
                       <span>{record.bmi ?? '—'}</span>
                       <span>{record.muac ?? '—'}</span>
+                      <RecordActions record={record} />
                     </div>
                   ))
                 )}
@@ -463,6 +490,7 @@ const RecordsList = ({
       'Last',
       'First',
       'Middle',
+      'Purok',
       'Spouse',
       'Contact',
       'Birthday',
@@ -495,9 +523,9 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1450px]">
-                <div className="grid grid-cols-[repeat(18,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide">
-                  {lwHeader.map((label) => (
+              <div className="min-w-[1550px]">
+                <div className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                  {[...lwHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">
                       {label}
                     </span>
@@ -511,7 +539,7 @@ const RecordsList = ({
                   allLwRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(18,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center"
+                      className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{idx + 1}</span>
                       <span>{formatTableDate(record.date_of_registration)}</span>
@@ -519,6 +547,7 @@ const RecordsList = ({
                       <span className="truncate">{record.last_name || '—'}</span>
                       <span className="truncate">{record.first_name || '—'}</span>
                       <span className="truncate">{record.middle_name || '—'}</span>
+                      <span>{record.purok || '—'}</span>
                       <span className="truncate">{record.spouse_name || '—'}</span>
                       <span className="truncate">{record.contact_number || '—'}</span>
                       <span>{formatTableDate(record.birthday)}</span>
@@ -531,6 +560,7 @@ const RecordsList = ({
                       <span>{record.bmi ?? '—'}</span>
                       <span>{record.muac ?? '—'}</span>
                       <span>{formatTableDate(record.date_delivered)}</span>
+                      <RecordActions record={record} />
                     </div>
                   ))
                 )}
@@ -550,6 +580,7 @@ const RecordsList = ({
   if (selectedCategory === 'monthlynatal') {
     const natalityHeader = [
       'Month',
+      'Purok',
       'Mother',
       'Age',
       'Child',
@@ -581,9 +612,9 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1100px]">
-                <div className="grid grid-cols-[repeat(12,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide">
-                  {natalityHeader.map((label) => (
+              <div className="min-w-[1200px]">
+                <div className="grid grid-cols-[repeat(14,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
+                  {[...natalityHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
                 </div>
@@ -595,9 +626,10 @@ const RecordsList = ({
                   categoryRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(12,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center"
+                      className="grid grid-cols-[repeat(14,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span className="truncate">{formatMonth(record.month)}</span>
+                      <span>{record.purok || '—'}</span>
                       <span className="truncate">{record.mother_name || '—'}</span>
                       <span>{record.mother_age ?? '—'}</span>
                       <span className="truncate">{record.child_name || '—'}</span>
@@ -609,6 +641,7 @@ const RecordsList = ({
                       <span>{record.w_a || '—'}</span>
                       <span>{record.h_a || '—'}</span>
                       <span>{record.w_l_h || '—'}</span>
+                      <RecordActions record={record} />
                     </div>
                   ))
                 )}
@@ -630,6 +663,7 @@ const RecordsList = ({
 
     const ifHeader = [
       'No',
+      'Purok',
       'Nanay',
       'Bata',
       '1 Linggo',
@@ -658,9 +692,9 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[900px]">
-                <div className="grid grid-cols-[repeat(9,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide">
-                  {ifHeader.map((label) => (
+              <div className="min-w-[1030px]">
+                <div className="grid grid-cols-[repeat(11,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
+                  {[...ifHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
                 </div>
@@ -672,9 +706,10 @@ const RecordsList = ({
                   allIfRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(9,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center"
+                      className="grid grid-cols-[repeat(11,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{String(idx + 1).padStart(2, '0')}</span>
+                      <span>{record.purok || '—'}</span>
                       <span className="truncate">{record.mother_name || '—'}</span>
                       <span className="truncate">{record.child_name || '—'}</span>
                       <span>{record.feeding_1_week || '—'}</span>
@@ -683,6 +718,7 @@ const RecordsList = ({
                       <span>{record.feeding_3_month || '—'}</span>
                       <span>{record.feeding_4_month || '—'}</span>
                       <span>{record.feeding_5_month || '—'}</span>
+                      <RecordActions record={record} />
                     </div>
                   ))
                 )}
@@ -729,11 +765,15 @@ const RecordsList = ({
             </div>
           ) : (
             categoryRecords.map((record, idx) => (
-              <div key={record.id ?? idx} className="bg-white rounded-xl p-4 border border-gray-200 text-sm">
+              <div key={record.id ?? idx} className="bg-white rounded-xl p-4 border border-gray-200 text-sm text-center">
                 <p className="font-bold text-gray-900">
                   {pwDisplayName(record) !== '—' ? pwDisplayName(record) : record.household_head || record.mother_name || record.child_name || `Record ${idx + 1}`}
                 </p>
-                <p className="text-xs text-gray-500 mt-1">{formatLastVisit(record)}</p>
+                <p className="text-xs text-gray-500 mt-1">{record.purok || '—'}</p>
+                <div className="mt-2 flex items-center justify-center gap-3">
+                  <p className="text-xs text-gray-500">{formatLastVisit(record)}</p>
+                  <RecordActions record={record} />
+                </div>
               </div>
             ))
           )}
@@ -1243,7 +1283,7 @@ const HomeScreen = ({
           >
             <div className="text-left">
               <p className="font-bold text-sm">Sync Data Now</p>
-              <p className="text-xs text-white/85">{pendingCount} record(s) ready</p>
+              <p className="text-xs text-white/85">{pendingCount} change(s) ready</p>
             </div>
             <Upload size={20} />
           </button>
@@ -1448,7 +1488,13 @@ const NutriGridMobile = () => {
 
   const syncData = async ({ notify = true } = {}) => {
     try {
-      const result = await syncPendingRecords();
+      const recordResult = await syncPendingRecords();
+      const result = {
+        synced: recordResult.synced || 0,
+        records: recordResult.records || 0,
+        errors: recordResult.errors || [],
+        skipped: recordResult.skipped,
+      };
       const latestVisits = JSON.parse(localStorage.getItem('pendingVisits') || '[]');
       setPendingVisits(latestVisits);
       setRecordsRefresh((version) => version + 1);
@@ -1459,7 +1505,12 @@ const NutriGridMobile = () => {
         } else if (result.skipped === 'not-signed-in') {
           alert('Sign in before syncing records to Supabase.');
         } else if (result.errors?.length) {
-          alert(`${result.synced} record(s) uploaded; ${result.errors.length} failed. Check the console for details.`);
+          const firstError = result.errors[0];
+          const remainingErrors = result.errors.length - 1;
+          alert(
+            `${result.synced} record(s) uploaded; ${result.errors.length} failed.\n\n${firstError}` +
+            (remainingErrors ? `\n\n${remainingErrors} more error(s). Check the browser console.` : '')
+          );
         } else {
           alert(result.synced
             ? `${result.synced} record(s) synced to Supabase.`
@@ -1478,7 +1529,14 @@ const NutriGridMobile = () => {
     if (!isAuthenticated || currentUser?.role?.toLowerCase() === 'admin') return undefined;
 
     const syncWhenOnline = () => {
-      if (navigator.onLine) void syncData({ notify: false });
+      if (navigator.onLine) {
+        void syncData({ notify: false });
+        void syncPendingTasks().then((result) => {
+          if (result.errors?.length) {
+            console.error('Some tasks are waiting to sync:', result.errors);
+          }
+        }).catch((error) => console.error('Could not sync pending tasks:', error));
+      }
     };
     syncWhenOnline();
     window.addEventListener('online', syncWhenOnline);
@@ -1490,10 +1548,33 @@ const NutriGridMobile = () => {
     };
   }, [isAuthenticated, currentUser?.role]);
 
+  useEffect(() => {
+    const refreshPendingCount = () => setRecordsRefresh((version) => version + 1);
+    const handleStorage = (event) => {
+      if (
+        event.key === STORAGE_KEYS.pendingRecordDeletions ||
+        event.key === 'nutrigrid_pending_task_changes' ||
+        event.key === STORAGE_KEYS.pendingVisits ||
+        Object.values(STORAGE_KEYS).includes(event.key)
+      ) {
+        refreshPendingCount();
+      }
+    };
+    window.addEventListener('bns-records-changed', refreshPendingCount);
+    window.addEventListener('bns-tasks-changed', refreshPendingCount);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('bns-records-changed', refreshPendingCount);
+      window.removeEventListener('bns-tasks-changed', refreshPendingCount);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
+
   const handleCategoryFormSubmit = async (formData) => {
     const key = storageKeyForCategory(formData.category);
     const pending = { ...formData, synced: false, status: 'pending' };
     upsertRecord(key, pending);
+    removeLegacyRecord(formData.category, pending.id);
     setEditingRecord(null);
     setShowCategoryForm(false);
     setRecordsRefresh((v) => v + 1);
@@ -1516,23 +1597,37 @@ const NutriGridMobile = () => {
     alert(`Saved locally, but sync failed: ${syncErr}`);
   };
 
-  const deleteCategoryRecord = async (categoryId, id) => {
+  const deleteCategoryRecord = async (categoryId, record) => {
     if (!confirm('Delete this record? This removes it from Field Worker and Admin.')) return;
+    const id = record.id;
+    queueRecordDeletion(
+      categoryId,
+      id,
+      Boolean(record.synced || String(record.status || '').toLowerCase() === 'synced')
+    );
     deleteRecordById(storageKeyForCategory(categoryId), id);
-    if (editingRecord?.id === id) {
+    removeLegacyRecord(categoryId, id);
+    if (String(editingRecord?.id) === String(id)) {
       setEditingRecord(null);
       setShowCategoryForm(false);
     }
     setRecordsRefresh((v) => v + 1);
 
-    const remoteErr = await deleteRemoteRecord(categoryId, String(id));
-    if (remoteErr && remoteErr !== 'offline' && remoteErr !== 'not-signed-in') {
-      console.warn('Supabase delete failed:', remoteErr);
+    if (!navigator.onLine) {
+      alert('Deleted on this device. The deletion will sync to Supabase when you are back online.');
+      return;
     }
+
+    const result = await syncData({ notify: false });
+    if (result.skipped || result.errors?.length) {
+      alert('Deleted locally, but the deletion is still waiting to sync. Check your connection and sign-in, then retry.');
+      return;
+    }
+    alert('Record deleted from this device and Supabase.');
   };
 
-  const startEditRecord = (record) => {
-    setSelectedCategory(record.category);
+  const startEditRecord = (record, categoryId) => {
+    setSelectedCategory(record.category || categoryId);
     setEditingRecord(record);
     setShowCategoryForm(true);
     setActiveView('home');
@@ -1679,14 +1774,15 @@ const NutriGridMobile = () => {
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               Purok / Zone *
             </label>
-            <input
-              type="text"
+            <select
               required
               value={formData.purok}
               onChange={(e) => setFormData({...formData, purok: e.target.value})}
               className="w-full px-4 py-3 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-300 focus:border-blue-400 text-base shadow-sm"
-              placeholder="Purok 1, Purok 2, etc."
-            />
+            >
+              <option value="">Select Purok</option>
+              {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+            </select>
           </div>
 
           {/* Household Head */}

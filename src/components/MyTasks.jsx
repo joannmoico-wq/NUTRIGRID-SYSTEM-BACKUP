@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../utils/supabaseClient';
+import {
+  getLocalTasks,
+  loadTasks,
+  saveTaskLocally,
+  syncPendingTasks,
+} from '../utils/taskSyncService';
+import { registerPushToken } from '../utils/pushNotifications';
 import { ClipboardList, Calendar, MapPin, Bell, CheckCircle2, Circle, Clock } from 'lucide-react';
 
 const NEXT_STATUS = { Pending: 'In Progress', 'In Progress': 'Completed', Completed: 'Pending' };
@@ -13,24 +20,29 @@ const STEP_ICON = {
 export default function MyTasks() {
   const [tasks, setTasks] = useState([]);
   const [banner, setBanner] = useState(null);
+  const [syncMessage, setSyncMessage] = useState('');
+  const [pushMessage, setPushMessage] = useState('');
+  const [registeringPush, setRegisteringPush] = useState(false);
+  const pushRegistrationAttempted = useRef(false);
   const [permission, setPermission] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
   );
 
   const load = useCallback(async () => {
     const {
-      data: { user },
-    } = await supabase.auth.getUser();
+      data: { session },
+    } = await supabase.auth.getSession();
+    const user = session?.user;
     if (!user) {
       setTasks([]);
       return;
     }
-    const { data } = await supabase
-      .from('tasks')
-      .select('*')
-      .eq('assigned_to_user_id', user.id)
-      .order('created_at', { ascending: false });
-    setTasks(data || []);
+    try {
+      setTasks(await loadTasks({ assignedToUserId: user.id }));
+    } catch (error) {
+      console.error('Could not load assigned tasks:', error);
+      setTasks(getLocalTasks().filter((task) => task.assigned_to_user_id === user.id));
+    }
   }, []);
 
   useEffect(() => {
@@ -38,7 +50,8 @@ export default function MyTasks() {
     let cancelled = false;
 
     (async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { session } } = await supabase.auth.getSession();
+      const user = session?.user;
       if (!user || cancelled) return;
       await load();
 
@@ -49,7 +62,7 @@ export default function MyTasks() {
           { event: 'INSERT', schema: 'public', table: 'tasks', filter: `assigned_to_user_id=eq.${user.id}` },
           (payload) => {
             const t = payload.new;
-            setTasks((prev) => [t, ...prev]);
+            void load();
             setBanner(t.title);
             if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
               new Notification('New task assigned', { body: t.title, icon: '/icon-192.png' });
@@ -59,6 +72,11 @@ export default function MyTasks() {
         .on(
           'postgres_changes',
           { event: 'UPDATE', schema: 'public', table: 'tasks', filter: `assigned_to_user_id=eq.${user.id}` },
+          () => load()
+        )
+        .on(
+          'postgres_changes',
+          { event: 'DELETE', schema: 'public', table: 'tasks' },
           () => load()
         )
         .subscribe();
@@ -71,6 +89,47 @@ export default function MyTasks() {
   }, [load]);
 
   useEffect(() => {
+    if (permission !== 'granted' || pushRegistrationAttempted.current) return;
+    pushRegistrationAttempted.current = true;
+    registerPushToken({ requestPermission: false })
+      .then((result) => {
+        if (!result.ok) setPushMessage('Push notifications are not available on this browser or device.');
+      })
+      .catch((error) => {
+        console.error('Could not register this device for push notifications:', error);
+        setPushMessage(error.message);
+      });
+  }, [permission]);
+
+  useEffect(() => {
+    const sync = async () => {
+      const result = await syncPendingTasks();
+      if (result.errors?.length) console.error('Some task changes are waiting to sync:', result.errors);
+      await load();
+    };
+    const handleLocalChange = () => void load();
+    const handleStorage = (event) => {
+      if (event.key === 'nutrigrid_tasks' || event.key === 'nutrigrid_pending_task_changes') {
+        handleLocalChange();
+      }
+    };
+    void load();
+    if (navigator.onLine) void sync();
+    const interval = window.setInterval(() => {
+      if (navigator.onLine) void sync();
+    }, 60000);
+    window.addEventListener('online', sync);
+    window.addEventListener('bns-tasks-changed', handleLocalChange);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('online', sync);
+      window.removeEventListener('bns-tasks-changed', handleLocalChange);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [load]);
+
+  useEffect(() => {
     if (!banner) return undefined;
     const timer = setTimeout(() => setBanner(null), 6000);
     return () => clearTimeout(timer);
@@ -78,16 +137,52 @@ export default function MyTasks() {
 
   const advance = async (t) => {
     const next = NEXT_STATUS[t.status] || 'Pending';
-    await supabase
-      .from('tasks')
-      .update({ status: next, completed_at: next === 'Completed' ? new Date().toISOString() : null })
-      .eq('task_id', t.task_id);
-    load();
+    saveTaskLocally({
+      ...t,
+      status: next,
+      completed_at: next === 'Completed' ? new Date().toISOString() : null,
+    }, ['status', 'completed_at']);
+    setTasks(getLocalTasks().filter((task) => task.assigned_to_user_id === t.assigned_to_user_id));
+    try {
+      const result = await syncPendingTasks();
+      if (result.errors?.length) {
+        console.error('Task status is saved locally and waiting to sync:', result.errors);
+        setSyncMessage(`Saved on this device; Supabase update failed and will retry automatically: ${result.errors[0]}`);
+      } else if (result.skipped) {
+        setSyncMessage('Saved on this device; the task will sync automatically when online.');
+      } else {
+        setSyncMessage('');
+      }
+    } catch (error) {
+      console.error('Task status is saved locally and waiting to sync:', error);
+      setSyncMessage(`Saved on this device; Supabase update failed and will retry automatically: ${error.message}`);
+    }
   };
 
   const enableAlerts = async () => {
-    if (typeof Notification === 'undefined') return;
-    setPermission(await Notification.requestPermission());
+    setRegisteringPush(true);
+    setPushMessage('');
+    pushRegistrationAttempted.current = true;
+    try {
+      const result = await registerPushToken();
+      setPermission(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
+      if (!result.ok) {
+        setPushMessage(
+          result.reason === 'denied'
+            ? 'Allow notifications in your browser settings, then try again.'
+            : result.reason === 'not-signed-in'
+              ? 'Sign in to register this device for task notifications.'
+              : 'Push notifications are not supported by this browser or device.'
+        );
+      } else {
+        setPushMessage('Push notifications enabled on this device.');
+      }
+    } catch (error) {
+      console.error('Could not enable task push notifications:', error);
+      setPushMessage(error.message);
+    } finally {
+      setRegisteringPush(false);
+    }
   };
 
   const open = tasks.filter((t) => t.status !== 'Completed');
@@ -107,21 +202,37 @@ export default function MyTasks() {
           </button>
         </div>
       )}
+      {syncMessage && (
+        <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+          {syncMessage}
+        </p>
+      )}
 
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-gray-900">
           My tasks <span className="text-sm font-semibold text-violet-600">· {open.length} open</span>
         </h2>
-        {permission === 'default' && (
+        {permission !== 'unsupported' && permission !== 'denied' && (
           <button
             type="button"
             onClick={enableAlerts}
+            disabled={registeringPush}
             className="flex items-center gap-1 rounded-full bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-700"
           >
-            <Bell size={13} /> Turn on alerts
+            <Bell size={13} /> {registeringPush ? 'Enabling…' : 'Enable push alerts'}
           </button>
         )}
       </div>
+      {pushMessage && (
+        <p role="status" className="rounded-xl bg-violet-50 p-3 text-sm text-violet-800">
+          {pushMessage}
+        </p>
+      )}
+      {permission === 'denied' && (
+        <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+          Notifications are blocked. Allow them for NutriGrid in your browser settings to receive task alerts.
+        </p>
+      )}
 
       {tasks.length === 0 ? (
         <div className="rounded-2xl border-2 border-dashed border-[#E8C4F0] bg-white/70 p-6 text-center">

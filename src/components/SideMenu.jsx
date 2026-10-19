@@ -5,6 +5,7 @@ import MyTasks from './MyTasks';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// Local date key (YYYY-MM-DD) without timezone shifting
 const toKey = (date) => {
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -12,7 +13,7 @@ const toKey = (date) => {
   return `${y}-${m}-${d}`;
 };
 
-// Start of the week (Sunday) containing a date
+// Sunday of the week containing the given date (local time)
 const startOfWeek = (date) => {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
   d.setDate(d.getDate() - d.getDay());
@@ -30,14 +31,24 @@ const DAY_TONES = [
 const TASK_ICON_BG = ['bg-[#DDEBFF]', 'bg-[#FFE1F0]', 'bg-[#E4DEFF]', 'bg-[#FFEBD9]', 'bg-[#DFF7EC]'];
 
 export default function SideMenu({ open, onClose, onLogout }) {
-  const today = new Date();
-  const todayKey = toKey(today);
-
   const [tasks, setTasks] = useState([]);
-  const [anchor, setAnchor] = useState(() => startOfWeek(today));
-  const [selected, setSelected] = useState(todayKey);
+  const [anchor, setAnchor] = useState(() => startOfWeek(new Date()));
+  const [selected, setSelected] = useState(() => toKey(new Date()));
   const [showMonth, setShowMonth] = useState(false);
-  const [month, setMonth] = useState(() => new Date(today.getFullYear(), today.getMonth(), 1));
+  const [month, setMonth] = useState(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth(), 1);
+  });
+
+  // Each time the panel opens, jump back to the current week and today
+  useEffect(() => {
+    if (open) {
+      const now = new Date();
+      setAnchor(startOfWeek(now));
+      setSelected(toKey(now));
+      setMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+    }
+  }, [open]);
 
   const load = useCallback(async () => {
     const {
@@ -75,7 +86,7 @@ export default function SideMenu({ open, onClose, onLogout }) {
     return map;
   }, [tasks]);
 
-  // Seven days of the current week strip
+  // The seven days shown in the strip (Sunday to Saturday)
   const week = useMemo(
     () =>
       Array.from({ length: 7 }, (_, i) => {
@@ -86,7 +97,12 @@ export default function SideMenu({ open, onClose, onLogout }) {
     [anchor]
   );
 
-  const weekLabel = `Week of ${anchor.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}`;
+  // Label uses the first and last day of the strip, so it always matches the cards
+  const weekStart = week[0];
+  const weekEnd = week[6];
+  const weekLabel = `${weekStart.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} – ${weekEnd.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}`;
+
+  const todayKey = toKey(new Date());
   const dayTasks = tasks.filter((t) => t.due_date === selected);
   const openCount = tasks.length;
   const selectedIsToday = selected === todayKey;
@@ -98,7 +114,6 @@ export default function SideMenu({ open, onClose, onLogout }) {
       return d;
     });
 
-  // Full-month grid, shown when the calendar icon is tapped
   const monthCells = useMemo(() => {
     const first = month.getDay();
     const days = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
@@ -109,7 +124,6 @@ export default function SideMenu({ open, onClose, onLogout }) {
 
   return (
     <>
-      {/* Backdrop */}
       <div
         onClick={onClose}
         className={`fixed inset-0 z-[60] bg-black/20 transition-opacity duration-300 ${
@@ -118,7 +132,6 @@ export default function SideMenu({ open, onClose, onLogout }) {
         aria-hidden="true"
       />
 
-      {/* Panel */}
       <aside
         role="dialog"
         aria-modal="true"
@@ -127,13 +140,12 @@ export default function SideMenu({ open, onClose, onLogout }) {
           open ? 'translate-x-0 pointer-events-auto' : '-translate-x-full pointer-events-none'
         }`}
       >
-        {/* Header */}
         <div className="flex items-start justify-between px-5 pt-7">
           <div>
             <h2 className="text-2xl font-extrabold text-gray-900">
               {selectedIsToday ? 'Good day' : 'Schedule'}
             </h2>
-            <p className="mt-0.5 text-xs font-semibold text-gray-500">{weekLabel}</p>
+            <p className="mt-0.5 text-xs font-semibold text-gray-500">Week of {weekLabel}</p>
           </div>
           <div className="flex gap-2">
             <button
@@ -142,7 +154,7 @@ export default function SideMenu({ open, onClose, onLogout }) {
               className="grid h-9 w-9 place-items-center rounded-xl bg-white shadow-sm text-[#8F65FF]"
               aria-label="Toggle month view"
             >
-              <span className="text-[10px] font-extrabold">{month.getDate() && 'CAL'}</span>
+              <span className="text-[10px] font-extrabold">CAL</span>
             </button>
             <button
               type="button"
@@ -156,7 +168,6 @@ export default function SideMenu({ open, onClose, onLogout }) {
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 pb-8 pt-4 space-y-4">
-          {/* Week strip */}
           {!showMonth && (
             <div className="flex items-center gap-1">
               <button
@@ -168,7 +179,7 @@ export default function SideMenu({ open, onClose, onLogout }) {
                 <ChevronLeft size={16} />
               </button>
               <div className="grid flex-1 grid-cols-7 gap-1.5">
-                {week.map((d, i) => {
+                {week.map((d) => {
                   const key = toKey(d);
                   const isSel = key === selected;
                   const isWeekend = d.getDay() === 0 || d.getDay() === 6;
@@ -209,7 +220,6 @@ export default function SideMenu({ open, onClose, onLogout }) {
             </div>
           )}
 
-          {/* Month grid (toggled) */}
           {showMonth && (
             <div className="rounded-3xl bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between">
@@ -265,7 +275,6 @@ export default function SideMenu({ open, onClose, onLogout }) {
             </div>
           )}
 
-          {/* Today card with progress */}
           <div className="rounded-3xl bg-white p-5 shadow-sm">
             <p className="text-lg font-extrabold text-gray-900">
               {selectedIsToday ? 'Today' : selected}
@@ -282,7 +291,6 @@ export default function SideMenu({ open, onClose, onLogout }) {
             </div>
           </div>
 
-          {/* Task cards for the selected day */}
           {dayTasks.length === 0 ? (
             <div className="rounded-3xl bg-white/70 p-6 text-center text-sm text-gray-500">
               Nothing due this day.

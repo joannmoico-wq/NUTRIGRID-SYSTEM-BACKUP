@@ -12,9 +12,11 @@ import {
   getRecordDisplayTitle,
   storageKeyForCategory,
   categoryIdForStorageKey,
+  queueRecordDeletion,
 } from '../utils/bnsStorage';
 import { loadAdminDataFromSupabase } from '../utils/adminDataService';
-import { deleteRemoteRecord, syncPendingRecords, syncSingleRecord } from '../utils/syncService';
+import { syncPendingRecords, syncSingleRecord } from '../utils/syncService';
+import { supabase } from '../utils/supabaseClient';
 import MonthlyReportTable from './MonthlyReportTable';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
 import BnsSearchBar from './BnsSearchBar';
@@ -295,9 +297,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
   useEffect(() => {
     let active = true;
     let loading = false;
+    let reloadRequested = false;
 
-    const loadSharedAdminData = async () => {
-      if (loading || !active) return;
+    const loadSharedAdminData = async ({ syncPending = false } = {}) => {
+      if (!active) return;
+      if (loading) {
+        reloadRequested = true;
+        return;
+      }
       if (!navigator.onLine) {
         setAdminDataStatus('offline');
         return;
@@ -305,6 +312,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
 
       loading = true;
       try {
+        if (syncPending) {
+          const syncResult = await syncPendingRecords();
+          if (syncResult.errors?.length) {
+            console.error('Some offline record changes are still waiting to sync:', syncResult.errors);
+          }
+        }
         const sharedData = await loadAdminDataFromSupabase();
         if (active) {
           setAdminData(sharedData);
@@ -315,24 +328,64 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
         if (active) setAdminDataStatus('error');
       } finally {
         loading = false;
+        if (reloadRequested && active) {
+          reloadRequested = false;
+          void loadSharedAdminData();
+        }
       }
     };
 
-    const handleOnline = () => void loadSharedAdminData();
+    const handleOnline = () => void loadSharedAdminData({ syncPending: true });
     const handleVisible = () => {
-      if (document.visibilityState === 'visible') void loadSharedAdminData();
+      if (document.visibilityState === 'visible') {
+        void loadSharedAdminData({ syncPending: navigator.onLine });
+      }
     };
+    const handleLocalRecordsChanged = (event) => {
+      if (event.detail?.operation === 'upsert' || event.detail?.operation === 'delete') {
+        setAdminData(reloadAllAdminData());
+      }
+    };
+    const handleStorageChanged = (event) => {
+      if (event.key && Object.values(STORAGE_KEYS).includes(event.key)) {
+        setAdminData(reloadAllAdminData());
+      }
+    };
+    const sharedTables = [
+      'residents',
+      'environmental_sanitation',
+      'infant_feeding',
+      'lactating_women',
+      'pregnant_women',
+      'monthly_natality',
+    ];
+    const sharedChannel = supabase.channel('admin-shared-records-live');
+    sharedTables.forEach((table) => {
+      sharedChannel.on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table },
+        () => void loadSharedAdminData()
+      );
+    });
+    sharedChannel.subscribe();
 
-    void loadSharedAdminData();
-    const interval = window.setInterval(loadSharedAdminData, 60000);
+    void loadSharedAdminData({ syncPending: true });
+    const interval = window.setInterval(() => {
+      void loadSharedAdminData({ syncPending: true });
+    }, 60000);
     window.addEventListener('online', handleOnline);
+    window.addEventListener('bns-records-changed', handleLocalRecordsChanged);
+    window.addEventListener('storage', handleStorageChanged);
     document.addEventListener('visibilitychange', handleVisible);
 
     return () => {
       active = false;
       window.clearInterval(interval);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('bns-records-changed', handleLocalRecordsChanged);
+      window.removeEventListener('storage', handleStorageChanged);
       document.removeEventListener('visibilitychange', handleVisible);
+      supabase.removeChannel(sharedChannel);
     };
   }, []);
 
@@ -418,23 +471,44 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     { name: 'Pending', value: stats.pending, color: THEME.accentPink, pct: pendingPct },
   ];
 
-  const adminDelete = async (storageKey, id) => {
+  const adminDelete = async (storageKey, id, remoteRecord) => {
     if (!confirm('Delete this record permanently?')) return;
     const category = categoryIdForStorageKey(storageKey);
-    const record = getRecords(storageKey).find((r) => r.id === id);
+    if (!category || category === 'monthlyreport') {
+      deleteRecordById(storageKey, id);
+      refreshData();
+      return;
+    }
+
+    const localRecord = getRecords(storageKey).find((record) => String(record.id) === String(id));
+    const remoteRecordExpected = Boolean(
+      localRecord?.synced ||
+      remoteRecord?.synced ||
+      String(remoteRecord?.status || '').toLowerCase() === 'synced'
+    );
+    queueRecordDeletion(category, id, remoteRecordExpected);
     deleteRecordById(storageKey, id);
     refreshData();
 
-    if (!category || category === 'monthlyreport' || !record) return;
+    if (!navigator.onLine) {
+      alert('Deleted on this device. The deletion will sync to Supabase when you are back online.');
+      return;
+    }
 
     try {
-      const err = await deleteRemoteRecord(category, String(record.id));
-      if (err && err !== 'offline' && err !== 'not-signed-in') {
-        console.warn('Supabase delete failed:', err);
-        alert('Removed on this device, but could not delete from Supabase. Check your connection and policies.');
+      const syncResult = await syncPendingRecords();
+      if (syncResult.errors?.length || syncResult.skipped) {
+        const details = syncResult.errors?.join('\n') || `Sync skipped: ${syncResult.skipped}`;
+        console.error('Record deletion is saved locally and waiting to sync:', details);
+        alert('Deleted locally, but the deletion is still waiting to sync. Check your connection and sign-in, then retry.');
+        return;
       }
+
+      setAdminData(await loadAdminDataFromSupabase());
+      setAdminDataStatus('loaded');
     } catch (error) {
-      console.error('Supabase delete error:', error);
+      console.error('Record was deleted locally, but could not be synced:', error);
+      alert(`Deleted locally. Supabase sync will retry when possible: ${error.message || 'request failed'}`);
     }
   };
 
@@ -455,7 +529,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       const raw = row?._raw || getRecords(storageKey).find((r) => r.id === id);
       if (raw) openCategoryForm(formCategory, raw);
     },
-    onDelete: (id) => adminDelete(storageKey, id),
+    onDelete: (id) => adminDelete(storageKey, id, dataset.find((row) => row.id === id)?._raw),
   });
 
   const filterAdminTableData = (rows, term) => {
@@ -665,13 +739,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
               {columns.map((col) => (
                 <th
                   key={col}
-                  className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600"
+                  className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600"
                 >
                   {col}
                 </th>
               ))}
               {showActions && (
-                <th className="px-3 py-2.5 text-left text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600">
+                <th className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 dark:text-gray-300 uppercase bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600">
                   Actions
                 </th>
               )}
@@ -693,7 +767,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
                   {columns.map((col) => (
                     <td
                       key={col}
-                      className="px-3 py-2.5 text-sm text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600"
+                      className="px-3 py-2.5 text-center text-sm text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600"
                     >
                       {col === 'Status' ? (
                         <span
@@ -1098,6 +1172,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
   const infantFeedingHeadRows = [
     [
       { label: 'No.', rowSpan: 2 },
+      { label: 'Purok', rowSpan: 2 },
       { label: 'Pangalan ng Nanay', rowSpan: 2 },
       { label: 'Pangalan ng Bata', rowSpan: 2 },
       { label: 'Paraan ng Pagpapakain o Pagpapainom', colSpan: 6 },
@@ -1212,10 +1287,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     <AdminReportTable
       darkMode={darkMode}
       data={filteredInfantFeeding}
-      columnKeys={['no', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5']}
+      columnKeys={['no', 'purok', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5']}
       headRows={infantFeedingHeadRows}
       legend="Code: E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding"
-      minTableWidth={900}
+      minTableWidth={980}
       reportHeader={
         <ReportHeader
           title="Uri ng Paraan ng Pagpapakain sa Sanggol"
@@ -1235,9 +1310,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
         exportPdfFile({
           fileName: 'camambugan-infant-feeding',
           title: 'Infant Feeding (0-5 mo)',
-          headers: ['No.', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months'],
+          headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months'],
           rows: filteredInfantFeeding.map((row) => [
             row.no,
+            row.purok,
             row.motherName,
             row.childName,
             row.week1,
@@ -1392,8 +1468,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     <AdminReportTable
       darkMode={darkMode}
       data={filteredNatality}
-      columnKeys={['motherName', 'age', 'childName', 'dob', 'dow', 'weight', 'height', 'aim', 'wA', 'hA', 'wLH']}
+      columnKeys={['purok', 'motherName', 'age', 'childName', 'dob', 'dow', 'weight', 'height', 'aim', 'wA', 'hA', 'wLH']}
       singleRowHeaders={[
+        'Purok',
         'Name of Mother',
         'Age',
         'Name of Child',
@@ -1418,8 +1495,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
         exportPdfFile({
           fileName: 'camambugan-monthly-natality',
           title: 'Monthly Natality',
-          headers: ['Mother', 'Age', 'Child', 'DOB', 'DOW', 'Wt (kg)', 'Ht (cm)', 'AIM', 'W/A', 'H/A', 'W/L/H'],
+          headers: ['Purok', 'Mother', 'Age', 'Child', 'DOB', 'DOW', 'Wt (kg)', 'Ht (cm)', 'AIM', 'W/A', 'H/A', 'W/L/H'],
           rows: filteredNatality.map((row) => [
+            row.purok,
             row.motherName,
             row.age,
             row.childName,
@@ -1434,7 +1512,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
           ]),
         })
       }
-      minTableWidth={1000}
+      minTableWidth={1080}
       {...natalityActions}
     />
   );
@@ -1652,11 +1730,28 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
                   closeCategoryForm();
                   try {
                     const singleErr = await syncSingleRecord(record.category, pending);
+                    if (singleErr === 'offline' || singleErr === 'not-signed-in') {
+                      alert(
+                        singleErr === 'offline'
+                          ? 'Saved locally. The changes will sync to Supabase when you are back online.'
+                          : 'Saved locally. Sign in to Supabase to sync these changes.'
+                      );
+                      return;
+                    }
                     if (!singleErr) {
                       upsertRecord(key, { ...pending, synced: true, status: 'Synced' });
                       refreshData();
                     }
                     const syncResult = await syncPendingRecords();
+                    if (syncResult.skipped) {
+                      alert('Saved locally. The changes are waiting to sync with Supabase.');
+                      return;
+                    }
+                    if (syncResult.errors?.length) {
+                      console.error('Admin record changes are still waiting to sync:', syncResult.errors);
+                      alert('Saved locally, but the changes are still waiting to sync. Check the connection and try again.');
+                      return;
+                    }
                     const sharedData = await loadAdminDataFromSupabase();
                     setAdminData(sharedData);
                     setAdminDataStatus('loaded');

@@ -1,5 +1,11 @@
 import { supabase } from './supabaseClient';
-import { getRecords, upsertRecord, storageKeyForCategory } from './bnsStorage';
+import {
+  getPendingRecordDeletions,
+  getRecords,
+  removePendingRecordDeletion,
+  upsertRecord,
+  storageKeyForCategory,
+} from './bnsStorage';
 
 const TABLE_BY_CATEGORY = {
   residents: 'residents',
@@ -17,6 +23,7 @@ function localIdForRecord(category, record) {
 }
 const FIELD_MAPPING_VERSION_KEY = 'bns_supabase_field_mapping_version';
 const FIELD_MAPPING_VERSION = '3';
+const PENDING_SYNC_LOGS_KEY = 'nutrigrid_pending_sync_logs';
 
 // Older versions of the app saved records under these keys
 const LEGACY_SOURCES = [
@@ -185,11 +192,71 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
 
 // Upload one record. Returns an error message, or null on success.
 async function uploadRecord(category, table, deviceId, localId, record, userId) {
-  const { error } = await supabase.from(table).upsert(
-    buildTableRecord(category, record, deviceId, localId, userId),
-    { onConflict: 'device_id,local_id' }
-  );
+  const payload = buildTableRecord(category, record, deviceId, localId, userId);
+  const {
+    created_by_user_id: _createdByUserId,
+    device_id: _deviceId,
+    local_id: _localId,
+    ...updates
+  } = payload;
+
+  const { data: updated, error: updateError } = await supabase
+    .from(table)
+    .update(updates)
+    .eq('data->>id', String(record.id))
+    .select('data');
+
+  if (updateError) return updateError.message;
+  if (updated?.length) return null;
+
+  const { error } = await supabase.from(table).upsert(payload, {
+    onConflict: 'device_id,local_id',
+  });
   return error ? error.message : null;
+}
+
+function getPendingSyncLogs() {
+  try {
+    const logs = JSON.parse(localStorage.getItem(PENDING_SYNC_LOGS_KEY) || '[]');
+    return Array.isArray(logs) ? logs : [];
+  } catch (error) {
+    console.error('Could not read queued sync logs:', error);
+    return [];
+  }
+}
+
+export async function flushPendingSyncLogs() {
+  if (!navigator.onLine) return { errors: ['offline'] };
+  const pending = getPendingSyncLogs();
+  const remaining = [];
+  const errors = [];
+  for (const log of pending) {
+    const { error } = await supabase.from('sync_log').insert(log);
+    if (error) {
+      remaining.push(log);
+      errors.push(error.message);
+    }
+  }
+  localStorage.setItem(PENDING_SYNC_LOGS_KEY, JSON.stringify(remaining));
+  return { errors };
+}
+
+export async function writeSyncLog(userId, records, synced, failed) {
+  if (records === 0) return null;
+
+  const log = {
+    user_id: userId,
+    records,
+    sync: synced,
+    status: failed ? 'failed' : 'success',
+  };
+  const { error } = await supabase.from('sync_log').insert(log);
+  if (!error) return null;
+
+  const pending = getPendingSyncLogs();
+  pending.push(log);
+  localStorage.setItem(PENDING_SYNC_LOGS_KEY, JSON.stringify(pending));
+  return error.message;
 }
 
 export async function syncPendingRecords() {
@@ -199,8 +266,27 @@ export async function syncPendingRecords() {
   if (!session) return { synced: 0, skipped: 'not-signed-in' };
 
   const deviceId = getDeviceId();
-  const results = { synced: 0, errors: [] };
+  const results = { synced: 0, records: 0, errors: [] };
+  const pendingLogResult = await flushPendingSyncLogs();
+  if (pendingLogResult.errors.length) {
+    console.error('Previously queued sync logs are still waiting:', pendingLogResult.errors);
+  }
   const reuploadExistingRecords = localStorage.getItem(FIELD_MAPPING_VERSION_KEY) !== FIELD_MAPPING_VERSION;
+
+  for (const deletion of getPendingRecordDeletions()) {
+    results.records++;
+    const error = await deleteRemoteRecord(
+      deletion.category,
+      deletion.recordId,
+      deletion.remoteExpected
+    );
+    if (error) {
+      results.errors.push(`${deletion.category} #${deletion.recordId} delete: ${error}`);
+      continue;
+    }
+    removePendingRecordDeletion(deletion.category, deletion.recordId);
+    results.synced++;
+  }
 
   // 1. Category storage (current app format)
   for (const [category, table] of Object.entries(TABLE_BY_CATEGORY)) {
@@ -210,6 +296,7 @@ export async function syncPendingRecords() {
     const records = getRecords(storageKey) || [];
 
     for (const record of records.filter((item) => reuploadExistingRecords || isUnsynced(item))) {
+      results.records++;
       const err = await uploadRecord(
         category,
         table,
@@ -222,7 +309,12 @@ export async function syncPendingRecords() {
         results.errors.push(`${table} #${record.id}: ${err}`);
         continue;
       }
-      upsertRecord(storageKey, { ...record, status: 'Synced', synced: true });
+      const latestRecord = getRecords(storageKey).find(
+        (item) => String(item.id) === String(record.id)
+      );
+      if (JSON.stringify(latestRecord) === JSON.stringify(record)) {
+        upsertRecord(storageKey, { ...record, status: 'Synced', synced: true });
+      }
       results.synced++;
     }
   }
@@ -237,6 +329,7 @@ export async function syncPendingRecords() {
       const record = records[i];
       if (!reuploadExistingRecords && !isUnsynced(record)) continue;
 
+      results.records++;
       const err = await uploadRecord(category, table, deviceId, `${key}:${record.id}`, record, session.user.id);
       if (err) {
         results.errors.push(`${table} (${key}) #${record.id}: ${err}`);
@@ -249,6 +342,14 @@ export async function syncPendingRecords() {
 
     if (changed) localStorage.setItem(key, JSON.stringify(records));
   }
+
+  const logError = await writeSyncLog(
+    session.user.id,
+    results.records,
+    results.synced,
+    results.errors.length > 0
+  );
+  if (logError) results.errors.push(`Could not write sync log: ${logError}`);
 
   if (results.errors.length) console.error('Sync errors:', results.errors);
   else localStorage.setItem(FIELD_MAPPING_VERSION_KEY, FIELD_MAPPING_VERSION);
@@ -264,7 +365,7 @@ export async function syncSingleRecord(category, record) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return 'not-signed-in';
 
-  return uploadRecord(
+  const error = await uploadRecord(
     category,
     table,
     getDeviceId(),
@@ -272,23 +373,30 @@ export async function syncSingleRecord(category, record) {
     record,
     session.user.id
   );
+  const logError = await writeSyncLog(session.user.id, 1, error ? 0 : 1, Boolean(error));
+  if (error) return logError ? `${error}; sync log failed: ${logError}` : error;
+  return logError ? `Record synced, but sync log failed: ${logError}` : null;
 }
 
-export async function deleteRemoteRecord(category, localId) {
-  if (!navigator.onLine) return null;
+export async function deleteRemoteRecord(category, localId, remoteRecordExpected = false) {
+  if (!navigator.onLine) return 'offline';
   const table = TABLE_BY_CATEGORY[category];
   if (!table) return null;
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return 'not-signed-in';
 
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from(table)
     .delete()
-    .eq('device_id', getDeviceId())
-    .eq('local_id', localId);
+    .eq('data->>id', String(localId))
+    .select('data');
 
-  return error ? error.message : null;
+  if (error) return error.message;
+  if (remoteRecordExpected && !data?.length) {
+    return 'The shared record was not deleted. Check that the Supabase DELETE policy is enabled.';
+  }
+  return null;
 }
 
 export async function getSharedHouseholdCountsByPurok() {
