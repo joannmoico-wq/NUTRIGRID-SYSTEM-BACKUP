@@ -19,7 +19,7 @@ function reportLine({ id, slug, indicator, isHeader = false, sortOrder }) {
     groupLabel: indicator,
     isHeader,
     sortOrder: sortOrder ?? id,
-    barangay: 'CAMAMBUGAN',
+    barangay: 'ALAWIHAO',
     reportYear: 2026,
     ...emptyCounts(),
   };

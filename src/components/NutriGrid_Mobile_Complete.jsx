@@ -585,6 +585,7 @@ const RecordsList = ({
       'Age',
       'Child',
       'DOB',
+      'Birth Weight',
       'DOW',
       'Wt (kg)',
       'Ht (cm)',
@@ -592,6 +593,8 @@ const RecordsList = ({
       'W/A',
       'H/A',
       'W/L/H',
+      'Iron Given / Services',
+      'Remarks',
     ];
 
     return (
@@ -612,8 +615,8 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1200px]">
-                <div className="grid grid-cols-[repeat(14,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
+              <div className="min-w-[1500px]">
+                <div className="grid grid-cols-[repeat(16,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
                   {[...natalityHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
@@ -626,7 +629,7 @@ const RecordsList = ({
                   categoryRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(14,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(16,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span className="truncate">{formatMonth(record.month)}</span>
                       <span>{record.purok || '—'}</span>
@@ -634,6 +637,7 @@ const RecordsList = ({
                       <span>{record.mother_age ?? '—'}</span>
                       <span className="truncate">{record.child_name || '—'}</span>
                       <span>{formatTableDate(record.dob)}</span>
+                      <span>{record.birth_weight ?? record.birth_weight_kg ?? '—'}</span>
                       <span>{formatTableDate(record.dow)}</span>
                       <span>{record.weight_kg ?? '—'}</span>
                       <span>{record.height_cm ?? '—'}</span>
@@ -641,6 +645,8 @@ const RecordsList = ({
                       <span>{record.w_a || '—'}</span>
                       <span>{record.h_a || '—'}</span>
                       <span>{record.w_l_h || '—'}</span>
+                      <span className="truncate">{record.iron_status || record.iron_given || '—'}</span>
+                      <span className="truncate">{record.remarks || record.notes || '—'}</span>
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -1182,7 +1188,7 @@ const HomeScreen = ({
               <button
                 key={cat.id}
                 type="button"
-                onClick={() => setSelectedCategory(cat.id)}
+                onClick={() => setSelectedCategory((current) => (current === cat.id ? null : cat.id))}
                 className={`rounded-2xl p-3 flex flex-col items-center text-center min-h-[108px] shadow-sm active:scale-[0.97] transition ring-2 ${
                   isSelected ? 'ring-blue-600 ring-offset-2' : 'ring-transparent'
                 }`}
@@ -1405,6 +1411,9 @@ const NutriGridMobile = () => {
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
+    const sessionRestoreFallback = window.setTimeout(() => {
+      setAppState((currentState) => (currentState === 'loading' ? 'welcome' : currentState));
+    }, 2500);
 
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
@@ -1441,6 +1450,7 @@ const NutriGridMobile = () => {
       });
 
     return () => {
+      window.clearTimeout(sessionRestoreFallback);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
@@ -1811,7 +1821,7 @@ const NutriGridMobile = () => {
               value={formData.address}
               onChange={(e) => setFormData({...formData, address: e.target.value})}
               className="w-full px-4 py-3 border-2 border-purple-300 rounded-lg focus:ring-2 focus:ring-purple-500 focus:border-purple-500 text-base"
-              placeholder="Sitio Santol, Camambugan"
+              placeholder="Sitio Santol, Alawihao"
             />
           </div>
 

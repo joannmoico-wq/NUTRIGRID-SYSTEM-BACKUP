@@ -2,15 +2,15 @@ import { Download, Plus } from 'lucide-react';
 import ReportRowActions from './ReportRowActions';
 
 export const REPORT_META = {
-  barangay: 'CAMAMBUGAN',
+  barangay: 'ALAWIHAO',
   municipality: 'DAET',
   province: 'CAMARINES NORTE',
   reportYear: '2026',
-  visitPeriodStart: 'January 2026',
-  visitPeriodEnd: 'June 2026',
-  formsSubmitDate: '2026-01-07',
-  bnsGuide: 'LYNNEL B. DAMAYO / MYRNA B. EDUARDO',
-  monthYear: 'June 2025',
+  visitPeriodStart: 'March 2026',
+  visitPeriodEnd: 'September 2026',
+  formsSubmitDate: '2026-09-03',
+  bnsGuide: 'LAARNI B. POMADA / BNS',
+  monthYear: 'September 2026',
 };
 
 /** Append to multi-row header definitions (row 0) for edit/delete column */
@@ -87,8 +87,8 @@ export default function AdminReportTable({
 
   const headHasActions = resolvedHeadRows.some((row) => row.some((c) => c.label === 'Actions'));
 
-  const stickyActionTh = `${thClass} sticky right-0 z-20 text-center shadow-[-4px_0_8px_rgba(0,0,0,0.04)]`;
-  const stickyActionTd = `${tdClass} sticky right-0 z-10 bg-white text-center dark:bg-[#26263B] shadow-[-4px_0_8px_rgba(0,0,0,0.04)]`;
+  const actionTh = `${thClass} text-center`;
+  const actionTd = `${tdClass} text-center`;
 
   return (
     <div
@@ -147,7 +147,7 @@ export default function AdminReportTable({
 
       <div className="overflow-x-auto px-3 pb-4 pt-3 sm:px-4">
         <table className="w-full border-collapse" style={{ minWidth: minTableWidth }}>
-          <thead className="sticky top-0 z-10">
+          <thead>
             {resolvedHeadRows.map((row, rowIndex) => (
               <tr key={`head-${rowIndex}`}>
                 {row.map((cell, cellIndex) => (
@@ -156,14 +156,14 @@ export default function AdminReportTable({
                     colSpan={cell.colSpan || 1}
                     rowSpan={cell.rowSpan || 1}
                     className={`${
-                      cell.label === 'Actions' ? stickyActionTh : thClass
+                      cell.label === 'Actions' ? actionTh : thClass
                     } ${cell.align === 'left' ? 'text-left' : 'text-center'}`}
                   >
                     {cell.label}
                   </th>
                 ))}
                 {showActions && rowIndex === 0 && !headHasActions && (
-                  <th rowSpan={resolvedHeadRows.length} className={stickyActionTh}>
+                  <th rowSpan={resolvedHeadRows.length} className={actionTh}>
                     Actions
                   </th>
                 )}
@@ -192,7 +192,7 @@ export default function AdminReportTable({
                     </td>
                   ))}
                   {showActions && (
-                    <td className={stickyActionTd}>
+                    <td className={actionTd}>
                       <ReportRowActions
                         darkMode={darkMode}
                         onEdit={onEdit ? () => onEdit(row.id) : undefined}

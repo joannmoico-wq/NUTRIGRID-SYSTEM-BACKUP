@@ -5,6 +5,8 @@ import {
   loadTasks,
   saveTaskLocally,
   syncPendingTasks,
+  isTaskOverdue,
+  notifyTaskOnce,
 } from '../utils/taskSyncService';
 import { registerPushToken } from '../utils/pushNotifications';
 import { ClipboardList, Calendar, MapPin, Bell, CheckCircle2, Circle, Clock } from 'lucide-react';
@@ -23,6 +25,7 @@ export default function MyTasks() {
   const [syncMessage, setSyncMessage] = useState('');
   const [pushMessage, setPushMessage] = useState('');
   const [registeringPush, setRegisteringPush] = useState(false);
+  const [expandedNotes, setExpandedNotes] = useState({});
   const pushRegistrationAttempted = useRef(false);
   const [permission, setPermission] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
@@ -64,9 +67,7 @@ export default function MyTasks() {
             const t = payload.new;
             void load();
             setBanner(t.title);
-            if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-              new Notification('New task assigned', { body: t.title, icon: '/icon-192.png' });
-            }
+            notifyTaskOnce(t, 'New task assigned');
           }
         )
         .on(
@@ -185,7 +186,13 @@ export default function MyTasks() {
     }
   };
 
-  const open = tasks.filter((t) => t.status !== 'Completed');
+  const open = tasks
+    .filter((t) => t.status !== 'Completed')
+    .sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
+  const orderedTasks = [
+    ...open,
+    ...tasks.filter((task) => task.status === 'Completed'),
+  ];
 
   return (
     <section className="space-y-3">
@@ -241,9 +248,11 @@ export default function MyTasks() {
         </div>
       ) : (
         <ul className="space-y-3">
-          {tasks.map((t) => {
+          {orderedTasks.map((t) => {
             const Icon = STEP_ICON[t.status] || Circle;
             const done = t.status === 'Completed';
+            const overdue = isTaskOverdue(t);
+            const notes = Array.isArray(t.task_notes) ? t.task_notes : [];
             return (
               <li
                 key={t.task_id}
@@ -273,10 +282,11 @@ export default function MyTasks() {
                         </span>
                       )}
                       {t.due_date && (
-                        <span className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5">
+                        <span className={`flex items-center gap-1 rounded-full px-2 py-0.5 ${overdue ? 'bg-gray-100 text-gray-400' : 'bg-gray-100'}`}>
                           <Calendar size={11} /> {t.due_date}
                         </span>
                       )}
+                      {overdue && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">Overdue</span>}
                       <span
                         className={`rounded-full px-2 py-0.5 ${
                           t.priority === 'High' ? 'bg-rose-100 text-rose-700' : 'bg-violet-100 text-violet-700'
@@ -287,6 +297,22 @@ export default function MyTasks() {
                     </div>
                   </div>
                 </div>
+                {notes.length > 0 && (
+                  <div className="mt-3 border-t border-gray-100 pt-2">
+                    <button
+                      type="button"
+                      className="text-xs font-semibold text-violet-700"
+                      onClick={() => setExpandedNotes((current) => ({ ...current, [t.task_id]: !current[t.task_id] }))}
+                    >
+                      {expandedNotes[t.task_id] ? 'Hide task notes' : `View task notes (${notes.length})`}
+                    </button>
+                    {expandedNotes[t.task_id] && (
+                      <div className="mt-2 space-y-1 text-xs text-gray-600">
+                        {notes.map((note, index) => <p key={`${t.task_id}-note-${index}`}>{note.message || note}</p>)}
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="mt-3 flex gap-1 rounded-full bg-gray-100 p-1 text-[11px] font-bold">
                   {['Pending', 'In Progress', 'Completed'].map((s) => (
                     <span

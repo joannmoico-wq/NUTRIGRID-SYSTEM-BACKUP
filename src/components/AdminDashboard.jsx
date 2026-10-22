@@ -1109,7 +1109,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
         }
         onExport={() =>
           exportPdfFile({
-            fileName: 'camambugan-residents',
+            fileName: 'alawihao-residents',
             title: 'Residents',
             headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
             rows: filteredHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
@@ -1188,6 +1188,60 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     ],
   ];
 
+  const pregnantWomenHeadRows = [
+    [
+      { label: 'No.', rowSpan: 2 },
+      { label: 'Purok', rowSpan: 2 },
+      { label: 'Date of Registration', rowSpan: 2 },
+      { label: 'Family Serial Number', rowSpan: 2 },
+      { label: 'Name of Pregnant Woman', colSpan: 3 },
+      { label: 'Name of Spouse', rowSpan: 2 },
+      { label: 'Contact Number', rowSpan: 2 },
+      { label: 'Birthday', rowSpan: 2 },
+      { label: 'Age', rowSpan: 2 },
+      { label: 'Civil Status', rowSpan: 2 },
+      { label: 'LMP', rowSpan: 2 },
+      { label: 'EDD', rowSpan: 2 },
+      { label: 'PhilHealth', rowSpan: 2 },
+      { label: '4Ps', rowSpan: 2 },
+      { label: 'Measurements', colSpan: 4 },
+      ACTIONS_HEAD_CELL,
+    ],
+    [
+      { label: 'Last Name' },
+      { label: 'First Name' },
+      { label: 'Middle Name' },
+      { label: 'Wt.' },
+      { label: 'Ht.' },
+      { label: 'BMI' },
+      { label: 'MUAC' },
+    ],
+  ];
+
+  const monthlyNatalityHeadRows = [
+    [
+      { label: 'No.', rowSpan: 2 },
+      { label: 'Purok', rowSpan: 2 },
+      { label: 'Name of Mother', rowSpan: 2 },
+      { label: 'Name of Child', rowSpan: 2 },
+      { label: 'Date of Birth', rowSpan: 2 },
+      { label: 'Birth Weight', rowSpan: 2 },
+      { label: 'Date of Follow-up Weighing', rowSpan: 2 },
+      { label: 'Measurements', colSpan: 2 },
+      { label: 'Nutrition Status', colSpan: 3 },
+      { label: 'Iron Given / Other Services', rowSpan: 2 },
+      { label: 'Remarks', rowSpan: 2 },
+      ACTIONS_HEAD_CELL,
+    ],
+    [
+      { label: 'Wt. (kg)' },
+      { label: 'Ht. (cm)' },
+      { label: 'W/A' },
+      { label: 'H/A' },
+      { label: 'W/L or H/L' },
+    ],
+  ];
+
   const Residents = () => (
     <AdminReportTable
       darkMode={darkMode}
@@ -1208,7 +1262,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
       onExport={() =>
         exportPdfFile({
-          fileName: 'camambugan-residents',
+          fileName: 'alawihao-residents',
           title: 'Residents Masterlist',
           headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
           rows: filteredHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
@@ -1222,7 +1276,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     const tableData = filteredEnvironmental.map((record) => ({ ...record }));
     const exportReport = () =>
       exportPdfFile({
-        fileName: 'camambugan-environmental-sanitation-2025',
+        fileName: 'alawihao-environmental-sanitation-2026',
         title: 'BNS Environmental Sanitation Report',
         headers: environmentalHeadRows[1].map((c) => c.label),
         rows: tableData.map((record) =>
@@ -1308,7 +1362,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
       onExport={() =>
         exportPdfFile({
-          fileName: 'camambugan-infant-feeding',
+          fileName: 'alawihao-infant-feeding',
           title: 'Infant Feeding (0-5 mo)',
           headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months'],
           rows: filteredInfantFeeding.map((row) => [
@@ -1335,27 +1389,45 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       data={filteredLactating}
       columnKeys={[
         'no',
+        'purok',
+        'dateRegistration',
+        'familySerial',
         'lastName',
         'firstName',
         'middleName',
-        'purok',
+        'spouseName',
+        'contactNumber',
+        'birthday',
         'age',
-        'dateDelivered',
+        'civilStatus',
+        'philhealth',
+        'fourPs',
         'wt',
         'ht',
+        'bmi',
         'muac',
+        'dateDelivered',
       ]}
       singleRowHeaders={[
         'No.',
+        'Purok',
+        'Date Registration',
+        'Family Serial No.',
         'Last Name',
         'First Name',
         'Middle Name',
-        'Purok',
+        'Spouse',
+        'Contact',
+        'Birthday',
         'Age',
-        'Date Delivered',
-        'Wt',
-        'Ht',
+        'Civil Status',
+        'PhilHealth',
+        '4Ps',
+        'Wt.',
+        'Ht.',
+        'BMI',
         'MUAC',
+        'Date Delivered',
       ]}
       reportHeader={
         <ReportHeader
@@ -1373,24 +1445,33 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
       onExport={() =>
         exportPdfFile({
-          fileName: 'camambugan-lactating-women',
+          fileName: 'alawihao-lactating-women',
           title: 'Masterlist Lactating Women',
-          headers: ['No.', 'Last Name', 'First Name', 'Middle Name', 'Purok', 'Age', 'Date Delivered', 'Wt', 'Ht', 'MUAC'],
+          headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'PhilHealth', '4Ps', 'Wt.', 'Ht.', 'BMI', 'MUAC', 'Date Delivered'],
           rows: filteredLactating.map((row) => [
             row.no,
+            row.purok,
+            row.dateRegistration,
+            row.familySerial,
             row.lastName,
             row.firstName,
             row.middleName,
-            row.purok,
+            row.spouseName,
+            row.contactNumber,
+            row.birthday,
             row.age,
-            row.dateDelivered,
+            row.civilStatus,
+            row.philhealth,
+            row.fourPs,
             row.wt,
             row.ht,
+            row.bmi,
             row.muac,
+            row.dateDelivered,
           ]),
         })
       }
-      minTableWidth={960}
+      minTableWidth={1700}
       {...lactatingActions}
     />
   );
@@ -1401,30 +1482,26 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       data={filteredPregnant}
       columnKeys={[
         'no',
+        'dateRegistration',
+        'familySerial',
         'lastName',
         'firstName',
         'middleName',
-        'purok',
+        'spouseName',
+        'contactNumber',
+        'birthday',
         'age',
+        'civilStatus',
         'lmp',
         'expectedDelivery',
+        'philhealth',
+        'fourPs',
         'wt',
         'ht',
+        'bmi',
         'muac',
       ]}
-      singleRowHeaders={[
-        'No.',
-        'Last Name',
-        'First Name',
-        'Middle Name',
-        'Purok',
-        'Age',
-        'LMP',
-        'Expected Delivery',
-        'Wt',
-        'Ht',
-        'MUAC',
-      ]}
+      headRows={pregnantWomenHeadRows}
       reportHeader={
         <ReportHeader
           title="Masterlist of Pregnant Women"
@@ -1441,25 +1518,34 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
       onExport={() =>
         exportPdfFile({
-          fileName: 'camambugan-pregnant-women',
+          fileName: 'alawihao-pregnant-women',
           title: 'Masterlist of Pregnant Women',
-          headers: ['No.', 'Last Name', 'First Name', 'Middle Name', 'Purok', 'Age', 'LMP', 'Expected Delivery', 'Wt', 'Ht', 'MUAC'],
+          headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC'],
           rows: filteredPregnant.map((row) => [
             row.no,
+            row.purok,
+            row.dateRegistration,
+            row.familySerial,
             row.lastName,
             row.firstName,
             row.middleName,
-            row.purok,
+            row.spouseName,
+            row.contactNumber,
+            row.birthday,
             row.age,
+            row.civilStatus,
             row.lmp,
             row.expectedDelivery,
+            row.philhealth,
+            row.fourPs,
             row.wt,
             row.ht,
+            row.bmi,
             row.muac,
           ]),
         })
       }
-      minTableWidth={960}
+      minTableWidth={1800}
       {...pregnantActions}
     />
   );
@@ -1468,51 +1554,43 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     <AdminReportTable
       darkMode={darkMode}
       data={filteredNatality}
-      columnKeys={['purok', 'motherName', 'age', 'childName', 'dob', 'dow', 'weight', 'height', 'aim', 'wA', 'hA', 'wLH']}
-      singleRowHeaders={[
-        'Purok',
-        'Name of Mother',
-        'Age',
-        'Name of Child',
-        'DOB',
-        'DOW',
-        'Wt. (kg)',
-        'Ht. (cm)',
-        'AIM',
-        'W/A',
-        'H/A',
-        'W/L/H',
-      ]}
+      columnKeys={['no', 'purok', 'motherName', 'childName', 'dob', 'birthWeight', 'dow', 'weight', 'height', 'wA', 'hA', 'wLH', 'ironStatus', 'remarks']}
+      headRows={monthlyNatalityHeadRows}
       reportHeader={
         <ReportHeader
           title="Monthly Natality with Weight & Height"
           subtitle={`Barangay ${REPORT_META.barangay}`}
-          fields={[{ label: 'Month', value: REPORT_META.monthYear }]}
+          fields={[
+            { label: 'Month', value: REPORT_META.monthYear },
+            { label: 'Barangay', value: REPORT_META.barangay },
+          ]}
         />
       }
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
       onExport={() =>
         exportPdfFile({
-          fileName: 'camambugan-monthly-natality',
+          fileName: 'alawihao-monthly-natality',
           title: 'Monthly Natality',
-          headers: ['Purok', 'Mother', 'Age', 'Child', 'DOB', 'DOW', 'Wt (kg)', 'Ht (cm)', 'AIM', 'W/A', 'H/A', 'W/L/H'],
+          headers: ['No.', 'Purok', 'Mother', 'Child', 'DOB', 'Birth Weight', 'Follow-up Date', 'Wt (kg)', 'Ht (cm)', 'W/A', 'H/A', 'W/L/H', 'Iron/Services', 'Remarks'],
           rows: filteredNatality.map((row) => [
+            row.no,
             row.purok,
             row.motherName,
-            row.age,
             row.childName,
             row.dob,
+            row.birthWeight,
             row.dow,
             row.weight,
             row.height,
-            row.aim,
             row.wA,
             row.hA,
             row.wLH,
+            row.ironStatus,
+            row.remarks,
           ]),
         })
       }
-      minTableWidth={1080}
+      minTableWidth={1600}
       {...natalityActions}
     />
   );
@@ -1556,7 +1634,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       }}
       onGenerateReport={() =>
         exportPdfFile({
-          fileName: 'camambugan-essential-health-services-2026',
+          fileName: 'alawihao-essential-health-services-2026',
           title: 'Essential Health Services Monthly Report',
           headers: [
             'Indicator',

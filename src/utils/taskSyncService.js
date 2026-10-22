@@ -4,6 +4,7 @@ import { flushPendingSyncLogs, writeSyncLog } from './syncService';
 const TASKS_STORAGE_KEY = 'nutrigrid_tasks';
 const PENDING_TASKS_STORAGE_KEY = 'nutrigrid_pending_task_changes';
 const BHW_PROFILES_STORAGE_KEY = 'nutrigrid_bhw_profiles';
+const TASK_NOTIFICATION_PREFIX = 'nutrigrid_task_notification_';
 let syncingTasks = false;
 let syncRequested = false;
 
@@ -17,6 +18,11 @@ function readArray(key) {
   }
 }
 
+function isMissingTaskColumnError(error) {
+  const message = String(error?.message || error || '').toLowerCase();
+  return message.includes('schema cache') && message.includes('column');
+}
+
 function publishTasks(tasks, task = null, operation = 'refresh', notify = true) {
   localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks));
   if (notify) {
@@ -28,6 +34,89 @@ function publishTasks(tasks, task = null, operation = 'refresh', notify = true) 
 
 export function getLocalTasks() {
   return readArray(TASKS_STORAGE_KEY);
+}
+
+function taskDueEnd(task) {
+  if (!task?.due_date) return null;
+  const dueEnd = new Date(`${task.due_date}T23:59:59`);
+  return Number.isNaN(dueEnd.getTime()) ? null : dueEnd;
+}
+
+export function isTaskOverdue(task, now = new Date()) {
+  return task?.status !== 'Completed' && Boolean(taskDueEnd(task) && now > taskDueEnd(task));
+}
+
+function overdueRolloverReady(task, now = new Date()) {
+  const dueEnd = taskDueEnd(task);
+  return isTaskOverdue(task, now) && dueEnd && now.getTime() >= dueEnd.getTime() + 24 * 60 * 60 * 1000;
+}
+
+function todayIso(now = new Date()) {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function notificationClaimKey(taskId, rolloverCount) {
+  return `${TASK_NOTIFICATION_PREFIX}${taskId}_${rolloverCount}`;
+}
+
+export function notifyTaskOnce(task, title = 'Task overdue') {
+  if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return false;
+  const count = Number(task.overdue_count || 0);
+  const key = notificationClaimKey(task.task_id, count);
+  if (localStorage.getItem(key)) return false;
+  localStorage.setItem(key, '1');
+  new Notification(title, {
+    body: `${task.title} was automatically rescheduled.`,
+    icon: '/icon-192.png',
+    tag: `nutrigrid-task-${task.task_id}-overdue-${count}`,
+  });
+  return true;
+}
+
+function appendSystemNote(task, oldDueDate, newDueDate, now) {
+  const notes = Array.isArray(task.task_notes) ? task.task_notes : [];
+  return [
+    ...notes,
+    {
+      type: 'system',
+      created_at: now.toISOString(),
+      message: `[System Action]: Task was not completed within 24 hours of its original due date. Automatically rescheduled from ${oldDueDate} to ${newDueDate}.`,
+    },
+  ];
+}
+
+export function processOverdueTasks(tasks, { notify = false, now = new Date() } = {}) {
+  let changed = false;
+  const processed = tasks.map((task) => {
+    if (
+      !overdueRolloverReady(task, now)
+      || task.overdue_last_processed_due_date === task.due_date
+    ) return task;
+    const newDueDate = todayIso(now);
+    const next = {
+      ...task,
+      original_due_date: task.original_due_date || task.due_date,
+      due_date: newDueDate,
+      overdue_count: Number(task.overdue_count || 0) + 1,
+      overdue_last_processed_at: now.toISOString(),
+      overdue_last_processed_due_date: task.due_date,
+      task_notes: appendSystemNote(task, task.due_date, newDueDate, now),
+    };
+    saveTaskLocally(next, [
+      'due_date',
+      'original_due_date',
+      'overdue_count',
+      'overdue_last_processed_at',
+      'task_notes',
+    ]);
+    if (notify) notifyTaskOnce(next);
+    changed = true;
+    return next;
+  });
+  return { tasks: changed ? getLocalTasks() : processed, changed };
 }
 
 export function getPendingTaskChanges() {
@@ -123,11 +212,16 @@ export function cacheBhwProfiles(profiles) {
 }
 
 export async function loadTasks({ assignedToUserId } = {}) {
+  const selectTasks = (tasks) => {
+    const overdue = processOverdueTasks(tasks, { notify: Boolean(assignedToUserId) });
+    const result = overdue.tasks;
+    return assignedToUserId
+      ? result.filter((task) => task.assigned_to_user_id === assignedToUserId)
+      : result;
+  };
   if (!navigator.onLine) {
     const local = getLocalTasks();
-    return assignedToUserId
-      ? local.filter((task) => task.assigned_to_user_id === assignedToUserId)
-      : local;
+    return selectTasks(local);
   }
 
   let query = supabase.from('tasks').select('*').order('created_at', { ascending: false });
@@ -139,9 +233,7 @@ export async function loadTasks({ assignedToUserId } = {}) {
     ...getLocalTasks().filter((task) => String(task.task_id).startsWith('-')),
     ...(data || []),
   ]);
-  return assignedToUserId
-    ? merged.filter((task) => task.assigned_to_user_id === assignedToUserId)
-    : merged;
+  return selectTasks(merged);
 }
 
 export async function syncPendingTasks() {
@@ -154,7 +246,7 @@ export async function syncPendingTasks() {
   if (!session) return { synced: 0, skipped: 'not-signed-in' };
 
   syncingTasks = true;
-  const result = { synced: 0, records: 0, errors: [], notificationErrors: [] };
+  const result = { synced: 0, records: 0, errors: [], notificationErrors: [], migrationPending: false };
   try {
     const pendingLogResult = await flushPendingSyncLogs();
     if (pendingLogResult.errors.length) {
@@ -262,6 +354,10 @@ export async function syncPendingTasks() {
         }
 
         if (response.error) {
+          if (isMissingTaskColumnError(response.error)) {
+            result.migrationPending = true;
+            continue;
+          }
           result.errors.push(`Task ${change.taskId} ${change.operation}: ${response.error.message}`);
           continue;
         }

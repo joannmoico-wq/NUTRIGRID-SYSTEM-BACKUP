@@ -22,6 +22,10 @@ function sumTotals(row) {
   return { ...row, tM, tF };
 }
 
+function displayCount(value) {
+  return Number(value) === 0 || value == null || value === '' ? '' : value;
+}
+
 export default function MonthlyReportTable({
   darkMode,
   data = [],
@@ -152,7 +156,7 @@ export default function MonthlyReportTable({
                         key={key}
                         className={['tM', 'tF'].includes(key) ? totalTd : `${td} text-center font-semibold`}
                       >
-                        {row[key] ?? 0}
+                        {displayCount(row[key])}
                       </td>
                     ))}
                     <td className={`${td} sticky right-0 bg-white text-center dark:bg-[#26263B]`}>
@@ -193,9 +197,12 @@ export default function MonthlyReportTable({
                     type="number"
                     min="0"
                     className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm dark:border-gray-600 dark:bg-[#1e1e30]"
-                    value={editing[key] ?? 0}
+                    value={editing[key] ?? ''}
                     onChange={(e) =>
-                      setEditing((prev) => ({ ...prev, [key]: Number(e.target.value) || 0 }))
+                      setEditing((prev) => ({
+                        ...prev,
+                        [key]: e.target.value === '' ? '' : Number(e.target.value),
+                      }))
                     }
                   />
                 </label>

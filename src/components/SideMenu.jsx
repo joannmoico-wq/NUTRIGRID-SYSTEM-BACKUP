@@ -334,11 +334,10 @@ export default function SideMenu({ open, onClose, onLogout }) {
             </ul>
           )}
 
-          {open && (
-            <div className="rounded-3xl bg-white/80 p-3 shadow-sm">
-              <MyTasks />
-            </div>
-          )}
+          <div className="rounded-3xl bg-white/80 p-3 shadow-sm">
+            <MyTasks />
+          </div>
+
         </div>
 
         <div className="shrink-0 border-t border-white/70 p-4">

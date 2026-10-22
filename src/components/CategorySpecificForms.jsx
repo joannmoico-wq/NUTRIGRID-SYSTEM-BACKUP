@@ -1009,6 +1009,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
     mother_age: '',
     child_name: '',
     dob: '',
+    birth_weight: '',
     dow: new Date().toISOString().split('T')[0],
     weight_kg: '',
     height_cm: '',
@@ -1016,6 +1017,8 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
     w_a: '',
     h_a: '',
     w_l_h: '',
+    iron_status: '',
+    remarks: '',
     visited_by: userName,
     ...initialData,
   }));
@@ -1065,7 +1068,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <p className="text-xs font-bold text-amber-800 uppercase tracking-wide">
-        Monthly Natality with Weight &amp; Height — Barangay Camambugan
+        Monthly Natality with Weight &amp; Height — Barangay Alawihao
       </p>
 
       <div>
@@ -1100,6 +1103,10 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">DOB *</label>
           <input type="date" required value={formData.dob} onChange={(e) => updateField('dob', e.target.value)} className={fieldClass} />
+        </div>
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Birth Weight (kg)</label>
+          <input type="number" step="0.01" min="0" value={formData.birth_weight} onChange={(e) => updateField('birth_weight', e.target.value)} className={fieldClass} />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">DOW (Date of Weighing) *</label>
@@ -1146,6 +1153,17 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
               <option key={opt || 'blank-wlh'} value={opt}>{opt || 'Select...'}</option>
             ))}
           </select>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Iron Given / Other Services</label>
+          <input type="text" value={formData.iron_status} onChange={(e) => updateField('iron_status', e.target.value)} className={fieldClass} placeholder="e.g. Iron drops given" />
+        </div>
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Remarks</label>
+          <textarea rows="2" value={formData.remarks} onChange={(e) => updateField('remarks', e.target.value)} className={fieldClass} placeholder="Additional notes" />
         </div>
       </div>
 

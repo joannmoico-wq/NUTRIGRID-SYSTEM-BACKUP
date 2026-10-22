@@ -18,6 +18,10 @@ alter table public.pregnant_women
   add column if not exists purok text;
 alter table public.monthly_natality
   add column if not exists purok text;
+alter table public.monthly_natality
+  add column if not exists birth_weight numeric,
+  add column if not exists iron_status text,
+  add column if not exists remarks text;
 
 -- Remove the broad policy from the previous CRUD script, if it was run.
 -- Keep the existing approved read/insert/update policies in place.
@@ -76,6 +80,11 @@ alter table public.tasks
   add column if not exists title text not null default 'Field visit',
   add column if not exists description text,
   add column if not exists due_date date,
+  add column if not exists original_due_date date,
+  add column if not exists overdue_count integer not null default 0,
+  add column if not exists overdue_last_processed_at timestamptz,
+  add column if not exists overdue_last_processed_due_date date,
+  add column if not exists task_notes jsonb not null default '[]'::jsonb,
   add column if not exists created_at timestamptz not null default now();
 
 create index if not exists tasks_assigned_to_created_at_idx
@@ -236,6 +245,14 @@ begin
        or new.title is distinct from old.title
        or new.description is distinct from old.description
        or new.due_date is distinct from old.due_date
+     )
+     and not (
+       old.status <> 'Completed'
+       and old.due_date is not null
+       and old.due_date <= current_date - 1
+       and new.due_date = current_date
+       and new.overdue_count = coalesce(old.overdue_count, 0) + 1
+       and new.overdue_last_processed_due_date = old.due_date
      ) then
     raise exception 'Only an approved admin can edit task details.';
   end if;

@@ -160,6 +160,7 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       mother_age: asNumberOrNull(record.mother_age),
       name_of_child: record.name_of_child || record.child_name || null,
       dob: record.dob || null,
+      birth_weight: asNumberOrNull(record.birth_weight ?? record.birth_weight_kg),
       dow: record.dow || null,
       wt_kg: asNumberOrNull(record.wt_kg ?? record.weight_kg),
       ht_cm: asNumberOrNull(record.ht_cm ?? record.height_cm),
@@ -167,6 +168,8 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       w_a: record.w_a || null,
       h_a: record.h_a || null,
       w_l_h: record.w_l_h || null,
+      iron_status: record.iron_status || record.iron_given || null,
+      remarks: record.remarks || record.notes || null,
     },
     monthlyreport: {
       category_label: record.groupLabel || record.category_label || null,

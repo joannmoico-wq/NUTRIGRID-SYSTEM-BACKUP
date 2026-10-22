@@ -9,11 +9,12 @@ import {
   loadTasks,
   saveTaskLocally,
   syncPendingTasks,
+  isTaskOverdue,
 } from '../utils/taskSyncService';
 import { ClipboardList, Plus, Trash2, Calendar, MapPin, Flag, X, Edit } from 'lucide-react';
 
 const PRIORITIES = ['High', 'Normal', 'Low'];
-const FILTERS = ['All', 'Pending', 'In Progress', 'Completed'];
+const FILTERS = ['All', 'Overdue', 'Pending', 'In Progress', 'Completed'];
 
 const emptyForm = {
   title: '',
@@ -90,6 +91,8 @@ export default function AdminTasks() {
       if (result.errors?.length) {
         console.error('Some tasks are waiting to sync:', result.errors);
         setMessage(`Task sync failed; the change is still saved on this device and will retry: ${result.errors[0]}`);
+      } else if (result.migrationPending) {
+        setMessage('Saved on this device. Apply the latest task migration in Supabase to sync overdue details.');
       }
       refresh();
     };
@@ -127,13 +130,19 @@ export default function AdminTasks() {
     () => ({
       All: tasks.length,
       Pending: tasks.filter((t) => t.status === 'Pending').length,
+      Overdue: tasks.filter((t) => isTaskOverdue(t)).length,
       'In Progress': tasks.filter((t) => t.status === 'In Progress').length,
       Completed: tasks.filter((t) => t.status === 'Completed').length,
     }),
     [tasks]
   );
 
-  const visible = filter === 'All' ? tasks : tasks.filter((t) => t.status === filter);
+  const visible = (filter === 'All'
+    ? tasks
+    : filter === 'Overdue'
+      ? tasks.filter((t) => isTaskOverdue(t))
+      : tasks.filter((t) => t.status === filter)
+  ).sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
 
   const saveTask = async (e) => {
     e.preventDefault();
@@ -165,6 +174,8 @@ export default function AdminTasks() {
       const result = await syncPendingTasks();
       if (result.errors?.length || result.skipped) {
         setMessage('Saved on this device. The task will sync when this device is online and signed in.');
+      } else if (result.migrationPending) {
+        setMessage('Saved on this device. Apply the latest task migration in Supabase to sync overdue details.');
       } else if (result.notificationErrors?.length) {
         setMessage(`Task saved, but push notification was not sent: ${result.notificationErrors[0]}`);
       } else {
@@ -298,7 +309,9 @@ export default function AdminTasks() {
                   <p className="flex items-center gap-1.5"><MapPin size={13} /> {t.purok}</p>
                 )}
                 {t.due_date && (
-                  <p className="flex items-center gap-1.5"><Calendar size={13} /> Due {t.due_date}</p>
+                  <p className={`flex items-center gap-1.5 ${isTaskOverdue(t) ? 'font-bold text-gray-400' : ''}`}>
+                    <Calendar size={13} /> Due {t.due_date} {isTaskOverdue(t) && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px]">Overdue</span>}
+                  </p>
                 )}
               </div>
 

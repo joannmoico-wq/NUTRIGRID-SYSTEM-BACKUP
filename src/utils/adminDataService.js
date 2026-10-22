@@ -59,8 +59,11 @@ const COLUMN_MAPS = {
   monthlynatal: {
     name_of_mother: 'mother_name',
     name_of_child: 'child_name',
+    birth_weight: 'birth_weight',
     wt_kg: 'weight_kg',
     ht_cm: 'height_cm',
+    iron_status: 'iron_status',
+    remarks: 'remarks',
   },
 };
 
@@ -133,14 +136,8 @@ async function readAllRows(category, { table, idColumn }) {
 }
 
 export async function loadAdminDataFromSupabase() {
-  const [
-    households,
-    environmentalSanitationData,
-    infantFeedingData,
-    lactatingWomenData,
-    pregnantWomenData,
-    natalityData,
-  ] = await Promise.all([
+  const results = await Promise.allSettled([
+    // Keep Residents independent so another report table failure cannot hide the database household data.
     readAllRows('residents', ADMIN_TABLES.residents),
     readAllRows('environmental', ADMIN_TABLES.environmental),
     readAllRows('infantfeeding', ADMIN_TABLES.infantfeeding),
@@ -148,6 +145,37 @@ export async function loadAdminDataFromSupabase() {
     readAllRows('pregnantwoman', ADMIN_TABLES.pregnantwoman),
     readAllRows('monthlynatal', ADMIN_TABLES.monthlynatal),
   ]);
+
+  const localFallbacks = [
+    'residents',
+    'environmental',
+    'infantfeeding',
+    'lactatingwoman',
+    'pregnantwoman',
+    'monthlynatal',
+  ].map((category) => getRecords(STORAGE_KEY_BY_CATEGORY[category]));
+  const rowsFor = (index, category) => {
+    const result = results[index];
+    if (result.status === 'fulfilled') return result.value;
+    console.error(`Could not load ${category} records from Supabase:`, result.reason);
+    return localFallbacks[index];
+  };
+
+  const [
+    households,
+    environmentalSanitationData,
+    infantFeedingData,
+    lactatingWomenData,
+    pregnantWomenData,
+    natalityData,
+  ] = [
+    rowsFor(0, 'residents'),
+    rowsFor(1, 'environmental'),
+    rowsFor(2, 'infantfeeding'),
+    rowsFor(3, 'lactatingwoman'),
+    rowsFor(4, 'pregnantwoman'),
+    rowsFor(5, 'monthlynatal'),
+  ];
 
   return {
     households: toAdminResidents(cacheSharedRecords('residents', households)),
