@@ -232,18 +232,25 @@ export function getPendingRecordDeletions() {
   }
 }
 
-export function queueRecordDeletion(category, recordId, remoteExpected = false) {
+export function queueRecordDeletion(
+  category,
+  recordId,
+  remoteExpected = false,
+  createdByUserId = ''
+) {
   const deletions = getPendingRecordDeletions();
   const existing = deletions.find(
     (item) => item.category === category && String(item.recordId) === String(recordId)
   );
   if (existing) {
     existing.remoteExpected = existing.remoteExpected || remoteExpected;
+    existing.created_by_user_id = createdByUserId || existing.created_by_user_id || '';
   } else {
     deletions.push({
       category,
       recordId: String(recordId),
       remoteExpected,
+      created_by_user_id: createdByUserId,
       queuedAt: new Date().toISOString(),
     });
   }
@@ -594,10 +601,12 @@ export function toAdminNatality(records) {
     purok: r.purok || '—',
     motherName: r.mother_name || '—',
     childName: r.child_name || '—',
+    sex: r.sex === 'boys' ? 'Male' : r.sex === 'girls' ? 'Female' : '—',
     dob: r.dob || '—',
     birthWeight: r.birth_weight ?? r.birth_weight_kg ?? '—',
     dow: r.dow || '—',
     weight: r.weight_kg ?? '—',
+    length: r.length_cm ?? '—',
     height: r.height_cm ?? '—',
     aim: r.aim ?? '—',
     wA: r.w_a || '—',
@@ -621,9 +630,11 @@ export function fromAdminNatality(row) {
     birth_weight: row.birthWeight,
     mother_name: row.motherName,
     child_name: row.childName,
+    sex: row.sex === 'Male' ? 'boys' : row.sex === 'Female' ? 'girls' : '',
     dob: row.dob,
     dow: row.dow,
     weight_kg: row.weight,
+    length_cm: row.length,
     height_cm: row.height,
     aim: row.aim,
     w_a: row.wA,
@@ -654,6 +665,7 @@ export function fromAdminEnvironmental(row) {
     water_level_i: asBool(row.waterLevelI),
     water_level_ii: asBool(row.waterLevelII),
     water_level_iii: asBool(row.waterLevelIII),
+    without_potable_water: asBool(row.withoutPotableWater),
     toilet_sanitary: asBool(row.toiletWithSanitary),
     toilet_not_sanitary: asBool(row.toiletWithoutSanitary),
     selling_iodized_sari: asBool(row.iodizedSaltSariSari),
@@ -681,6 +693,7 @@ export function toAdminEnvironmental(records) {
     waterLevelI: r.water_level_i ? 1 : 0,
     waterLevelII: r.water_level_ii ? 1 : 0,
     waterLevelIII: r.water_level_iii ? 1 : 0,
+    withoutPotableWater: r.without_potable_water ? 1 : 0,
     toiletWithSanitary: r.toilet_sanitary ? 1 : 0,
     toiletWithoutSanitary: r.toilet_not_sanitary ? 1 : 0,
     iodizedSaltSariSari: r.selling_iodized_sari ? 1 : 0,
@@ -705,7 +718,7 @@ export function toAdminEnvironmental(records) {
   }));
 }
 
-export function reloadAllAdminData() {
+export function reloadAllAdminData(userId) {
   let monthlyReportData = getRecords(STORAGE_KEYS.monthlyReport);
   if (monthlyReportData.length === 0) {
     monthlyReportData = DEFAULT_MONTHLY_REPORT_LINES;
@@ -714,13 +727,25 @@ export function reloadAllAdminData() {
     monthlyReportData = mergeMonthlyReportLines(monthlyReportData);
   }
 
+  const getOwnedRecords = (key) => {
+    const records = getRecords(key);
+    return userId
+      ? records.filter(
+          (record) =>
+            record.synced ||
+            String(record.status || '').toLowerCase() === 'synced' ||
+            String(record.created_by_user_id || '') === String(userId)
+        )
+      : records;
+  };
+
   return {
-    households: toAdminResidents(getRecords(STORAGE_KEYS.residents)),
-    environmentalSanitationData: toAdminEnvironmental(getRecords(STORAGE_KEYS.environmental)),
-    infantFeedingData: toAdminInfantFeeding(getRecords(STORAGE_KEYS.infantfeeding)),
-    lactatingWomenData: toAdminLactating(getRecords(STORAGE_KEYS.lactatingwoman)),
-    pregnantWomenData: toAdminPregnant(getRecords(STORAGE_KEYS.pregnantwoman)),
-    natalityData: toAdminNatality(getRecords(STORAGE_KEYS.monthlynatal)),
+    households: toAdminResidents(getOwnedRecords(STORAGE_KEYS.residents)),
+    environmentalSanitationData: toAdminEnvironmental(getOwnedRecords(STORAGE_KEYS.environmental)),
+    infantFeedingData: toAdminInfantFeeding(getOwnedRecords(STORAGE_KEYS.infantfeeding)),
+    lactatingWomenData: toAdminLactating(getOwnedRecords(STORAGE_KEYS.lactatingwoman)),
+    pregnantWomenData: toAdminPregnant(getOwnedRecords(STORAGE_KEYS.pregnantwoman)),
+    natalityData: toAdminNatality(getOwnedRecords(STORAGE_KEYS.monthlynatal)),
     monthlyReportData,
   };
 }

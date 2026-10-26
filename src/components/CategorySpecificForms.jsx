@@ -1,11 +1,52 @@
 import React, { useState } from 'react';
 import { Check, Camera, MapPin, X } from 'lucide-react';
+import { calculateAgeInMonths as getCompletedAgeInMonths, calculateAgeInYears, calculateWhoGrowthStatuses } from '../utils/childGrowth';
 import { PUROK_OPTIONS } from '../utils/purok';
 
 /**
  * CATEGORY-SPECIFIC FORMS FOR NUTRIGRID
  * Each category has its own data collection form
  */
+
+const FormNotes = ({ title, entries }) => (
+  <section className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">
+    <h3 className="mb-2 font-bold">Notes &amp; Abbreviations</h3>
+    <p className="mb-1 font-semibold">{title}</p>
+    <ul className="list-inside list-disc text-xs">
+      {entries.map(([abbreviation, meaning]) => (
+        <li key={abbreviation}><strong>{abbreviation}</strong>: {meaning}</li>
+      ))}
+    </ul>
+  </section>
+);
+
+const ResidentNotes = () => (
+  <FormNotes title="Residents" entries={[['HH', 'Household']]} />
+);
+
+const WomenNotes = () => (
+  <FormNotes
+    title="Pregnant / Lactating Women"
+    entries={[
+      ['WT', 'Weight'],
+      ['HT', 'Height'],
+      ['BMI', 'Body Mass Index'],
+      ['MUAC', 'Mid-Upper Arm Circumference'],
+    ]}
+  />
+);
+
+const NatalityNotes = () => (
+  <FormNotes
+    title="Monthly Natality"
+    entries={[
+      ['AIM', 'Age in Months'],
+      ['W/A', 'Weight for Age'],
+      ['H/A', 'Height for Age'],
+      ['W/L/H', 'Weight for Length/Height'],
+    ]}
+  />
+);
 
 // Environmental Sanitation Form
 export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
@@ -19,6 +60,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
     water_level_i: false,
     water_level_ii: false,
     water_level_iii: false,
+    without_potable_water: false,
     toilet_sanitary: false,
     toilet_not_sanitary: false,
     selling_iodized_sari: false,
@@ -192,6 +234,15 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
               className="w-5 h-5 text-green-600 rounded"
             />
             <span className="text-gray-700">Level III (Other)</span>
+          </label>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={formData.without_potable_water}
+              onChange={(e) => setFormData({...formData, without_potable_water: e.target.checked})}
+              className="w-5 h-5 text-green-600 rounded"
+            />
+            <span className="text-gray-700">Without potable water source</span>
           </label>
         </div>
       </div>
@@ -583,6 +634,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
         <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg" rows="3" />
       </div>
+      <ResidentNotes />
       <div className="flex gap-3">
         <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-bold disabled:opacity-50">
           {isSubmitting ? 'Saving...' : initialData ? 'Update Resident' : 'Save Resident Data'}
@@ -649,6 +701,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
     setIsSubmitting(true);
     onSubmit({
       ...formData,
+      age: calculateAgeInYears(formData.birthday),
       category: 'pregnantwoman',
       id: initialData?.id || Date.now(),
       synced: initialData?.synced ?? false,
@@ -725,7 +778,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Age *</label>
-          <input type="number" required min="10" max="60" value={formData.age} onChange={(e) => updateField('age', e.target.value)} className={fieldClass} />
+          <input type="number" required min="10" max="60" readOnly value={calculateAgeInYears(formData.birthday)} className={`${fieldClass} bg-gray-50`} />
         </div>
       </div>
 
@@ -790,6 +843,8 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
         </div>
       </div>
 
+      <WomenNotes />
+
       <div className="flex gap-3 pt-2">
         <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white py-3 rounded-lg font-bold disabled:opacity-50">
           {isSubmitting ? 'Saving...' : 'Save Registration'}
@@ -851,6 +906,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
     setIsSubmitting(true);
     onSubmit({
       ...formData,
+      age: calculateAgeInYears(formData.birthday),
       category: 'lactatingwoman',
       id: initialData?.id || Date.now(),
       synced: initialData?.synced ?? false,
@@ -927,7 +983,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Age *</label>
-          <input type="number" required min="10" max="60" value={formData.age} onChange={(e) => updateField('age', e.target.value)} className={fieldClass} />
+          <input type="number" required min="10" max="60" readOnly value={calculateAgeInYears(formData.birthday)} className={`${fieldClass} bg-gray-50`} />
         </div>
       </div>
 
@@ -986,6 +1042,8 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
         <input type="date" required value={formData.date_delivered} onChange={(e) => updateField('date_delivered', e.target.value)} className={fieldClass} />
       </div>
 
+      <WomenNotes />
+
       <div className="flex gap-3 pt-2">
         <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-red-600 to-red-700 text-white py-3 rounded-lg font-bold disabled:opacity-50">
           {isSubmitting ? 'Saving...' : 'Save Registration'}
@@ -998,47 +1056,43 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
   );
 };
 
-// Monthly Natality with Weight & Height (BNS template)
+// Monthly Natality with weight, length, and height (BNS template)
 export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
   const fieldClass = 'w-full px-4 py-2 border-2 border-amber-300 rounded-lg text-sm';
 
-  const [formData, setFormData] = useState(() => ({
-    purok: '',
-    month: new Date().toISOString().slice(0, 7),
-    mother_name: '',
-    mother_age: '',
-    child_name: '',
-    dob: '',
-    birth_weight: '',
-    dow: new Date().toISOString().split('T')[0],
-    weight_kg: '',
-    height_cm: '',
-    aim: '',
-    w_a: '',
-    h_a: '',
-    w_l_h: '',
-    iron_status: '',
-    remarks: '',
-    visited_by: userName,
-    ...initialData,
-  }));
+  const [formData, setFormData] = useState(() => {
+    const initial = {
+      purok: '',
+      month: new Date().toISOString().slice(0, 7),
+      mother_name: '',
+      mother_age: '',
+      child_name: '',
+      sex: '',
+      dob: '',
+      birth_weight: '',
+      dow: new Date().toISOString().split('T')[0],
+      weight_kg: '',
+      height_cm: '',
+      length_cm: '',
+      aim: '',
+      w_a: '',
+      h_a: '',
+      w_l_h: '',
+      iron_status: '',
+      remarks: '',
+      visited_by: userName,
+      ...initialData,
+    };
+    return { ...initial, aim: getCompletedAgeInMonths(initial.dob, initial.dow) };
+  });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  const calcAgeInMonths = (dob, dow) => {
-    if (!dob || !dow) return '';
-    const birth = new Date(dob);
-    const weigh = new Date(dow);
-    let months = (weigh.getFullYear() - birth.getFullYear()) * 12 + (weigh.getMonth() - birth.getMonth());
-    if (weigh.getDate() < birth.getDate()) months -= 1;
-    return months >= 0 ? String(months) : '';
-  };
 
   const updateField = (key, value) => {
     setFormData((prev) => {
       const next = { ...prev, [key]: value };
       if (key === 'dob' || key === 'dow') {
-        next.aim = calcAgeInMonths(
+        next.aim = getCompletedAgeInMonths(
           key === 'dob' ? value : prev.dob,
           key === 'dow' ? value : prev.dow
         );
@@ -1047,11 +1101,23 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
     });
   };
 
+  const growthStatuses = calculateWhoGrowthStatuses({
+    sex: formData.sex,
+    birthday: formData.dob,
+    weighingDate: formData.dow,
+    weightKg: formData.weight_kg,
+    lengthCm: formData.length_cm,
+    heightCm: formData.height_cm,
+  });
+  const useHeight = Number(formData.aim) >= 24;
+
   const handleSubmit = (e) => {
     e.preventDefault();
     setIsSubmitting(true);
     onSubmit({
       ...formData,
+      aim: getCompletedAgeInMonths(formData.dob, formData.dow),
+      ...growthStatuses,
       category: 'monthlynatal',
       id: initialData?.id || Date.now(),
       synced: initialData?.synced ?? false,
@@ -1063,12 +1129,10 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
     setIsSubmitting(false);
   };
 
-  const statusOptions = ['', 'Normal', 'Underweight', 'Overweight', 'Stunted', 'Wasted', 'At Risk'];
-
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <p className="text-xs font-bold text-amber-800 uppercase tracking-wide">
-        Monthly Natality with Weight &amp; Height — Barangay Alawihao
+        Monthly Natality with Weight, Length &amp; Height — Barangay Alawihao
       </p>
 
       <div>
@@ -1078,9 +1142,19 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
           {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
         </select>
       </div>
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Month *</label>
-        <input type="month" required value={formData.month} onChange={(e) => updateField('month', e.target.value)} className={fieldClass} />
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Month *</label>
+          <input type="month" required value={formData.month} onChange={(e) => updateField('month', e.target.value)} className={fieldClass} />
+        </div>
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Sex of Child *</label>
+          <select required value={formData.sex} onChange={(e) => updateField('sex', e.target.value)} className={fieldClass}>
+            <option value="">Select...</option>
+            <option value="boys">Male</option>
+            <option value="girls">Female</option>
+          </select>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -1098,63 +1172,79 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Child *</label>
         <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', e.target.value)} className={fieldClass} />
       </div>
-
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">DOB *</label>
-          <input type="date" required value={formData.dob} onChange={(e) => updateField('dob', e.target.value)} className={fieldClass} />
+          <input type="date" required max={formData.dow || undefined} value={formData.dob} onChange={(e) => updateField('dob', e.target.value)} className={fieldClass} />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Birth Weight (kg)</label>
           <input type="number" step="0.01" min="0" value={formData.birth_weight} onChange={(e) => updateField('birth_weight', e.target.value)} className={fieldClass} />
         </div>
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">DOW (Date of Weighing) *</label>
-          <input type="date" required value={formData.dow} onChange={(e) => updateField('dow', e.target.value)} className={fieldClass} />
-        </div>
+      </div>
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">DOW (Date of Weighing) *</label>
+        <input type="date" required min={formData.dob || undefined} max={new Date().toISOString().split('T')[0]} value={formData.dow} onChange={(e) => updateField('dow', e.target.value)} className={fieldClass} />
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Wt (kg) *</label>
-          <input type="number" required step="0.01" min="0" value={formData.weight_kg} onChange={(e) => updateField('weight_kg', e.target.value)} className={fieldClass} />
+          <input type="number" required step="0.01" min="0.01" value={formData.weight_kg} onChange={(e) => updateField('weight_kg', e.target.value)} className={fieldClass} />
         </div>
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Ht (cm) *</label>
-          <input type="number" required step="0.1" min="0" value={formData.height_cm} onChange={(e) => updateField('height_cm', e.target.value)} className={fieldClass} />
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Height (cm) {useHeight ? '*' : ''}</label>
+          <input
+            type="number"
+            required={useHeight}
+            step="0.1"
+            min="1"
+            value={formData.height_cm}
+            onChange={(e) => updateField('height_cm', e.target.value)}
+            className={fieldClass}
+          />
         </div>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">AIM (Age in Months)</label>
           <input type="text" readOnly value={formData.aim} className={`${fieldClass} bg-gray-50`} placeholder="Auto from DOB & DOW" />
         </div>
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Length (cm) {useHeight ? '' : '*'}</label>
+          <input
+            type="number"
+            required={!useHeight}
+            step="0.1"
+            min="1"
+            value={formData.length_cm}
+            onChange={(e) => updateField('length_cm', e.target.value)}
+            className={fieldClass}
+          />
+        </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">W/A *</label>
-          <select required value={formData.w_a} onChange={(e) => updateField('w_a', e.target.value)} className={fieldClass}>
-            {statusOptions.map((opt) => (
-              <option key={opt || 'blank'} value={opt}>{opt || 'Select...'}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">H/A *</label>
-          <select required value={formData.h_a} onChange={(e) => updateField('h_a', e.target.value)} className={fieldClass}>
-            {statusOptions.map((opt) => (
-              <option key={opt || 'blank-ha'} value={opt}>{opt || 'Select...'}</option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">W/L/H *</label>
-          <select required value={formData.w_l_h} onChange={(e) => updateField('w_l_h', e.target.value)} className={fieldClass}>
-            {statusOptions.map((opt) => (
-              <option key={opt || 'blank-wlh'} value={opt}>{opt || 'Select...'}</option>
-            ))}
-          </select>
-        </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        {[
+          ['W/A (WHO)', growthStatuses.w_a],
+          ['H/A (WHO)', growthStatuses.h_a],
+          ['W/L/H (WHO)', growthStatuses.w_l_h],
+        ].map(([label, value]) => (
+          <div key={label}>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">{label}</label>
+            <input
+              type="text"
+              readOnly
+              value={value}
+              placeholder="Auto-calculated"
+              className={`${fieldClass} bg-gray-50`}
+            />
+          </div>
+        ))}
       </div>
+      <p className="text-xs text-gray-600">
+        Nutrition classifications update automatically from the child’s sex, age, weight, and length/height using WHO Child Growth Standards (2006). Standards cover ages 0–60 months.
+      </p>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
@@ -1166,6 +1256,8 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
           <textarea rows="2" value={formData.remarks} onChange={(e) => updateField('remarks', e.target.value)} className={fieldClass} placeholder="Additional notes" />
         </div>
       </div>
+
+      <NatalityNotes />
 
       <div className="flex gap-3 pt-2">
         <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-amber-500 to-yellow-600 text-white py-3 rounded-lg font-bold disabled:opacity-50">
@@ -1179,25 +1271,52 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
   );
 };
 
-const FEEDING_METHODS = ['', 'EBF', 'Mixed', 'Formula', 'Water/Tea', 'Other'];
+const FEEDING_METHODS = [
+  { value: '', label: '— Not yet / N/A —' },
+  { value: 'E', label: 'E — Exclusive Breastfeeding' },
+  { value: 'M', label: 'M — Mixed Feeding' },
+  { value: 'N', label: 'N — Not Breastfeeding' },
+];
+
+function normalizeFeedingMethod(value) {
+  const method = String(value || '').trim().toLowerCase();
+  if (!method) return '';
+  if (['e', 'ebf', 'exclusive breastfeeding'].includes(method)) return 'E';
+  if (['m', 'mixed', 'mixed feeding'].includes(method)) return 'M';
+  if (['n', 'not breastfeeding', 'formula', 'water/tea', 'other'].includes(method)) return 'N';
+  return '';
+}
 
 // Infant Feeding — Edad ng Sanggol sa Pagbisita (BNS template)
 export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
   const fieldClass = 'w-full px-4 py-2 border-2 border-pink-300 rounded-lg text-sm';
 
-  const [formData, setFormData] = useState(() => ({
-    purok: '',
-    mother_name: '',
-    child_name: '',
-    feeding_1_week: '',
-    feeding_1_month: '',
-    feeding_2_month: '',
-    feeding_3_month: '',
-    feeding_4_month: '',
-    feeding_5_month: '',
-    visited_by: userName,
-    ...initialData,
-  }));
+  const [formData, setFormData] = useState(() => {
+    const initial = {
+      purok: '',
+      mother_name: '',
+      child_name: '',
+      feeding_1_week: '',
+      feeding_1_month: '',
+      feeding_2_month: '',
+      feeding_3_month: '',
+      feeding_4_month: '',
+      feeding_5_month: '',
+      visited_by: userName,
+      ...initialData,
+    };
+    return Object.fromEntries([
+      ...Object.entries(initial),
+      ...[
+        'feeding_1_week',
+        'feeding_1_month',
+        'feeding_2_month',
+        'feeding_3_month',
+        'feeding_4_month',
+        'feeding_5_month',
+      ].map((key) => [key, normalizeFeedingMethod(initial[key])]),
+    ]);
+  });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -1253,6 +1372,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
 
       <div className="space-y-3 bg-pink-50 rounded-xl p-4 border border-pink-200">
         <p className="text-xs font-semibold text-pink-900">Feeding method at each visit age</p>
+        <p className="text-xs text-pink-800">E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding</p>
         {feedingFields.map(({ key, label }) => (
           <div key={key}>
             <label className="block text-sm font-semibold text-gray-700 mb-2">{label}</label>
@@ -1261,8 +1381,8 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
               onChange={(e) => updateField(key, e.target.value)}
               className={fieldClass}
             >
-              {FEEDING_METHODS.map((opt) => (
-                <option key={opt || `blank-${key}`} value={opt}>{opt || '— Not yet / N/A —'}</option>
+              {FEEDING_METHODS.map((method) => (
+                <option key={method.value || `blank-${key}`} value={method.value}>{method.label}</option>
               ))}
             </select>
           </div>

@@ -1,625 +1,650 @@
-import React, { useState } from 'react';
-import { MapContainer, TileLayer, CircleMarker, Popup, Tooltip } from 'react-leaflet';
+import React, { useMemo, useState } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMapEvents } from 'react-leaflet';
+import { divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AlertCircle, TrendingUp, Users, Activity, Droplet } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
+import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
+import { normalizePurokName, PUROK_OPTIONS } from '../utils/purok';
 
-/**
- * NUTRIGRID - INTERACTIVE HEAT MAP
- * Barangay Alawihao (10 Puroks) - Real Color Coding from Spot Map
- * Admin Dashboard Feature
- */
+const COLORS = {
+  green: '#22c55e',
+  yellow: '#eab308',
+  red: '#ef4444',
+  orange: '#f97316',
+  pink: '#ec4899',
+  violet: '#a855f7',
+  maroon: '#7c2d12',
+  purple: '#9333ea',
+  brown: '#78350f',
+  blue: '#3b82f6',
+  black: '#000000',
+  gray: '#6b7280',
+};
 
-const InteractiveMapComponent = ({ onPurokSelect, darkMode = false }) => {
-  const [selectedPurok, setSelectedPurok] = useState(null);
-  const [heatMapMode, setHeatMapMode] = useState('nutritional'); // 'nutritional' or 'wash'
+const ALAWIHAO_CENTERS = [
+  [14.1093473, 122.9291014],
+  [14.1102473, 122.9297514],
+  [14.1102473, 122.9284514],
+  [14.1093473, 122.9304014],
+  [14.1093473, 122.9278014],
+  [14.1084473, 122.9297514],
+  [14.1084473, 122.9284514],
+  [14.1108973, 122.9304014],
+  [14.1108973, 122.9278014],
+  [14.1077973, 122.9291014],
+];
+
+const COLOR_CATEGORIES = [
+  { key: 'green', label: 'Normal weight / length / height' },
+  { key: 'yellow', label: 'Underweight / stunted / wasted' },
+  { key: 'red', label: 'Severely underweight / stunted / wasted' },
+  { key: 'orange', label: 'Overweight / obese' },
+  { key: 'pink', label: 'Pregnant women' },
+  { key: 'violet', label: 'Lactating women' },
+  { key: 'maroon', label: 'Exclusive breastfeeding' },
+  { key: 'purple', label: 'Complementary feeding' },
+  { key: 'brown', label: 'Infants 0–11 months' },
+  { key: 'blue', label: 'Households with more than 5 members' },
+  { key: 'black', label: 'No potable water source' },
+  { key: 'gray', label: 'No sanitary toilet' },
+];
+
+const unwrap = (record) => record?._raw || record || {};
+
+function toBoolean(value) {
+  if (value === true || value === 1 || value === '1') return true;
+  if (value === false || value === 0 || value === '0') return false;
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'true') return true;
+  if (normalized === 'false') return false;
+  return null;
+}
+
+function hasRecordedStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  return status !== '' && !['—', '-', 'n/a', 'na'].includes(status);
+}
+
+function normalizeGrowthStatus(value) {
+  const status = String(value || '').trim().toLowerCase();
+  const abbreviations = {
+    n: 'normal',
+    uw: 'underweight',
+    st: 'stunted',
+    w: 'wasted',
+    suw: 'severely underweight',
+    sst: 'severely stunted',
+    sw: 'severely wasted',
+    ow: 'overweight',
+    ob: 'obese',
+  };
+  return abbreviations[status] || status;
+}
+
+function numericCount(value) {
+  if (value === null || value === undefined || String(value).trim() === '') return null;
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? count : null;
+}
+
+function getChildKey(record, index) {
+  const raw = unwrap(record);
+  const birthDate = raw.dob || '';
+  const childName = raw.child_name || raw.name_of_child || '';
+  const childKey = birthDate && childName
+    ? `${birthDate}:${childName.toLowerCase()}`
+    : String(record.id ?? `${raw.dow || ''}:${index}`);
+  return `${normalizePurokName(raw.purok) || ''}:${childKey}`;
+}
+
+function getNutritionClassification(record) {
+  const raw = unwrap(record);
+  const sex = String(raw.sex || '').trim().toLowerCase();
+  const calculated = calculateWhoGrowthStatuses({
+    sex: sex === 'male' ? 'boys' : sex === 'female' ? 'girls' : sex,
+    birthday: raw.dob,
+    weighingDate: raw.dow,
+    weightKg: raw.weight_kg ?? raw.wt_kg,
+    lengthCm: raw.length_cm,
+    heightCm: raw.height_cm ?? raw.ht_cm,
+  });
+  const storedStatuses = [raw.w_a, raw.h_a, raw.w_l_h];
+  const calculatedStatuses = [calculated.w_a, calculated.h_a, calculated.w_l_h];
+  const statuses = storedStatuses.map((status, index) =>
+    hasRecordedStatus(status) ? status : calculatedStatuses[index]
+  ).map(normalizeGrowthStatus)
+    .map((status) => ['—', '-', 'n/a', 'na'].includes(status) ? '' : status);
+  const recordedStatuses = statuses.filter(Boolean);
+  if (!recordedStatuses.length) return null;
+
+  const severelyUnderweight = statuses.includes('severely underweight');
+  const underweight = statuses.includes('underweight');
+  const severelyStunted = statuses.includes('severely stunted');
+  const stunted = statuses.includes('stunted');
+  const severelyWasted = statuses.includes('severely wasted');
+  const wasted = statuses.includes('wasted');
+  const overweight = statuses.includes('overweight');
+  const obese = statuses.includes('obese');
+  const critical =
+    severelyUnderweight || severelyStunted || severelyWasted;
+  const atRisk =
+    underweight ||
+    stunted ||
+    wasted ||
+    overweight ||
+    obese ||
+    statuses.includes('high weight-for-age') ||
+    statuses.includes('at risk of overweight');
+
+  return {
+    statuses,
+    normal: recordedStatuses.every((status) => status === 'normal'),
+    critical,
+    atRisk: !critical && atRisk,
+    underweight,
+    severelyUnderweight,
+    stunted,
+    severelyStunted,
+    wasted,
+    severelyWasted,
+    overweight,
+    obese,
+  };
+}
+
+function makePurokStats(name, datasets) {
+  const recordsForPurok = (records) =>
+    records.filter((record) => normalizePurokName(record.purok) === name);
+  const residents = recordsForPurok(datasets.households);
+  const children = recordsForPurok(datasets.natality);
+  const pregnant = recordsForPurok(datasets.pregnant);
+  const lactating = recordsForPurok(datasets.lactating);
+  const feeding = recordsForPurok(datasets.feeding);
+  const wash = recordsForPurok(datasets.environmental);
+  const latestWashRecord = wash.reduce((latest, record) => {
+    const raw = unwrap(record);
+    const latestRaw = latest ? unwrap(latest) : null;
+    return !latest || String(raw.visit_date || raw.created_at || '') >
+      String(latestRaw.visit_date || latestRaw.created_at || '')
+      ? record
+      : latest;
+  }, null);
+
+  const latestChildRecords = new Map();
+  children.forEach((record, index) => {
+    const raw = unwrap(record);
+    const key = getChildKey(record, index);
+    const current = latestChildRecords.get(key);
+    const visitDate = raw.dow || '';
+    if (!current || visitDate > current.visitDate) {
+      latestChildRecords.set(key, { record, raw, visitDate });
+    }
+  });
+
+  const stats = {
+    children: latestChildRecords.size,
+    classifiedChildren: 0,
+    normal: 0,
+    normalRate: null,
+    atRisk: 0,
+    criticallyMalnourished: 0,
+    underweight: 0,
+    severelyUnderweight: 0,
+    stunted: 0,
+    severelyStunted: 0,
+    wasted: 0,
+    severelyWasted: 0,
+    overweight: 0,
+    obese: 0,
+    pregnant: pregnant.length,
+    lactating: lactating.length,
+    exclusiveBreastfeeding: 0,
+    complementaryFeeding: 0,
+    infants: feeding.length,
+    largeFamilies: 0,
+    noPotableWater: 0,
+    noSanitaryToilets: 0,
+    washRecords: wash.length,
+    households: residents.length,
+    population: 0,
+    families: numericCount(
+      latestWashRecord
+        ? unwrap(latestWashRecord).total_families ?? latestWashRecord.totalFamilies
+        : null
+    ) ?? 0,
+    categoryCounts: {
+      green: 0,
+      yellow: 0,
+      red: 0,
+      orange: 0,
+      pink: pregnant.length,
+      violet: lactating.length,
+      maroon: 0,
+      purple: 0,
+      brown: feeding.length,
+      blue: 0,
+    },
+  };
+
+  latestChildRecords.forEach(({ record, raw }) => {
+    const classification = getNutritionClassification(record);
+    if (!classification) return;
+    stats.classifiedChildren += 1;
+    if (classification.critical) stats.categoryCounts.red += 1;
+    else if (classification.overweight || classification.obese) stats.categoryCounts.orange += 1;
+    else if (classification.atRisk) stats.categoryCounts.yellow += 1;
+    else if (classification.normal) stats.categoryCounts.green += 1;
+    if (classification.normal) stats.normal += 1;
+    if (classification.critical) stats.criticallyMalnourished += 1;
+    else if (classification.atRisk) stats.atRisk += 1;
+    if (classification.underweight) stats.underweight += 1;
+    if (classification.severelyUnderweight) stats.severelyUnderweight += 1;
+    if (classification.stunted) stats.stunted += 1;
+    if (classification.severelyStunted) stats.severelyStunted += 1;
+    if (classification.wasted) stats.wasted += 1;
+    if (classification.severelyWasted) stats.severelyWasted += 1;
+    if (classification.overweight) stats.overweight += 1;
+    if (classification.obese) stats.obese += 1;
+  });
+  if (stats.classifiedChildren > 0) {
+    stats.normalRate = (stats.normal / stats.classifiedChildren) * 100;
+  }
+
+  feeding.forEach((record) => {
+    const raw = unwrap(record);
+    const values = [
+      raw.feeding_1_week,
+      raw.feeding_1_month,
+      raw.feeding_2_month,
+      raw.feeding_3_month,
+      raw.feeding_4_month,
+      raw.feeding_5_month,
+      record.week1,
+      record.month1,
+      record.month2,
+      record.month3,
+      record.month4,
+      record.month5,
+    ].map((value) => String(value || '').trim().toLowerCase());
+    if (values.some((value) => ['e', 'ebf'].includes(value) || value.includes('exclusive'))) {
+      stats.exclusiveBreastfeeding += 1;
+      stats.categoryCounts.maroon += 1;
+    }
+    if (
+      values.some((value) =>
+        ['m', 'mixed'].includes(value) || value.includes('complementary')
+      )
+    ) {
+      stats.complementaryFeeding += 1;
+      stats.categoryCounts.purple += 1;
+    }
+  });
+
+  wash.forEach((record) => {
+    const raw = unwrap(record);
+    if (toBoolean(raw.toilet_not_sanitary) === true) stats.noSanitaryToilets += 1;
+    if (toBoolean(raw.without_potable_water) === true) stats.noPotableWater += 1;
+  });
+
+  residents.forEach((record) => {
+    const raw = unwrap(record);
+    const members = numericCount(raw.total_members ?? record.members);
+    if (members !== null) {
+      stats.population += members;
+      if (members > 5) {
+        stats.largeFamilies += 1;
+        stats.categoryCounts.blue += 1;
+      }
+    }
+  });
+
+  const reportedHouseholds = numericCount(
+    latestWashRecord
+      ? unwrap(latestWashRecord).total_hh ?? latestWashRecord.totalHH
+      : null
+  );
+  if (reportedHouseholds !== null) stats.households = reportedHouseholds;
+
+  stats.categoryMarkers = COLOR_CATEGORIES
+    .filter(({ key }) => (stats.categoryCounts[key] || 0) > 0)
+    .map(({ key, label }) => ({
+      key,
+      label,
+      color: COLORS[key],
+      count: stats.categoryCounts[key],
+    }));
+
+  return stats;
+}
+
+function getOffsetPosition(lat, lng, index, count, zoom, markerRadius) {
+  const angle = (2 * Math.PI * index) / Math.max(count, 1);
+  const latitudeRadians = (lat * Math.PI) / 180;
+  const metersPerPixel = (156543.03392 * Math.cos(latitudeRadians)) / (2 ** zoom);
+  const offsetMeters = markerRadius * 2.4 * metersPerPixel;
+  const latitudeOffset = offsetMeters / 111320;
+  const longitudeOffset = offsetMeters / (111320 * Math.cos(latitudeRadians));
+  return [
+    lat + Math.sin(angle) * latitudeOffset,
+    lng + Math.cos(angle) * longitudeOffset,
+  ];
+}
+
+function createPurokPin(color, size) {
+  const height = Math.round(size * 1.3);
+  return divIcon({
+    className: 'nutrigrid-map-pin',
+    html: `<svg width="${size}" height="${height}" viewBox="0 0 32 42" aria-hidden="true" style="overflow:visible;filter:drop-shadow(0 2px 3px rgba(15,23,42,.4))">
+      <path d="M16 41S3 25.8 3 16A13 13 0 1 1 29 16C29 25.8 16 41 16 41Z" fill="${color}" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/>
+      <circle cx="16" cy="16" r="5" fill="#fff" stroke="rgba(15,23,42,.18)" stroke-width="1"/>
+    </svg>`,
+    iconSize: [size, height],
+    iconAnchor: [size / 2, height],
+    popupAnchor: [0, -height + 3],
+    tooltipAnchor: [0, -height + 2],
+  });
+}
+
+function MapZoomTracker({ onZoomChange }) {
+  useMapEvents({
+    zoomend(event) {
+      onZoomChange(event.target.getZoom());
+    },
+  });
+  return null;
+}
+
+const InteractiveMapComponent = ({
+  darkMode = false,
+  households = [],
+  pregnantWomenData = [],
+  lactatingWomenData = [],
+  infantFeedingData = [],
+  environmentalSanitationData = [],
+  natalityData = [],
+  dataStatus = 'loading',
+}) => {
+  const [mapMode, setMapMode] = useState('nutritional');
+  const [mapZoom, setMapZoom] = useState(15);
   const panelClass = darkMode ? 'bg-[#26263B] border-[#333348]' : 'bg-white border-gray-200';
-  const softPanelClass = darkMode ? 'bg-[#202031]' : 'bg-gray-50';
   const primaryTextClass = darkMode ? 'text-white' : 'text-gray-900';
   const secondaryTextClass = darkMode ? 'text-slate-300' : 'text-gray-600';
 
-  // Color Legend from Barangay Spot Map (2026 Data)
-  const COLOR_LEGEND = {
-    // Nutritional Status (Children)
-    green: '#22c55e',      // 96.90% - Normal weight/length/height
-    yellow: '#eab308',     // 1.60% - Underweight/stunted/wasted
-    red: '#ef4444',        // 0.3-0.7% - Severely underweight/stunted/wasted
-    orange: '#f97316',     // 0.6-0.7% - Overweight/obese
-    
-    // Maternal/Child Health
-    pink: '#ec4899',       // Pregnant women
-    violet: '#a855f7',     // Lactating women
-    maroon: '#7c2d12',     // Exclusive breastfeeding (0-6mo)
-    purple: '#9333ea',     // Complementary + breastmilk (6mo+)
-    
-    // Household/Environmental
-    brown: '#78350f',      // With infants 0-11 months
-    blue: '#3b82f6',       // Large family size (>5 members)
-    black: '#000000',      // No potable water
-    gray: '#6b7280'        // No sanitary toilets
-  };
+  const datasets = useMemo(() => ({
+    households,
+    pregnant: pregnantWomenData,
+    lactating: lactatingWomenData,
+    feeding: infantFeedingData,
+    environmental: environmentalSanitationData,
+    natality: natalityData,
+  }), [
+    households,
+    pregnantWomenData,
+    lactatingWomenData,
+    infantFeedingData,
+    environmentalSanitationData,
+    natalityData,
+  ]);
 
-  // Purok locations and health figures are illustrative until verified local data is available.
-  const PUROKS = [
-    {
-      id: 1,
-      name: 'Purok 1',
-      lat: 14.1097473,
-      lng: 122.9302014,
-      stats: {
-        // Nutritional Status (Children 0-5 years)
-        normal: 92,          // GREEN
-        underweight: 3,      // YELLOW
-        severely_underweight: 1, // RED
-        overweight: 1,       // ORANGE
-        total_children: 97,
-        
-        // Maternal Health
-        pregnant_women: 12,  // PINK
-        lactating_women: 8,  // VIOLET
-        
-        // Infant Feeding
-        exclusive_breastfed: 8,  // MAROON
-        complementary_breastfed: 9, // PURPLE
-        
-        // Household Info
-        infants_0_11mo: 15,  // BROWN
-        large_families: 125, // BLUE (>5 members)
-        
-        // Environmental/WASH
-        no_potable_water: 0, // BLACK
-        no_sanitary_toilets: 0, // GRAY
-        
-        // Health Indicators
-        vitamin_a_supplemented: 65,
-        macra_practicing_family_planning: 48,
-        children_attending_daycare: 11,
-        immunized_children: 23
-      }
-    },
-    {
-      id: 2,
-      name: 'Purok 2',
-      lat: 14.1106473,
-      lng: 122.9351014,
-      stats: {
-        normal: 85,
-        underweight: 4,
-        severely_underweight: 1,
-        overweight: 0,
-        total_children: 90,
-        pregnant_women: 14,
-        lactating_women: 9,
-        exclusive_breastfed: 7,
-        complementary_breastfed: 8,
-        infants_0_11mo: 18,
-        large_families: 118,
-        no_potable_water: 0,
-        no_sanitary_toilets: 1,
-        vitamin_a_supplemented: 58,
-        macra_practicing_family_planning: 52,
-        children_attending_daycare: 9,
-        immunized_children: 20
-      }
-    },
-    {
-      id: 3,
-      name: 'Purok 3',
-      lat: 14.1083473,
-      lng: 122.9251014,
-      stats: {
-        normal: 88,
-        underweight: 2,
-        severely_underweight: 0,
-        overweight: 1,
-        total_children: 91,
-        pregnant_women: 11,
-        lactating_women: 7,
-        exclusive_breastfed: 9,
-        complementary_breastfed: 10,
-        infants_0_11mo: 16,
-        large_families: 112,
-        no_potable_water: 0,
-        no_sanitary_toilets: 0,
-        vitamin_a_supplemented: 62,
-        macra_practicing_family_planning: 45,
-        children_attending_daycare: 12,
-        immunized_children: 22
-      }
-    },
-    {
-      id: 4,
-      name: 'Purok 4',
-      lat: 14.1128473,
-      lng: 122.9311014,
-      stats: {
-        normal: 95,
-        underweight: 1,
-        severely_underweight: 0,
-        overweight: 0,
-        total_children: 96,
-        pregnant_women: 10,
-        lactating_women: 6,
-        exclusive_breastfed: 10,
-        complementary_breastfed: 11,
-        infants_0_11mo: 14,
-        large_families: 108,
-        no_potable_water: 0,
-        no_sanitary_toilets: 0,
-        vitamin_a_supplemented: 68,
-        macra_practicing_family_planning: 50,
-        children_attending_daycare: 14,
-        immunized_children: 25
-      }
-    },
-    {
-      id: 5,
-      name: 'Purok 5',
-      lat: 14.1053473,
-      lng: 122.9301014,
-      stats: {
-        normal: 83,
-        underweight: 5,
-        severely_underweight: 1,
-        overweight: 1,
-        total_children: 90,
-        pregnant_women: 13,
-        lactating_women: 8,
-        exclusive_breastfed: 7,
-        complementary_breastfed: 8,
-        infants_0_11mo: 17,
-        large_families: 120,
-        no_potable_water: 0,
-        no_sanitary_toilets: 2,
-        vitamin_a_supplemented: 55,
-        macra_practicing_family_planning: 43,
-        children_attending_daycare: 8,
-        immunized_children: 18
-      }
-    },
-    {
-      id: 6,
-      name: 'Purok 6',
-      lat: 14.1093473,
-      lng: 122.9291014,
-      stats: {
-        normal: 94,
-        underweight: 1,
-        severely_underweight: 0,
-        overweight: 0,
-        total_children: 95,
-        pregnant_women: 9,
-        lactating_women: 7,
-        exclusive_breastfed: 11,
-        complementary_breastfed: 12,
-        infants_0_11mo: 13,
-        large_families: 105,
-        no_potable_water: 0,
-        no_sanitary_toilets: 0,
-        vitamin_a_supplemented: 70,
-        macra_practicing_family_planning: 55,
-        children_attending_daycare: 16,
-        immunized_children: 27
-      }
-    },
-    {
-      id: 7,
-      name: 'Purok 7',
-      lat: 14.1118473,
-      lng: 122.9371014,
-      stats: {
-        normal: 86,
-        underweight: 3,
-        severely_underweight: 1,
-        overweight: 0,
-        total_children: 90,
-        pregnant_women: 11,
-        lactating_women: 8,
-        exclusive_breastfed: 8,
-        complementary_breastfed: 9,
-        infants_0_11mo: 15,
-        large_families: 115,
-        no_potable_water: 0,
-        no_sanitary_toilets: 1,
-        vitamin_a_supplemented: 60,
-        macra_practicing_family_planning: 47,
-        children_attending_daycare: 10,
-        immunized_children: 21
-      }
-    },
-    {
-      id: 8,
-      name: 'Purok 8',
-      lat: 14.1118473,
-      lng: 122.9231014,
-      stats: {
-        normal: 91,
-        underweight: 2,
-        severely_underweight: 0,
-        overweight: 1,
-        total_children: 94,
-        pregnant_women: 10,
-        lactating_women: 7,
-        exclusive_breastfed: 9,
-        complementary_breastfed: 10,
-        infants_0_11mo: 14,
-        large_families: 110,
-        no_potable_water: 0,
-        no_sanitary_toilets: 0,
-        vitamin_a_supplemented: 66,
-        macra_practicing_family_planning: 51,
-        children_attending_daycare: 13,
-        immunized_children: 24
-      }
-    },
-    {
-      id: 9,
-      name: 'Purok 9',
-      lat: 14.1063473,
-      lng: 122.9371014,
-      stats: {
-        normal: 87,
-        underweight: 4,
-        severely_underweight: 1,
-        overweight: 0,
-        total_children: 92,
-        pregnant_women: 12,
-        lactating_women: 8,
-        exclusive_breastfed: 7,
-        complementary_breastfed: 8,
-        infants_0_11mo: 16,
-        large_families: 122,
-        no_potable_water: 0,
-        no_sanitary_toilets: 1,
-        vitamin_a_supplemented: 58,
-        macra_practicing_family_planning: 46,
-        children_attending_daycare: 9,
-        immunized_children: 19
-      }
-    },
-    {
-      id: 10,
-      name: 'Purok 10',
-      lat: 14.1063473,
-      lng: 122.9231014,
-      stats: {
-        normal: 89,
-        underweight: 3,
-        severely_underweight: 0,
-        overweight: 1,
-        total_children: 93,
-        pregnant_women: 11,
-        lactating_women: 8,
-        exclusive_breastfed: 8,
-        complementary_breastfed: 9,
-        infants_0_11mo: 15,
-        large_families: 116,
-        no_potable_water: 0,
-        no_sanitary_toilets: 0,
-        vitamin_a_supplemented: 64,
-        macra_practicing_family_planning: 49,
-        children_attending_daycare: 11,
-        immunized_children: 23
-      }
-    }
-  ];
-
-  // Calculate health status color for each purok
-  const getPurokColor = (stats) => {
-    const total = stats.total_children;
-    if (total === 0) return COLOR_LEGEND.gray;
-    
-    const normalPercent = (stats.normal / total) * 100;
-    
-    // Color coding based on nutritional status percentage
-    if (normalPercent >= 95) return COLOR_LEGEND.green;      // ≥95% normal
-    if (normalPercent >= 85) return COLOR_LEGEND.yellow;     // 85-94% normal
-    if (normalPercent >= 70) return COLOR_LEGEND.orange;     // 70-84% normal
-    return COLOR_LEGEND.red;                                  // <70% normal (critical)
-  };
-
-  // Calculate health status level
-  const getHealthStatus = (stats) => {
-    const total = stats.total_children;
-    if (total === 0) return 'Unknown';
-    
-    const normalPercent = (stats.normal / total) * 100;
-    
-    if (normalPercent >= 95) return '✅ Excellent';
-    if (normalPercent >= 85) return '⚠️ At Risk';
-    if (normalPercent >= 70) return '🔴 Critical';
-    return '🚨 Severe';
-  };
+  const puroks = useMemo(
+    () =>
+      PUROK_OPTIONS.map((name, index) => {
+        const stats = makePurokStats(name, datasets);
+        const [lat, lng] = ALAWIHAO_CENTERS[index];
+        return {
+          id: index + 1,
+          name,
+          lat,
+          lng,
+          stats,
+        };
+      }),
+    [datasets]
+  );
+  const totals = puroks.reduce(
+    (sum, purok) => ({
+      households: sum.households + purok.stats.households,
+      population: sum.population + purok.stats.population,
+      families: sum.families + purok.stats.families,
+      children: sum.children + purok.stats.children,
+      normal: sum.normal + purok.stats.normal,
+      atRisk: sum.atRisk + purok.stats.atRisk,
+      criticallyMalnourished: sum.criticallyMalnourished + purok.stats.criticallyMalnourished,
+    }),
+    { households: 0, population: 0, families: 0, children: 0, normal: 0, atRisk: 0, criticallyMalnourished: 0 }
+  );
+  const washTotals = puroks.reduce(
+    (summary, { stats }) => ({
+      records: summary.records + stats.washRecords,
+      households: summary.households + stats.households,
+      noPotableWater: summary.noPotableWater + stats.noPotableWater,
+      noSanitaryToilets: summary.noSanitaryToilets + stats.noSanitaryToilets,
+    }),
+    { records: 0, households: 0, noPotableWater: 0, noSanitaryToilets: 0 }
+  );
+  const markerSize = Math.min(46, Math.max(16, 16 + (mapZoom - 12) * 5));
 
   return (
     <div className="space-y-6">
-      {/* Map Title */}
-      <div className={`rounded-lg p-6 border ${darkMode ? 'bg-gradient-to-r from-slate-900 via-[#252242] to-[#351b4b] border-slate-700' : 'bg-gradient-to-r from-blue-50 to-purple-50 border-blue-200'}`}>
-        <div className="flex items-center justify-between mb-4">
-          <div>
+      <style>{`
+        .nutrigrid-map-pin { background: transparent; border: 0; }
+        .nutrigrid-purok-popup .leaflet-popup-content-wrapper {
+          border-radius: 16px;
+          padding: 8px 12px;
+          background: #fff;
+          color: #1f2937;
+          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
+        }
+        .nutrigrid-purok-popup .leaflet-popup-content {
+          margin: 8px 10px;
+          line-height: 1.5;
+          font-size: 14px;
+        }
+      `}</style>
+      <div className={`rounded-lg border p-6 ${darkMode ? 'border-slate-700 bg-gradient-to-r from-slate-900 via-[#252242] to-[#351b4b]' : 'border-blue-200 bg-gradient-to-r from-blue-50 to-purple-50'}`}>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
             <h2 className={`text-2xl font-bold ${primaryTextClass}`}>Barangay Alawihao, Daet, Camarines Norte</h2>
-            <p className={`${secondaryTextClass} mt-1`}>Interactive map with all 10 puroks</p>
+            <p className={`${secondaryTextClass} mt-1`}>{dataStatus === 'loaded' ? 'Shared Supabase data loaded' : dataStatus === 'offline' ? 'Showing saved Admin data offline' : 'Loading shared records'}</p>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setHeatMapMode('nutritional')}
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
-                heatMapMode === 'nutritional'
-                  ? 'bg-blue-600 text-white'
-                  : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
-            >
-              Nutritional Status
-            </button>
-            <button
-              onClick={() => setHeatMapMode('wash')}
-              className={`px-4 py-2 rounded-lg font-semibold transition ${
-                heatMapMode === 'wash'
-                  ? 'bg-blue-600 text-white'
-                  : darkMode ? 'bg-slate-700 text-slate-200 hover:bg-slate-600' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-              }`}
-            >
-              WASH Status
-            </button>
+          <div className="flex shrink-0 gap-2" role="group" aria-label="Map view">
+            {[
+              ['nutritional', 'Nutrition'],
+              ['wash', 'WASH'],
+            ].map(([mode, label]) => (
+              <button
+                key={mode}
+                type="button"
+                aria-pressed={mapMode === mode}
+                onClick={() => setMapMode(mode)}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
+                  mapMode === mode
+                    ? 'bg-blue-600 text-white'
+                    : darkMode
+                      ? 'bg-slate-700 text-slate-200 hover:bg-slate-600'
+                      : 'bg-white text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
           </div>
         </div>
-        <dl className={`grid grid-cols-3 gap-3 border-t pt-4 ${darkMode ? 'border-slate-700' : 'border-blue-200'}`} aria-label="Barangay population and household totals">
-          <div>
-            <dd className={`text-xl font-bold ${primaryTextClass}`}>13,302</dd>
-            <dt className={`text-xs ${secondaryTextClass}`}>Population</dt>
-          </div>
-          <div>
-            <dd className={`text-xl font-bold ${primaryTextClass}`}>3,099</dd>
-            <dt className={`text-xs ${secondaryTextClass}`}>Households</dt>
-          </div>
-          <div>
-            <dd className={`text-xl font-bold ${primaryTextClass}`}>3,639</dd>
-            <dt className={`text-xs ${secondaryTextClass}`}>Families</dt>
-          </div>
+        <dl className={`grid grid-cols-3 gap-3 border-t pt-4 text-center ${darkMode ? 'border-slate-700' : 'border-blue-200'}`}>
+          <div><dd className={`text-xl font-bold ${primaryTextClass}`}>13,302</dd><dt className={`text-xs ${secondaryTextClass}`}>Population</dt></div>
+          <div><dd className={`text-xl font-bold ${primaryTextClass}`}>3,099</dd><dt className={`text-xs ${secondaryTextClass}`}>Households</dt></div>
+          <div><dd className={`text-xl font-bold ${primaryTextClass}`}>3,639</dd><dt className={`text-xs ${secondaryTextClass}`}>Families</dt></div>
         </dl>
       </div>
 
-      {/* Map Container */}
-      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)] gap-6">
-        
-        {/* Left: Map */}
+      <div className="space-y-5">
         <div>
-          <div className={`relative z-0 isolate overflow-hidden rounded-lg shadow-lg border ${panelClass}`}>
+          <div className={`relative z-0 isolate overflow-hidden rounded-lg border shadow-lg ${panelClass}`}>
             <MapContainer
               center={[14.1093473, 122.9291014]}
               zoom={15}
               style={{ height: '500px', width: '100%' }}
               className="rounded-lg"
             >
-              {/* Base Map Layer */}
+              <MapZoomTracker onZoomChange={setMapZoom} />
               <TileLayer
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution="&copy; OpenStreetMap contributors"
               />
-
-              {/* Purok Markers */}
-              {PUROKS.map((purok) => {
-                const markerColor = getPurokColor(purok.stats);
-                const radius = 14;
-
+              {puroks.map((purok) => {
+                const washMarkers = [
+                  { key: 'black', label: 'Without potable water source', color: COLORS.black, count: purok.stats.noPotableWater },
+                  { key: 'gray', label: 'Without sanitary toilet', color: COLORS.gray, count: purok.stats.noSanitaryToilets },
+                ].filter((marker) => marker.count > 0);
+                const visibleMarkers = mapMode === 'nutritional'
+                  ? purok.stats.categoryMarkers
+                  : washMarkers;
                 return (
-                  <CircleMarker
-                    key={purok.id}
-                    center={[purok.lat, purok.lng]}
-                    radius={radius}
-                    fillColor={markerColor}
-                    color={markerColor}
-                    weight={3}
-                    opacity={0.9}
-                    fillOpacity={0.8}
-                    eventHandlers={{
-                      click: () => {
-                        setSelectedPurok(purok);
-                        onPurokSelect?.(purok);
-                      }
-                    }}
-                  >
-                    <Tooltip direction="top" offset={[0, -8]} permanent className={darkMode ? 'leaflet-tooltip-dark' : ''}>
-                      {purok.name}
-                    </Tooltip>
-                    <Popup className={darkMode ? 'leaflet-popup-dark' : ''}>
-                      <div className={`font-semibold ${primaryTextClass}`}>
-                        {purok.name}
-                      </div>
-                      <div className={`text-sm ${secondaryTextClass} mt-2`}>
-                        Children: {purok.stats.total_children}
-                      </div>
-                      <div className={`text-sm ${secondaryTextClass}`}>
-                        Normal nutritional status: {purok.stats.normal} ({((purok.stats.normal / purok.stats.total_children) * 100).toFixed(1)}%)
-                      </div>
-                    </Popup>
-                  </CircleMarker>
+                  <React.Fragment key={purok.id}>
+                    {mapMode === 'nutritional' && visibleMarkers.length === 0 && (
+                      <Marker
+                        position={[purok.lat, purok.lng]}
+                        icon={createPurokPin('#94a3b8', markerSize)}
+                      >
+                        <Tooltip direction="top" permanent>{purok.name}</Tooltip>
+                        <Popup
+                          className="nutrigrid-purok-popup"
+                          minWidth={Math.round(180 + markerSize * 2)}
+                          maxWidth={340}
+                        >
+                          <div className="text-base font-bold">{purok.name}</div>
+                          <div className="mt-1 text-sm">No nutrition records available.</div>
+                        </Popup>
+                      </Marker>
+                    )}
+                    {visibleMarkers.map((marker, index) => (
+                      <Marker
+                        key={`${purok.id}-${marker.key}`}
+                        position={getOffsetPosition(
+                          purok.lat,
+                          purok.lng,
+                          index,
+                          visibleMarkers.length,
+                          mapZoom,
+                          markerSize
+                        )}
+                        icon={createPurokPin(marker.color, markerSize)}
+                      >
+                        {index === 0 && (
+                          <Tooltip direction="top" permanent>{purok.name}</Tooltip>
+                        )}
+                        <Popup
+                          className="nutrigrid-purok-popup"
+                          minWidth={Math.round(180 + markerSize * 2)}
+                          maxWidth={340}
+                        >
+                          <div className="text-base font-bold">{purok.name}</div>
+                          <div className="mt-1 text-sm">{marker.label}: {marker.count}</div>
+                          {mapMode === 'nutritional' && ['orange', 'yellow'].includes(marker.key) && (
+                            <div
+                              role="alert"
+                              className={`mt-3 flex items-start gap-2 rounded-lg border p-3 text-sm font-bold ${
+                                marker.key === 'orange'
+                                  ? 'border-red-300 bg-red-50 text-red-800'
+                                  : 'border-amber-300 bg-amber-50 text-amber-900'
+                              }`}
+                            >
+                              <AlertTriangle size={20} className="shrink-0" aria-hidden="true" />
+                              <span>
+                                {marker.key === 'orange'
+                                  ? 'NEED OF FEEDING PROGRAM'
+                                  : 'NEED OF PARENTS GUIDE'}
+                              </span>
+                            </div>
+                          )}
+                        </Popup>
+                      </Marker>
+                    ))}
+                  </React.Fragment>
                 );
               })}
             </MapContainer>
           </div>
-
-          <p className={`mt-2 text-xs ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-            Purok positions are approximate; health figures shown here are sample data and should be replaced with verified barangay records.
+          <p className={`mt-2 text-xs ${secondaryTextClass}`}>
+            All ten purok markers are placed within Barangay Alawihao. Markers grow as you zoom in.
           </p>
-
-          {/* Color Legend */}
-          <div className={`mt-4 rounded-lg p-4 border ${panelClass}`}>
-            <h3 className={`font-bold ${primaryTextClass} mb-1`}>Color legend</h3>
-            <p className={`text-xs ${secondaryTextClass} mb-3`}>Share of children with normal nutritional status</p>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded-full" style={{ backgroundColor: COLOR_LEGEND.green }}></div>
-                <span className={`text-sm ${secondaryTextClass}`}>≥95%</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded-full" style={{ backgroundColor: COLOR_LEGEND.yellow }}></div>
-                <span className={`text-sm ${secondaryTextClass}`}>85-94%</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded-full" style={{ backgroundColor: COLOR_LEGEND.orange }}></div>
-                <span className={`text-sm ${secondaryTextClass}`}>70-84%</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 rounded-full" style={{ backgroundColor: COLOR_LEGEND.red }}></div>
-                <span className={`text-sm ${secondaryTextClass}`}>&lt;70%</span>
-              </div>
+          <div className={`mt-4 rounded-lg border p-4 ${panelClass}`}>
+            <h3 className={`mb-1 font-bold ${primaryTextClass}`}>Color legend</h3>
+            <p className={`mb-4 text-xs ${secondaryTextClass}`}>
+              {mapMode === 'nutritional'
+                ? 'Share of children with normal nutritional status'
+                : 'Environmental records from Supabase: water source and toilet sanitation'}
+            </p>
+            <div className={`grid grid-cols-2 gap-3 ${mapMode === 'nutritional' ? 'sm:grid-cols-4' : 'sm:grid-cols-2'}`}>
+              {(mapMode === 'nutritional'
+                ? [
+                  { color: COLORS.green, label: '≥95%' },
+                  { color: COLORS.yellow, label: '85–94%' },
+                  { color: COLORS.orange, label: '70–84%' },
+                  { color: COLORS.red, label: '<70%' },
+                ]
+                : [
+                  { color: COLORS.black, label: 'Without potable water source' },
+                  { color: COLORS.gray, label: 'Without sanitary toilet' },
+                ]
+              ).map(({ color, label }) => (
+                <div className={`flex items-center gap-2 text-sm ${secondaryTextClass}`} key={label}>
+                  <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: color }} />
+                  {label}
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        {/* Right: Selected Purok Details */}
-        <div>
-          {selectedPurok ? (
-            <div className={`rounded-lg shadow-lg border p-6 space-y-6 max-h-[600px] overflow-y-auto ${panelClass}`}>
-              
-              {/* Header */}
-              <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <div
-                    className="w-6 h-6 rounded-full"
-                    style={{ backgroundColor: getPurokColor(selectedPurok.stats) }}
-                  ></div>
-                  <h3 className={`text-lg font-bold ${primaryTextClass}`}>
-                    {selectedPurok.name}
-                  </h3>
-                </div>
-                <p className="text-sm font-semibold" style={{ color: getPurokColor(selectedPurok.stats) }}>
-                  {getHealthStatus(selectedPurok.stats)}
-                </p>
-              </div>
-
-              {/* Nutritional Status */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 font-bold text-gray-900">
-                  <Activity size={18} className="text-blue-600" />
-                  Nutritional Status
-                </div>
-                <div className={`rounded-lg p-3 space-y-2 ${softPanelClass}`}>
-                  <div className="flex justify-between text-sm">
-                    <span className={secondaryTextClass}>Normal nutritional status</span>
-                    <span className="font-semibold text-green-600">
-                      {selectedPurok.stats.normal} ({((selectedPurok.stats.normal / selectedPurok.stats.total_children) * 100).toFixed(1)}%)
-                    </span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className={secondaryTextClass}>Underweight</span>
-                    <span className="font-semibold text-yellow-600">{selectedPurok.stats.underweight}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className={secondaryTextClass}>Severely Underweight</span>
-                    <span className="font-semibold text-red-600">{selectedPurok.stats.severely_underweight}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className={secondaryTextClass}>Overweight/Obese</span>
-                    <span className="font-semibold text-orange-600">{selectedPurok.stats.overweight}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Maternal & Child Health */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 font-bold text-gray-900">
-                  <Users size={18} className="text-pink-600" />
-                  Maternal & Infant Health
-                </div>
-                <div className={`rounded-lg p-3 space-y-2 text-sm ${softPanelClass} ${!darkMode && 'bg-pink-50'}`}>
-                  <div className="flex justify-between">
-                    <span className={secondaryTextClass}>Pregnant Women</span>
-                    <span className="font-semibold">{selectedPurok.stats.pregnant_women}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className={secondaryTextClass}>Lactating Women</span>
-                    <span className="font-semibold">{selectedPurok.stats.lactating_women}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className={secondaryTextClass}>Exclusive Breastfed</span>
-                    <span className="font-semibold">{selectedPurok.stats.exclusive_breastfed}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className={secondaryTextClass}>Complementary Fed</span>
-                    <span className="font-semibold">{selectedPurok.stats.complementary_breastfed}</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* WASH Status */}
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 font-bold text-gray-900">
-                  <Droplet size={18} className="text-blue-600" />
-                  WASH Status
-                </div>
-                <div className={`rounded-lg p-3 space-y-2 text-sm ${softPanelClass} ${!darkMode && 'bg-blue-50'}`}>
-                  <div className="flex justify-between">
-                    <span className={secondaryTextClass}>No Potable Water</span>
-                    <span className="font-semibold text-red-600">
-                      {selectedPurok.stats.no_potable_water}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className={secondaryTextClass}>No Sanitary Toilets</span>
-                    <span className="font-semibold text-orange-600">
-                      {selectedPurok.stats.no_sanitary_toilets}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className={secondaryTextClass}>Large Families (&gt;5)</span>
-                    <span className="font-semibold text-blue-600">
-                      {selectedPurok.stats.large_families}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Actions */}
-              <div className={`pt-4 border-t space-y-2 ${darkMode ? 'border-slate-700' : 'border-gray-200'}`}>
-                <button className="w-full bg-blue-600 text-white py-2 rounded-lg font-semibold hover:bg-blue-700 transition">
-                  📊 View Records
-                </button>
-                <button className="w-full bg-green-600 text-white py-2 rounded-lg font-semibold hover:bg-green-700 transition">
-                  ➕ Assign Task
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className={`rounded-lg border-2 border-dashed p-6 text-center flex flex-col items-center justify-center h-full ${darkMode ? 'bg-slate-900 border-slate-700' : 'bg-gray-50 border-gray-300'}`}>
-              <AlertCircle size={32} className="text-gray-400 mb-3" />
-              <p className={`${secondaryTextClass} font-semibold`}>Click a purok on the map</p>
-              <p className={`${darkMode ? 'text-slate-400' : 'text-gray-500'} text-sm mt-1`}>to view details</p>
-            </div>
-          )}
-        </div>
       </div>
 
-      {/* Summary Stats */}
-      <div className={`rounded-lg p-6 border ${darkMode ? 'bg-gradient-to-r from-slate-900 to-[#202b3c] border-slate-700' : 'bg-gradient-to-r from-green-50 to-blue-50 border-green-200'}`}>
-        <h3 className={`font-bold ${primaryTextClass} mb-4`}>Barangay Summary (2026)</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className={`rounded-lg p-4 border ${darkMode ? 'bg-[#26263B] border-slate-700' : 'bg-white border-green-200'}`}>
-            <div className={`text-sm ${secondaryTextClass}`}>Total Children</div>
-            <div className="text-2xl font-bold text-green-600">
-              {PUROKS.reduce((sum, p) => sum + p.stats.total_children, 0)}
+      <section className={`rounded-lg border p-5 sm:p-6 ${darkMode ? 'border-emerald-900/60 bg-gradient-to-r from-emerald-950/40 to-blue-950/40' : 'border-emerald-200 bg-gradient-to-r from-emerald-50 to-blue-50'}`}>
+        <h3 className={`mb-4 text-center font-bold ${primaryTextClass}`}>
+          Barangay Summary (2026) · {mapMode === 'nutritional' ? 'Nutrition' : 'Environmental'}
+        </h3>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {(mapMode === 'nutritional' ? [
+            { label: 'Total Children', value: totals.children, color: COLORS.green, border: 'border-emerald-200' },
+            {
+              label: 'Children with normal nutritional status',
+              value: totals.normal,
+              color: COLORS.green,
+              border: 'border-emerald-200',
+            },
+            { label: 'At-Risk Children', value: totals.atRisk, color: COLORS.yellow, border: 'border-amber-200' },
+            {
+              label: 'Critically Malnourished',
+              value: totals.criticallyMalnourished,
+              color: COLORS.red,
+              border: 'border-red-200',
+            },
+          ] : [
+            { label: 'Environmental records', value: washTotals.records, color: COLORS.blue, border: 'border-blue-200' },
+            { label: 'Households reported', value: washTotals.households, color: COLORS.violet, border: 'border-violet-200' },
+            { label: 'Without potable water', value: washTotals.noPotableWater, color: COLORS.black, border: 'border-slate-300' },
+            { label: 'Without sanitary toilet', value: washTotals.noSanitaryToilets, color: COLORS.gray, border: 'border-gray-300' },
+          ]).map(({ label, value, color, border }) => (
+            <div key={label} className={`rounded-lg border ${border} p-4 text-center ${darkMode ? 'bg-[#202031]' : 'bg-white'}`}>
+              <p className={`text-sm ${secondaryTextClass}`}>{label}</p>
+              <p className="text-2xl font-bold" style={{ color }}>{value}</p>
             </div>
-          </div>
-          <div className={`rounded-lg p-4 border ${darkMode ? 'bg-[#26263B] border-slate-700' : 'bg-white border-green-200'}`}>
-            <div className={`text-sm ${secondaryTextClass}`}>Children with normal nutritional status</div>
-            <div className="text-2xl font-bold text-green-600">
-              {PUROKS.reduce((sum, p) => sum + p.stats.normal, 0)}
-            </div>
-          </div>
-          <div className={`rounded-lg p-4 border ${darkMode ? 'bg-[#26263B] border-slate-700' : 'bg-white border-yellow-200'}`}>
-            <div className={`text-sm ${secondaryTextClass}`}>At-Risk Children</div>
-            <div className="text-2xl font-bold text-yellow-600">
-              {PUROKS.reduce((sum, p) => sum + p.stats.underweight + p.stats.overweight, 0)}
-            </div>
-          </div>
-          <div className={`rounded-lg p-4 border ${darkMode ? 'bg-[#26263B] border-slate-700' : 'bg-white border-red-200'}`}>
-            <div className={`text-sm ${secondaryTextClass}`}>Critically Malnourished</div>
-            <div className="text-2xl font-bold text-red-600">
-              {PUROKS.reduce((sum, p) => sum + p.stats.severely_underweight, 0)}
-            </div>
-          </div>
+          ))}
         </div>
-      </div>
+      </section>
+
+      <section className={`rounded-lg border p-5 ${panelClass}`}>
+        <h3 className={`mb-1 font-bold ${primaryTextClass}`}>Spot-map color coding</h3>
+        <p className={`mb-3 text-xs ${secondaryTextClass}`}>Category colors follow the barangay spot-map coding shown below.</p>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {COLOR_CATEGORIES.map(({ key, label }) => (
+            <div className="flex items-center gap-2" key={key}>
+              <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: COLORS[key] }} />
+              <span className={`text-xs ${secondaryTextClass}`}>{label}</span>
+            </div>
+          ))}
+        </div>
+      </section>
     </div>
   );
 };

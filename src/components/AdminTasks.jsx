@@ -37,7 +37,7 @@ const PRIORITY_STYLE = {
   Low: 'bg-slate-100 text-slate-600',
 };
 
-export default function AdminTasks() {
+export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) {
   const [tasks, setTasks] = useState([]);
   const [bhws, setBhws] = useState([]);
   const [form, setForm] = useState(emptyForm);
@@ -120,6 +120,19 @@ export default function AdminTasks() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    if (!initialPurok) return;
+    setEditingTask(null);
+    setForm({
+      ...emptyForm,
+      title: `Schedule a community visit to ${initialPurok}`,
+      description: 'Follow up on the selected purok and review community health needs.',
+      purok: initialPurok,
+    });
+    setShowForm(true);
+    onInitialTaskHandled?.();
+  }, [initialPurok, onInitialTaskHandled]);
 
   const bhwName = (id) => {
     const b = bhws.find((x) => x.id === id);

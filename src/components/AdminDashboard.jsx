@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   STORAGE_KEYS,
   deleteRecordById,
@@ -49,16 +49,16 @@ import {
   X,
 } from 'lucide-react';
 import { getCategoryForm } from './CategorySpecificForms';
+import { normalizePurokName, sortPurokCounts } from '../utils/purok';
 import {
   PieChart,
   Pie,
   Cell,
   ResponsiveContainer,
-  BarChart,
-  Bar,
   XAxis,
   YAxis,
   CartesianGrid,
+  Legend,
   Tooltip,
   Line,
   Area,
@@ -243,7 +243,7 @@ const AdminHeader = ({
   );
 };
 
-const AdminDashboard = ({ onLogout, adminName: profileName }) => {
+const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isExpanded, setIsExpanded] = useState(() => window.matchMedia('(min-width: 768px)').matches);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem(DARK_MODE_KEY) === 'true');
@@ -254,7 +254,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [adminFormCategory, setAdminFormCategory] = useState(null);
   const [adminEditingRecord, setAdminEditingRecord] = useState(null);
-  const [, setSelectedPurok] = useState(null);
+  const [residentPurokFilter, setResidentPurokFilter] = useState('');
+  const [scheduledVisitPurok, setScheduledVisitPurok] = useState('');
   const notifRef = useRef(null);
 
   useEffect(() => {
@@ -280,7 +281,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  const [adminData, setAdminData] = useState(() => reloadAllAdminData());
+  const [adminData, setAdminData] = useState(() => reloadAllAdminData(currentUserId));
   const [adminDataStatus, setAdminDataStatus] = useState('loading');
   const {
     households,
@@ -292,19 +293,15 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     monthlyReportData,
   } = adminData;
 
-  const refreshData = () => setAdminData(reloadAllAdminData());
+  const refreshData = () => setAdminData(reloadAllAdminData(currentUserId));
 
   useEffect(() => {
     let active = true;
     let loading = false;
-    let reloadRequested = false;
 
-    const loadSharedAdminData = async ({ syncPending = false } = {}) => {
+    const loadSharedAdminData = async () => {
       if (!active) return;
-      if (loading) {
-        reloadRequested = true;
-        return;
-      }
+      if (loading) return;
       if (!navigator.onLine) {
         setAdminDataStatus('offline');
         return;
@@ -312,13 +309,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
 
       loading = true;
       try {
-        if (syncPending) {
-          const syncResult = await syncPendingRecords();
-          if (syncResult.errors?.length) {
-            console.error('Some offline record changes are still waiting to sync:', syncResult.errors);
-          }
-        }
-        const sharedData = await loadAdminDataFromSupabase();
+        const sharedData = await loadAdminDataFromSupabase(currentUserId);
         if (active) {
           setAdminData(sharedData);
           setAdminDataStatus('loaded');
@@ -328,68 +319,49 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
         if (active) setAdminDataStatus('error');
       } finally {
         loading = false;
-        if (reloadRequested && active) {
-          reloadRequested = false;
-          void loadSharedAdminData();
-        }
       }
     };
 
-    const handleOnline = () => void loadSharedAdminData({ syncPending: true });
-    const handleVisible = () => {
-      if (document.visibilityState === 'visible') {
-        void loadSharedAdminData({ syncPending: navigator.onLine });
-      }
-    };
     const handleLocalRecordsChanged = (event) => {
       if (event.detail?.operation === 'upsert' || event.detail?.operation === 'delete') {
-        setAdminData(reloadAllAdminData());
+        setAdminData(reloadAllAdminData(currentUserId));
       }
     };
     const handleStorageChanged = (event) => {
       if (event.key && Object.values(STORAGE_KEYS).includes(event.key)) {
-        setAdminData(reloadAllAdminData());
+        setAdminData(reloadAllAdminData(currentUserId));
       }
     };
-    const sharedTables = [
-      'residents',
-      'environmental_sanitation',
-      'infant_feeding',
-      'lactating_women',
-      'pregnant_women',
-      'monthly_natality',
-    ];
-    const sharedChannel = supabase.channel('admin-shared-records-live');
-    sharedTables.forEach((table) => {
-      sharedChannel.on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table },
-        () => void loadSharedAdminData()
-      );
-    });
-    sharedChannel.subscribe();
 
-    void loadSharedAdminData({ syncPending: true });
-    const interval = window.setInterval(() => {
-      void loadSharedAdminData({ syncPending: true });
-    }, 60000);
-    window.addEventListener('online', handleOnline);
+    void loadSharedAdminData();
     window.addEventListener('bns-records-changed', handleLocalRecordsChanged);
     window.addEventListener('storage', handleStorageChanged);
-    document.addEventListener('visibilitychange', handleVisible);
 
     return () => {
       active = false;
-      window.clearInterval(interval);
-      window.removeEventListener('online', handleOnline);
       window.removeEventListener('bns-records-changed', handleLocalRecordsChanged);
       window.removeEventListener('storage', handleStorageChanged);
-      document.removeEventListener('visibilitychange', handleVisible);
-      supabase.removeChannel(sharedChannel);
     };
   }, []);
 
   const filteredHouseholds = useMemo(() => filterRecordsBySearch(households, searchTerm), [households, searchTerm]);
+  const filteredResidentHouseholds = useMemo(
+    () => residentPurokFilter
+      ? filteredHouseholds.filter((record) => normalizePurokName(record.purok) === residentPurokFilter)
+      : filteredHouseholds,
+    [filteredHouseholds, residentPurokFilter]
+  );
+  const handlePurokResidents = useCallback((purok) => {
+    setResidentPurokFilter(normalizePurokName(purok));
+    setSearchTerm('');
+    setSearchResults([]);
+    setActiveTab('residents');
+  }, []);
+  const handleScheduleVisit = useCallback((purok) => {
+    setScheduledVisitPurok(normalizePurokName(purok));
+    setActiveTab('tasks');
+  }, []);
+  const clearScheduledVisitPurok = useCallback(() => setScheduledVisitPurok(''), []);
 
   const performSearch = (query) => {
     setSearchTerm(query);
@@ -447,19 +419,100 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
 
   // Top puroks, counted from saved household records.
   const purokData = useMemo(() => {
-    const counts = {};
+    const counts = new Map();
     households.forEach((h) => {
-      const name = (h.purok || '').trim();
-      if (name) counts[name] = (counts[name] || 0) + 1;
+      const name = normalizePurokName(h.purok);
+      if (name) counts.set(name, (counts.get(name) || 0) + 1);
     });
-    return Object.entries(counts)
-      .map(([name, value]) => ({ name, value }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 10);
+    return sortPurokCounts(
+      Array.from(counts, ([purok, count]) => ({ purok, count }))
+    ).map(({ purok, count }) => ({ name: purok, value: count }));
   }, [households]);
+  const maxPurokHouseholdCount = Math.max(1, ...purokData.map(({ value }) => value));
 
-  // Empty until Supabase provides monthly figures.
-  const monthlyTrendData = [];
+  const monthlyTrendData = useMemo(() => {
+    const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
+    const reportMonthIndex = reportMonthMatch
+      ? new Date(`${reportMonthMatch[1]} 1, ${reportMonthMatch[2]}`).getMonth()
+      : new Date().getMonth();
+    const reportYear = reportMonthMatch ? Number(reportMonthMatch[2]) : new Date().getFullYear();
+    const reportMonth = new Date(reportYear, reportMonthIndex, 1);
+    const months = Array.from({ length: 6 }, (_, index) => {
+      const date = new Date(reportMonth.getFullYear(), reportMonth.getMonth() - 5 + index, 1);
+      const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+      return {
+        key,
+        month: date.toLocaleDateString('en', { month: 'short' }),
+        malnutrition: 0,
+        births: 0,
+        fullyImmunized: null,
+      };
+    });
+    const byMonth = new Map(months.map((month) => [month.key, month]));
+    const birthsByMonth = new Map(months.map((month) => [month.key, new Set()]));
+    const malnutritionByMonth = new Map(months.map((month) => [month.key, new Set()]));
+
+    natalityData.forEach((record) => {
+      const visitMonth = String(record.dow || '').slice(0, 7);
+      const birthMonth = String(record.dob || '').slice(0, 7);
+      const visitSummary = byMonth.get(visitMonth);
+      const birthSummary = byMonth.get(birthMonth);
+      const childKey = `${record.dob || ''}:${String(record.childName || record.motherName || record.id)}`;
+      if (birthSummary) birthsByMonth.get(birthMonth).add(childKey);
+
+      if (visitSummary) {
+        const statuses = [record.wA, record.hA, record.wLH]
+          .map((status) => String(status || '').toLowerCase());
+        if (statuses.some((status) =>
+          status.includes('underweight') ||
+          status.includes('stunted') ||
+          status.includes('wasted')
+        )) {
+          malnutritionByMonth.get(visitMonth).add(childKey);
+        }
+      }
+    });
+
+    months.forEach((month) => {
+      month.births = birthsByMonth.get(month.key).size;
+      month.malnutrition = malnutritionByMonth.get(month.key).size;
+    });
+
+    const immunizationReport = monthlyReportData.find((row) =>
+      String(row.slug || '').toLowerCase() === 'fic-9-12' ||
+      String(row.indicator || '').toLowerCase().includes('fully immunized children')
+    );
+    if (immunizationReport) {
+      const hasReportedImmunizationCounts = [1, 2, 3].some((period) =>
+        Number(immunizationReport[`m${period}M`] || 0) > 0 ||
+        Number(immunizationReport[`m${period}F`] || 0) > 0
+      );
+      if (hasReportedImmunizationCounts) {
+        [1, 2, 3].forEach((period) => {
+          const date = new Date(reportMonth.getFullYear(), reportMonth.getMonth() - 3 + period, 1);
+          const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+          const month = byMonth.get(key);
+          if (!month) return;
+          const male = Number(immunizationReport[`m${period}M`]);
+          const female = Number(immunizationReport[`m${period}F`]);
+          if (Number.isFinite(male) && Number.isFinite(female)) {
+            month.fullyImmunized = male + female;
+          }
+        });
+      }
+    }
+
+    return months.map((month) => ({
+      ...month,
+      immunizationRate:
+        month.fullyImmunized !== null && month.births > 0
+          ? (month.fullyImmunized / month.births) * 100
+          : null,
+    }));
+  }, [natalityData, monthlyReportData]);
+  const hasMonthlyTrendData = monthlyTrendData.some(
+    (month) => month.malnutrition > 0 || month.births > 0 || month.immunizationRate !== null
+  );
 
   const syncedPct = stats.synced + stats.pending
     ? Math.round((stats.synced / (stats.synced + stats.pending)) * 100)
@@ -486,7 +539,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       remoteRecord?.synced ||
       String(remoteRecord?.status || '').toLowerCase() === 'synced'
     );
-    queueRecordDeletion(category, id, remoteRecordExpected);
+    queueRecordDeletion(category, id, remoteRecordExpected, localRecord?.created_by_user_id || currentUserId);
     deleteRecordById(storageKey, id);
     refreshData();
 
@@ -496,7 +549,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     }
 
     try {
-      const syncResult = await syncPendingRecords();
+      const syncResult = await syncPendingRecords({ includeShared: true });
       if (syncResult.errors?.length || syncResult.skipped) {
         const details = syncResult.errors?.join('\n') || `Sync skipped: ${syncResult.skipped}`;
         console.error('Record deletion is saved locally and waiting to sync:', details);
@@ -504,7 +557,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
         return;
       }
 
-      setAdminData(await loadAdminDataFromSupabase());
+      setAdminData(await loadAdminDataFromSupabase(currentUserId));
       setAdminDataStatus('loaded');
     } catch (error) {
       console.error('Record was deleted locally, but could not be synced:', error);
@@ -587,7 +640,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
   );
   const natalityActions = categoryCrud(STORAGE_KEYS.monthlynatal, 'monthlynatal', natalityData);
 
-  const markCheck = (value) => (Number(value) > 0 ? 'X' : '');
+  const markCheck = (value) => (Number(value) > 0 ? '✓' : '');
 
   const navItems = [
     { id: 'dashboard', icon: Home, label: 'Dashboard' },
@@ -1023,20 +1076,28 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
             Top 10 Puroks by Households
           </p>
           {purokData.length === 0 ? (
-            <div className="h-[280px]">
+            <div className="min-h-[150px]">
               <EmptyState message="No household records yet. This chart fills in as records are saved." />
             </div>
           ) : (
-            <div className="h-[280px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={purokData} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
-                  <XAxis type="number" hide allowDecimals={false} />
-                  <YAxis type="category" dataKey="name" width={70} interval={0} tick={{ fontSize: 12, fill: mutedColor }} axisLine={false} tickLine={false} />
-                  <Tooltip formatter={(v) => [`${v} households`, 'Count']} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
-                  <Bar dataKey="value" fill={THEME.accentPurple} radius={[0, 8, 8, 0]} barSize={12} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="space-y-1.5" aria-label="Top 10 puroks ranked by households">
+              {purokData.map(({ name, value }) => {
+                return (
+                  <div key={name} className="grid grid-cols-[3.25rem_minmax(0,1fr)_1rem] items-center gap-2 text-[11px]">
+                    <span className="truncate" style={{ color: mutedColor }}>{name}</span>
+                    <div className="h-2 overflow-hidden rounded-full bg-purple-100">
+                      <div
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${(value / maxPurokHouseholdCount) * 100}%`,
+                          backgroundColor: THEME.accentPurple,
+                        }}
+                      />
+                    </div>
+                    <span className="text-right font-medium" style={{ color: titleColor }}>{value}</span>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
@@ -1054,33 +1115,32 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
               backgroundColor: darkMode ? 'rgba(255,255,255,0.06)' : THEME.light.surface,
             }}
           >
-            Last 6 months
+            {REPORT_META.monthYear} · last 6 months
           </span>
         </div>
+        <p className="mb-3 text-xs" style={{ color: mutedColor }}>
+          Malnutrition cases use recorded WHO classifications. Estimated immunization rate = fully immunized children ÷ live births × 100; a rate is shown only when both counts are available for that month.
+        </p>
         <div className="h-[280px]">
-          {monthlyTrendData.length === 0 ? (
-            <EmptyState message="No monthly figures yet. This chart will load from the database once it is connected." />
+          {!hasMonthlyTrendData ? (
+            <EmptyState message="No monthly natality records or immunization counts are available for this reporting period yet." />
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <ComposedChart data={monthlyTrendData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="malnutritionGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={THEME.accentPink} stopOpacity={0.2} />
-                    <stop offset="95%" stopColor={THEME.accentPink} stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="immunizationGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={THEME.accentPurple} stopOpacity={0.2} />
-                    <stop offset="95%" stopColor={THEME.accentPurple} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                 <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
-                <Area type="monotone" dataKey="malnutrition" fill="url(#malnutritionGrad)" stroke="none" />
-                <Area type="monotone" dataKey="immunization" fill="url(#immunizationGrad)" stroke="none" />
-                <Line type="monotone" dataKey="malnutrition" stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4, fill: THEME.accentPink, strokeWidth: 0 }} name="Malnutrition Cases" />
-                <Line type="monotone" dataKey="immunization" stroke={THEME.accentPurple} strokeWidth={2.5} dot={{ r: 4, fill: THEME.accentPurple, strokeWidth: 0 }} name="Immunization Rate (%)" />
+                <YAxis yAxisId="cases" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                <YAxis yAxisId="rate" orientation="right" domain={[0, 'auto']} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                <Tooltip
+                  formatter={(value, name) => [
+                    value == null ? 'Not available' : name === 'Estimated Immunization Rate' ? `${Number(value).toFixed(1)}%` : value,
+                    name,
+                  ]}
+                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                />
+                <Legend />
+                <Area yAxisId="cases" type="monotone" dataKey="malnutrition" fill={THEME.accentPink} fillOpacity={0.16} stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4, fill: THEME.accentPink, strokeWidth: 0 }} name="Malnutrition Cases" />
+                <Line yAxisId="rate" type="monotone" dataKey="immunizationRate" stroke={THEME.accentPurple} strokeWidth={2.5} dot={{ r: 4, fill: THEME.accentPurple, strokeWidth: 0 }} name="Estimated Immunization Rate" connectNulls={false} />
               </ComposedChart>
             </ResponsiveContainer>
           )}
@@ -1088,7 +1148,18 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       </div>
 
       <div className={dashCardClass} style={dashCardStyle}>
-        <InteractiveMapComponent darkMode={darkMode} onPurokSelect={setSelectedPurok} />
+        <InteractiveMapComponent
+          darkMode={darkMode}
+          onPurokResidents={handlePurokResidents}
+          onScheduleVisit={handleScheduleVisit}
+          households={households}
+          pregnantWomenData={pregnantWomenData}
+          lactatingWomenData={lactatingWomenData}
+          infantFeedingData={infantFeedingData}
+          environmentalSanitationData={environmentalSanitationData}
+          natalityData={natalityData}
+          dataStatus={adminDataStatus}
+        />
       </div>
 
       <AdminReportTable
@@ -1112,7 +1183,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
             fileName: 'alawihao-residents',
             title: 'Residents',
             headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
-            rows: filteredHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
+            rows: filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
           })
         }
         {...residentActions}
@@ -1130,6 +1201,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     'waterLevelI',
     'waterLevelII',
     'waterLevelIII',
+    'withoutPotableWater',
     'toiletWithSanitary',
     'toiletWithoutSanitary',
     'iodizedSaltSariSari',
@@ -1145,7 +1217,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       { label: 'Total HH', rowSpan: 2 },
       { label: 'Total Families', rowSpan: 2 },
       { label: 'Garbage Disposal', colSpan: 3 },
-      { label: 'Household Water Supply', colSpan: 3 },
+      { label: 'Household Water Supply', colSpan: 4 },
       { label: 'Household Toilet Facility', colSpan: 2 },
       { label: 'Selling Iodized Salt', colSpan: 1 },
       { label: 'Selling Fortified Foods', colSpan: 1 },
@@ -1159,6 +1231,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       { label: 'Level I' },
       { label: 'Level II' },
       { label: 'Level III' },
+      { label: 'Without potable water source' },
       { label: 'w/ Sanitary Toilet' },
       { label: 'w/out Sanitary Toilet' },
       { label: 'Sari-Sari Store' },
@@ -1224,9 +1297,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       { label: 'Purok', rowSpan: 2 },
       { label: 'Name of Mother', rowSpan: 2 },
       { label: 'Name of Child', rowSpan: 2 },
+      { label: 'Sex', rowSpan: 2 },
       { label: 'Date of Birth', rowSpan: 2 },
       { label: 'Birth Weight', rowSpan: 2 },
       { label: 'Date of Follow-up Weighing', rowSpan: 2 },
+      { label: 'AIM (Months)', rowSpan: 2 },
+      { label: 'Length (cm)', rowSpan: 2 },
       { label: 'Measurements', colSpan: 2 },
       { label: 'Nutrition Status', colSpan: 3 },
       { label: 'Iron Given / Other Services', rowSpan: 2 },
@@ -1235,7 +1311,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     ],
     [
       { label: 'Wt. (kg)' },
-      { label: 'Ht. (cm)' },
+      { label: 'Height (cm)' },
       { label: 'W/A' },
       { label: 'H/A' },
       { label: 'W/L or H/L' },
@@ -1243,33 +1319,47 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
   ];
 
   const Residents = () => (
-    <AdminReportTable
-      darkMode={darkMode}
-      data={filteredHouseholds}
-      columnKeys={['purok', 'head', 'members', 'lastVisit']}
-      singleRowHeaders={['Purok', 'Household Head', 'Members', 'Last Visit']}
-      reportHeader={
-        <ReportHeader
-          title="Residents Masterlist"
-          subtitle={`Barangay ${REPORT_META.barangay}`}
-          fields={[
-            { label: 'Barangay', value: REPORT_META.barangay },
-            { label: 'Municipality', value: REPORT_META.municipality },
-            { label: 'Province', value: REPORT_META.province },
-          ]}
-        />
-      }
-      emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
-      onExport={() =>
-        exportPdfFile({
-          fileName: 'alawihao-residents',
-          title: 'Residents Masterlist',
-          headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
-          rows: filteredHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
-        })
-      }
-      {...residentActions}
-    />
+    <div className="space-y-4">
+      {residentPurokFilter && (
+        <div className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3 ${darkMode ? 'border-blue-900 bg-blue-950/40 text-blue-100' : 'border-blue-200 bg-blue-50 text-blue-900'}`}>
+          <span className="text-sm font-semibold">Showing residents in {residentPurokFilter}</span>
+          <button
+            type="button"
+            onClick={() => setResidentPurokFilter('')}
+            className="rounded-lg px-3 py-1.5 text-sm font-semibold transition hover:bg-blue-100"
+          >
+            Clear purok filter
+          </button>
+        </div>
+      )}
+      <AdminReportTable
+        darkMode={darkMode}
+        data={filteredResidentHouseholds}
+        columnKeys={['purok', 'head', 'members', 'lastVisit']}
+        singleRowHeaders={['Purok', 'Household Head', 'Members', 'Last Visit']}
+        reportHeader={
+          <ReportHeader
+            title="Residents Masterlist"
+            subtitle={`Barangay ${REPORT_META.barangay}`}
+            fields={[
+              { label: 'Barangay', value: REPORT_META.barangay },
+              { label: 'Municipality', value: REPORT_META.municipality },
+              { label: 'Province', value: REPORT_META.province },
+            ]}
+          />
+        }
+        emptyMessage={searchTerm.trim() || residentPurokFilter ? 'No records match the current filters.' : 'No records yet.'}
+        onExport={() =>
+          exportPdfFile({
+            fileName: 'alawihao-residents',
+            title: 'Residents Masterlist',
+            headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
+            rows: filteredHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
+          })
+        }
+        {...residentActions}
+      />
+    </div>
   );
 
   const EnvironmentalSanitation = () => {
@@ -1281,7 +1371,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
         headers: environmentalHeadRows[1].map((c) => c.label),
         rows: tableData.map((record) =>
           environmentalColumnKeys.map((key) =>
-            ['garbageCompostPit', 'garbageCollect', 'garbageOthers', 'waterLevelI', 'waterLevelII', 'waterLevelIII', 'toiletWithSanitary', 'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery', 'estBakery', 'estCarenderia', 'estRestaurant'].includes(key)
+            ['garbageCompostPit', 'garbageCollect', 'garbageOthers', 'waterLevelI', 'waterLevelII', 'waterLevelIII', 'withoutPotableWater', 'toiletWithSanitary', 'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery', 'estBakery', 'estCarenderia', 'estRestaurant'].includes(key)
               ? markCheck(record[key])
               : record[key] ?? ''
           )
@@ -1318,6 +1408,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
             'waterLevelI',
             'waterLevelII',
             'waterLevelIII',
+            'withoutPotableWater',
             'toiletWithSanitary',
             'toiletWithoutSanitary',
             'iodizedSaltSariSari',
@@ -1482,6 +1573,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
       data={filteredPregnant}
       columnKeys={[
         'no',
+        'purok',
         'dateRegistration',
         'familySerial',
         'lastName',
@@ -1554,11 +1646,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
     <AdminReportTable
       darkMode={darkMode}
       data={filteredNatality}
-      columnKeys={['no', 'purok', 'motherName', 'childName', 'dob', 'birthWeight', 'dow', 'weight', 'height', 'wA', 'hA', 'wLH', 'ironStatus', 'remarks']}
+      columnKeys={['no', 'purok', 'motherName', 'childName', 'sex', 'dob', 'birthWeight', 'dow', 'aim', 'length', 'weight', 'height', 'wA', 'hA', 'wLH', 'ironStatus', 'remarks']}
       headRows={monthlyNatalityHeadRows}
       reportHeader={
         <ReportHeader
-          title="Monthly Natality with Weight & Height"
+          title="Monthly Natality with Weight, Length & Height"
           subtitle={`Barangay ${REPORT_META.barangay}`}
           fields={[
             { label: 'Month', value: REPORT_META.monthYear },
@@ -1571,15 +1663,18 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
         exportPdfFile({
           fileName: 'alawihao-monthly-natality',
           title: 'Monthly Natality',
-          headers: ['No.', 'Purok', 'Mother', 'Child', 'DOB', 'Birth Weight', 'Follow-up Date', 'Wt (kg)', 'Ht (cm)', 'W/A', 'H/A', 'W/L/H', 'Iron/Services', 'Remarks'],
+          headers: ['No.', 'Purok', 'Mother', 'Child', 'Sex', 'DOB', 'Birth Weight', 'Follow-up Date', 'AIM (Months)', 'Length (cm)', 'Wt (kg)', 'Height (cm)', 'W/A', 'H/A', 'W/L/H', 'Iron/Services', 'Remarks'],
           rows: filteredNatality.map((row) => [
             row.no,
             row.purok,
             row.motherName,
             row.childName,
+            row.sex,
             row.dob,
             row.birthWeight,
             row.dow,
+            row.aim,
+            row.length,
             row.weight,
             row.height,
             row.wA,
@@ -1590,7 +1685,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
           ]),
         })
       }
-      minTableWidth={1600}
+      minTableWidth={1900}
       {...natalityActions}
     />
   );
@@ -1760,7 +1855,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
             {activeTab === 'monthlyNatality' && <MonthlyNatality />}
             {activeTab === 'monthlyReport' && <MonthlyReport />}
             {activeTab === 'documents' && <Documents />}
-            {activeTab === 'tasks' && <AdminTasks />}
+            {activeTab === 'tasks' && (
+              <AdminTasks
+                initialPurok={scheduledVisitPurok}
+                onInitialTaskHandled={clearScheduledVisitPurok}
+              />
+            )}
             {activeTab === 'users' && <UserManagement />}
           </div>
         </main>
@@ -1800,6 +1900,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
                   const key = storageKeyForCategory(record.category);
                   const pending = {
                     ...record,
+                    created_by_user_id: record.created_by_user_id || currentUserId,
                     synced: false,
                     status: 'pending',
                   };
@@ -1807,7 +1908,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
                   refreshData();
                   closeCategoryForm();
                   try {
-                    const singleErr = await syncSingleRecord(record.category, pending);
+                    const singleErr = await syncSingleRecord(record.category, pending, {
+                      includeShared: true,
+                    });
                     if (singleErr === 'offline' || singleErr === 'not-signed-in') {
                       alert(
                         singleErr === 'offline'
@@ -1820,7 +1923,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
                       upsertRecord(key, { ...pending, synced: true, status: 'Synced' });
                       refreshData();
                     }
-                    const syncResult = await syncPendingRecords();
+                    const syncResult = await syncPendingRecords({ includeShared: true });
                     if (syncResult.skipped) {
                       alert('Saved locally. The changes are waiting to sync with Supabase.');
                       return;
@@ -1830,7 +1933,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName }) => {
                       alert('Saved locally, but the changes are still waiting to sync. Check the connection and try again.');
                       return;
                     }
-                    const sharedData = await loadAdminDataFromSupabase();
+                    const sharedData = await loadAdminDataFromSupabase(currentUserId);
                     setAdminData(sharedData);
                     setAdminDataStatus('loaded');
                     if (syncResult.errors?.length) {

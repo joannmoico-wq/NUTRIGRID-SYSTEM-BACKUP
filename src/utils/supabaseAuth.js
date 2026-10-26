@@ -24,6 +24,7 @@ async function loadProfile(userId) {
 
 function toUserData(user, profile) {
   return {
+    id: user.id,
     email: profile.email || user.email,
     fullName: profile.full_name || user.user_metadata?.full_name || '',
     age: profile.age ?? user.user_metadata?.age ?? null,

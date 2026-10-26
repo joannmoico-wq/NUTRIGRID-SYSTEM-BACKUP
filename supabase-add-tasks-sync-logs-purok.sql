@@ -20,6 +20,7 @@ alter table public.monthly_natality
   add column if not exists purok text;
 alter table public.monthly_natality
   add column if not exists birth_weight numeric,
+  add column if not exists sex text,
   add column if not exists iron_status text,
   add column if not exists remarks text;
 

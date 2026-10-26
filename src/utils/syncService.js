@@ -59,8 +59,9 @@ const asNumberOrNull = (value) => {
 };
 
 function buildTableRecord(category, record, deviceId, localId, userId) {
+  const recordOwnerId = record.created_by_user_id || userId;
   const shared = {
-    created_by_user_id: userId,
+    created_by_user_id: recordOwnerId,
     device_id: deviceId,
     local_id: localId,
     purok: record.purok || null,
@@ -85,6 +86,7 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       water_level_i: record.water_level_i ?? false,
       water_level_ii: record.water_level_ii ?? false,
       water_level_iii: record.water_level_iii ?? false,
+      without_potable_water: record.without_potable_water ?? false,
       toilet_sanitary: record.toilet_sanitary ?? false,
       toilet_not_sanitary: record.toilet_not_sanitary ?? false,
       selling_iodized_sari: record.selling_iodized_sari ?? false,
@@ -159,6 +161,7 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       name_of_mother: record.name_of_mother || record.mother_name || null,
       mother_age: asNumberOrNull(record.mother_age),
       name_of_child: record.name_of_child || record.child_name || null,
+      sex: record.sex || null,
       dob: record.dob || null,
       birth_weight: asNumberOrNull(record.birth_weight ?? record.birth_weight_kg),
       dow: record.dow || null,
@@ -207,6 +210,7 @@ async function uploadRecord(category, table, deviceId, localId, record, userId) 
     .from(table)
     .update(updates)
     .eq('data->>id', String(record.id))
+    .eq('created_by_user_id', payload.created_by_user_id)
     .select('data');
 
   if (updateError) return updateError.message;
@@ -262,7 +266,7 @@ export async function writeSyncLog(userId, records, synced, failed) {
   return error.message;
 }
 
-export async function syncPendingRecords() {
+export async function syncPendingRecords({ includeShared = false } = {}) {
   if (!navigator.onLine) return { synced: 0, skipped: 'offline' };
 
   const { data: { session } } = await supabase.auth.getSession();
@@ -277,11 +281,17 @@ export async function syncPendingRecords() {
   const reuploadExistingRecords = localStorage.getItem(FIELD_MAPPING_VERSION_KEY) !== FIELD_MAPPING_VERSION;
 
   for (const deletion of getPendingRecordDeletions()) {
+    if (!deletion.created_by_user_id) continue;
+    if (
+      !includeShared &&
+      String(deletion.created_by_user_id || '') !== String(session.user.id)
+    ) continue;
     results.records++;
     const error = await deleteRemoteRecord(
       deletion.category,
       deletion.recordId,
-      deletion.remoteExpected
+      deletion.remoteExpected,
+      deletion.created_by_user_id
     );
     if (error) {
       results.errors.push(`${deletion.category} #${deletion.recordId} delete: ${error}`);
@@ -298,7 +308,13 @@ export async function syncPendingRecords() {
     const storageKey = storageKeyForCategory(category);
     const records = getRecords(storageKey) || [];
 
-    for (const record of records.filter((item) => reuploadExistingRecords || isUnsynced(item))) {
+    for (const record of records.filter(
+      (item) =>
+        Boolean(item.created_by_user_id) &&
+        (includeShared ||
+          String(item.created_by_user_id || '') === String(session.user.id)) &&
+        (reuploadExistingRecords || isUnsynced(item))
+    )) {
       results.records++;
       const err = await uploadRecord(
         category,
@@ -330,6 +346,11 @@ export async function syncPendingRecords() {
 
     for (let i = 0; i < records.length; i++) {
       const record = records[i];
+      if (!record.created_by_user_id) continue;
+      if (
+        !includeShared &&
+        String(record.created_by_user_id || '') !== String(session.user.id)
+      ) continue;
       if (!reuploadExistingRecords && !isUnsynced(record)) continue;
 
       results.records++;
@@ -338,7 +359,12 @@ export async function syncPendingRecords() {
         results.errors.push(`${table} (${key}) #${record.id}: ${err}`);
         continue;
       }
-      records[i] = { ...record, status: 'Synced', synced: true };
+      records[i] = {
+        ...record,
+        created_by_user_id: record.created_by_user_id,
+        status: 'Synced',
+        synced: true,
+      };
       changed = true;
       results.synced++;
     }
@@ -360,13 +386,20 @@ export async function syncPendingRecords() {
   return results;
 }
 
-export async function syncSingleRecord(category, record) {
+export async function syncSingleRecord(category, record, { includeShared = false } = {}) {
   if (!navigator.onLine) return 'offline';
   const table = TABLE_BY_CATEGORY[category];
   if (!table) return null;
 
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return 'not-signed-in';
+  if (!record.created_by_user_id) return 'record-owner-missing';
+  if (
+    !includeShared &&
+    String(record.created_by_user_id || '') !== String(session.user.id)
+  ) {
+    return 'record-owner-mismatch';
+  }
 
   const error = await uploadRecord(
     category,
@@ -381,7 +414,12 @@ export async function syncSingleRecord(category, record) {
   return logError ? `Record synced, but sync log failed: ${logError}` : null;
 }
 
-export async function deleteRemoteRecord(category, localId, remoteRecordExpected = false) {
+export async function deleteRemoteRecord(
+  category,
+  localId,
+  remoteRecordExpected = false,
+  ownerId = ''
+) {
   if (!navigator.onLine) return 'offline';
   const table = TABLE_BY_CATEGORY[category];
   if (!table) return null;
@@ -393,6 +431,7 @@ export async function deleteRemoteRecord(category, localId, remoteRecordExpected
     .from(table)
     .delete()
     .eq('data->>id', String(localId))
+    .eq('created_by_user_id', ownerId || session.user.id)
     .select('data');
 
   if (error) return error.message;

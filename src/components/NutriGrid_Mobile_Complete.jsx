@@ -7,13 +7,14 @@ import {
   WifiOff, 
   Check, 
   Plus, 
-  Upload, 
   List, 
   Menu,
   X,
   AlertCircle,
   CheckCircle,
   Bell,
+  UserCircle,
+  KeyRound,
   Baby,
   Heart,
   Users,
@@ -30,7 +31,6 @@ import {
   storageKeyForCategory,
   filterRecordsBySearch,
   recordMatchesSearch,
-  countPendingAcrossCategories,
   buildSavedRecords,
   performRecordSearch,
   getRecordDisplayTitle,
@@ -50,12 +50,14 @@ import {
 import { syncPendingTasks } from '../utils/taskSyncService';
 import ReportRowActions from './ReportRowActions';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
-import { PUROK_OPTIONS } from '../utils/purok';
+import { sortPurokCounts, PUROK_OPTIONS } from '../utils/purok';
 import BnsSearchBar from './BnsSearchBar';
 import WelcomePage from './WelcomePage';
 import SignInPage from './SignInPage';
 import AdminDashboard from './AdminDashboard';
 import SideMenu from './SideMenu';
+import ForgotPassword from './ForgotPassword';
+import { supabase } from '../utils/supabaseClient';
 import {
   EnvironmentalSanitationForm,
   ResidentsForm,
@@ -95,6 +97,38 @@ function removeLegacyRecord(category, id) {
   } catch (error) {
     console.error(`Could not remove legacy ${category} record from localStorage:`, error);
   }
+}
+
+function getLocalRecordMonth(record) {
+  const raw = record?._raw || record || {};
+  const dateValue = [
+    raw.dow,
+    raw.visit_date,
+    raw.date_of_registration,
+    raw.created_at,
+    raw.date,
+    raw.month,
+  ].find((value) => /\b20\d{2}[-/]\d{1,2}/.test(String(value || '')));
+  const match = String(dateValue || '').match(/\b(20\d{2})[-/](\d{1,2})/);
+  return match ? `${match[1]}-${match[2].padStart(2, '0')}` : '';
+}
+
+function isOwnedByUser(record, userId) {
+  return Boolean(
+    userId &&
+    String(record?.created_by_user_id || '') === String(userId)
+  );
+}
+
+function getUserRecords(storageKey, userId) {
+  return getRecords(storageKey).filter((record) => isOwnedByUser(record, userId));
+}
+
+function replaceUserRecords(records, userId, updatedUserRecords) {
+  return [
+    ...records.filter((record) => !isOwnedByUser(record, userId)),
+    ...updatedUserRecords,
+  ];
 }
 
 const fieldHeaderStyle = {
@@ -226,6 +260,7 @@ const RecordsList = ({
   setShowSearchSuggestions,
   performSearch,
   setSelectedCategory,
+  currentUserId,
 }) => {
   const [filter, setFilter] = useState('all');
 
@@ -233,10 +268,10 @@ const RecordsList = ({
   const categoryRecords = useMemo(() => {
     if (!selectedCategory) return [];
     return filterRecordsBySearch(
-      getRecords(storageKeyForCategory(selectedCategory)),
+      getUserRecords(storageKeyForCategory(selectedCategory), currentUserId),
       searchQuery
     );
-  }, [selectedCategory, recordsRefresh, searchQuery]);
+  }, [selectedCategory, recordsRefresh, searchQuery, currentUserId]);
 
   const mergeWithLegacyFiltered = (canonicalRecords, legacyKey) => {
     let legacy = [];
@@ -245,9 +280,12 @@ const RecordsList = ({
     } catch {
       legacy = [];
     }
-    const filteredLegacy = filterRecordsBySearch(legacy, searchQuery);
-    const ids = new Set(canonicalRecords.map((r) => r.id));
-    return [...canonicalRecords, ...filteredLegacy.filter((r) => !ids.has(r.id))];
+    const filteredLegacy = filterRecordsBySearch(
+      legacy.filter((record) => isOwnedByUser(record, currentUserId)),
+      searchQuery
+    );
+    const ids = new Set(canonicalRecords.map((r) => String(r.id)));
+    return [...canonicalRecords, ...filteredLegacy.filter((r) => !ids.has(String(r.id)))];
   };
 
   const recordsSubtitle = (count, label = 'record(s)') =>
@@ -272,7 +310,11 @@ const RecordsList = ({
   const handleDeleteRecord = (id) => {
     if (confirm('Delete this record? It will be permanently removed from your phone.')) {
       const updated = pendingVisits.filter(v => v.id !== id);
-      localStorage.setItem('pendingVisits', JSON.stringify(updated));
+      const allVisits = getRecords(STORAGE_KEYS.pendingVisits);
+      localStorage.setItem(
+        STORAGE_KEYS.pendingVisits,
+        JSON.stringify(replaceUserRecords(allVisits, currentUserId, updated))
+      );
       setPendingVisits(updated);
     }
   };
@@ -584,12 +626,14 @@ const RecordsList = ({
       'Mother',
       'Age',
       'Child',
+      'Sex',
       'DOB',
       'Birth Weight',
       'DOW',
       'Wt (kg)',
       'Ht (cm)',
       'AIM',
+      'Length (cm)',
       'W/A',
       'H/A',
       'W/L/H',
@@ -615,8 +659,8 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1500px]">
-                <div className="grid grid-cols-[repeat(16,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
+              <div className="min-w-[1800px]">
+                <div className="grid grid-cols-[repeat(19,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
                   {[...natalityHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
@@ -629,19 +673,21 @@ const RecordsList = ({
                   categoryRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(16,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(19,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span className="truncate">{formatMonth(record.month)}</span>
                       <span>{record.purok || '—'}</span>
                       <span className="truncate">{record.mother_name || '—'}</span>
                       <span>{record.mother_age ?? '—'}</span>
                       <span className="truncate">{record.child_name || '—'}</span>
+                      <span>{record.sex === 'boys' ? 'Male' : record.sex === 'girls' ? 'Female' : '—'}</span>
                       <span>{formatTableDate(record.dob)}</span>
                       <span>{record.birth_weight ?? record.birth_weight_kg ?? '—'}</span>
                       <span>{formatTableDate(record.dow)}</span>
                       <span>{record.weight_kg ?? '—'}</span>
                       <span>{record.height_cm ?? '—'}</span>
                       <span>{record.aim ?? '—'}</span>
+                      <span>{record.length_cm ?? '—'}</span>
                       <span>{record.w_a || '—'}</span>
                       <span>{record.h_a || '—'}</span>
                       <span>{record.w_l_h || '—'}</span>
@@ -913,10 +959,29 @@ const HomeScreen = ({
   setShowSearchSuggestions,
   performSearch,
   isOnline,
-  syncData,
   setEditingRecord,
+  currentUserId,
+  userEmail,
+  onDeleteAccount,
 }) => {
-  const notificationCount = countPendingAcrossCategories();
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const userCategoryRecords = DASHBOARD_CATEGORIES.map((category) => ({
+    ...category,
+    records: getUserRecords(storageKeyForCategory(category.id), currentUserId),
+  }));
+  const pendingRecordCount = userCategoryRecords.reduce(
+    (count, category) => count + category.records.filter(
+      (record) => !record.synced && String(record.status || '').toLowerCase() !== 'synced'
+    ).length,
+    0
+  );
+  const pendingVisitCount = pendingVisits.filter(
+    (record) =>
+      isOwnedByUser(record, currentUserId) &&
+      !record.synced &&
+      String(record.status || '').toLowerCase() !== 'synced'
+  ).length;
+  const notificationCount = pendingRecordCount + pendingVisitCount;
   const pendingCount = notificationCount;
   const q = searchQuery.trim().toLowerCase();
   const [sharedHouseholdsByPurok, setSharedHouseholdsByPurok] = useState([]);
@@ -933,7 +998,7 @@ const HomeScreen = ({
       try {
         const counts = await getSharedHouseholdCountsByPurok();
         if (active) {
-          setSharedHouseholdsByPurok(counts);
+          setSharedHouseholdsByPurok(sortPurokCounts(counts));
           setSharedPurokStatus('loaded');
         }
       } catch (error) {
@@ -951,17 +1016,19 @@ const HomeScreen = ({
       window.clearInterval(interval);
       window.removeEventListener('online', loadSharedPurokCounts);
     };
-  }, [recordsRefresh]);
+  }, []);
 
-  const categoriesWithCounts = DASHBOARD_CATEGORIES.map((cat) => ({
+  const categoriesWithCounts = userCategoryRecords.map((cat) => ({
     ...cat,
-    count: getRecords(storageKeyForCategory(cat.id)).length,
+    count: cat.records.length,
   }));
 
-  const residentRecords = getRecords(STORAGE_KEYS.residents);
-  const pregnantWomenCount = getRecords(STORAGE_KEYS.pregnantwoman).length;
-  const childrenCount = getRecords(STORAGE_KEYS.infantfeeding).length;
-  const syncedHouseholds = residentRecords.filter((record) => record.synced).length;
+  const residentRecords = getUserRecords(STORAGE_KEYS.residents, currentUserId);
+  const pregnantWomenCount = getUserRecords(STORAGE_KEYS.pregnantwoman, currentUserId).length;
+  const childrenCount = getUserRecords(STORAGE_KEYS.infantfeeding, currentUserId).length;
+  const syncedHouseholds = residentRecords.filter(
+    (record) => record.synced || String(record.status || '').toLowerCase() === 'synced'
+  ).length;
   const pendingHouseholds = residentRecords.length - syncedHouseholds;
   const syncedPercent = residentRecords.length
     ? Math.round((syncedHouseholds / residentRecords.length) * 100)
@@ -971,25 +1038,35 @@ const HomeScreen = ({
   const filteredCategories = categoriesWithCounts.filter((cat) => {
     if (!q) return true;
     if (cat.name.toLowerCase().includes(q)) return true;
-    return getRecords(storageKeyForCategory(cat.id)).some((r) => recordMatchesSearch(r, q));
+    return cat.records.some((r) => recordMatchesSearch(r, q));
   });
 
   const selectedCategoryData = categoriesWithCounts.find((c) => c.id === selectedCategory);
-  const liveCount = selectedCategory
-    ? getRecords(storageKeyForCategory(selectedCategory)).length
-    : 0;
-  const monthDelta = selectedCategoryData
-    ? Math.max(1, Math.floor(liveCount * 0.15) || 1)
+  const selectedCategoryRecords = selectedCategory
+    ? getUserRecords(storageKeyForCategory(selectedCategory), currentUserId)
+    : [];
+  const liveCount = selectedCategoryRecords.length;
+  const now = new Date();
+  const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const categoryRecordsThisMonth = selectedCategoryRecords.filter(
+    (record) => getLocalRecordMonth(record) === currentMonth
+  ).length;
+  const syncedCategoryRecords = selectedCategoryRecords.filter(
+    (record) => record.synced || String(record.status || '').toLowerCase() === 'synced'
+  ).length;
+  const pendingCategoryRecords = liveCount - syncedCategoryRecords;
+  const completedPercent = liveCount
+    ? Math.round((syncedCategoryRecords / liveCount) * 100)
     : 0;
 
-  const StatRow = ({ label, value, fillWidth, cardClass, barTrackClass, fillClass, valueClass }) => (
-    <div className={`rounded-2xl p-4 ${cardClass}`}>
+  const StatRow = ({ label, value, fillWidth, background, track, fill, textColor }) => (
+    <div className="rounded-[20px] p-4" style={{ backgroundColor: background }}>
       <div className="flex items-center justify-between mb-2">
-        <span className={`text-sm font-semibold ${valueClass}`}>{label}</span>
-        <span className={`text-lg font-bold ${valueClass}`}>{value}</span>
+        <span className="text-sm font-semibold" style={{ color: textColor }}>{label}</span>
+        <span className="text-lg font-bold" style={{ color: textColor }}>{value}</span>
       </div>
-      <div className={`w-full h-2.5 rounded-full overflow-hidden ${barTrackClass}`}>
-        <div className={`h-full rounded-full ${fillClass}`} style={{ width: fillWidth }} />
+      <div className="h-2.5 w-full overflow-hidden rounded-full" style={{ backgroundColor: track }}>
+        <div className="h-full rounded-full transition-[width] duration-500" style={{ width: fillWidth, backgroundColor: fill }} />
       </div>
     </div>
   );
@@ -1027,6 +1104,46 @@ const HomeScreen = ({
                 </span>
               )}
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setShowNotifications(false);
+                setShowProfileMenu((visible) => !visible);
+              }}
+              className="p-2.5 rounded-full bg-white/50 hover:bg-white/70 transition"
+              style={{ color: NUTRI_GRID_THEME.text }}
+              aria-label="Open profile menu"
+              aria-expanded={showProfileMenu}
+            >
+              <UserCircle size={20} />
+            </button>
+            {showProfileMenu && (
+              <div className="absolute right-0 top-12 w-64 rounded-2xl border border-gray-100 bg-white p-3 text-gray-800 shadow-xl z-50">
+                <p className="truncate px-2 pb-2 text-xs text-gray-500">{userEmail}</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    setActiveView('password');
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium hover:bg-purple-50"
+                >
+                  <KeyRound size={17} />
+                  Reset password
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowProfileMenu(false);
+                    onDeleteAccount();
+                  }}
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-red-700 hover:bg-red-50"
+                >
+                  <Trash2 size={17} />
+                  Delete account
+                </button>
+              </div>
+            )}
             {showNotifications && (
               <div className="absolute right-0 top-12 w-72 bg-white rounded-2xl shadow-xl z-50 text-gray-800 border border-gray-100 overflow-hidden">
                 <div className="px-4 py-3 border-b font-semibold text-sm" style={{ color: MOBILE.navy }}>
@@ -1038,10 +1155,14 @@ const HomeScreen = ({
                   ) : (
                     categoriesWithCounts
                       .filter((cat) =>
-                        getRecords(storageKeyForCategory(cat.id)).some((r) => !r.synced)
+                        cat.records.some((r) =>
+                          !r.synced && String(r.status || '').toLowerCase() !== 'synced'
+                        )
                       )
                       .map((cat) => {
-                        const n = getRecords(storageKeyForCategory(cat.id)).filter((r) => !r.synced).length;
+                        const n = cat.records.filter(
+                          (r) => !r.synced && String(r.status || '').toLowerCase() !== 'synced'
+                        ).length;
                         return (
                           <button
                             key={cat.id}
@@ -1058,8 +1179,8 @@ const HomeScreen = ({
                         );
                       })
                   )}
-                  {pendingCount > 0 && (
-                    <p className="text-amber-700 pt-1">{pendingCount} house visit(s) pending sync</p>
+                  {pendingVisitCount > 0 && (
+                    <p className="text-amber-700 pt-1">{pendingVisitCount} house visit(s) pending sync</p>
                   )}
                 </div>
               </div>
@@ -1089,14 +1210,15 @@ const HomeScreen = ({
           </h2>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { label: 'Total Households', value: residentRecords.length, icon: Users, color: '#5575F7' },
-              { label: 'Pregnant Women', value: pregnantWomenCount, icon: Heart, color: '#E854A8' },
-              { label: 'Children (0-5)', value: childrenCount, icon: Baby, color: '#16A889' },
-              { label: 'Reports Pending', value: notificationCount, icon: FileText, color: '#8F65FF' },
-            ].map(({ label, value, icon: Icon, color }) => (
+              { label: 'Total Households', value: residentRecords.length, icon: Users, color: '#5575F7', background: '#EFF6FF' },
+              { label: 'Pregnant Women', value: pregnantWomenCount, icon: Heart, color: '#E854A8', background: '#FDF2F8' },
+              { label: 'Children (0-5)', value: childrenCount, icon: Baby, color: '#16A889', background: '#ECFDF5' },
+              { label: 'Reports Pending', value: notificationCount, icon: FileText, color: '#8F65FF', background: '#F5F3FF' },
+            ].map(({ label, value, icon: Icon, color, background }) => (
               <div
                 key={label}
-                className="flex min-h-[76px] min-w-0 items-center gap-2.5 rounded-xl border border-black/5 bg-white px-2.5 py-2 shadow-sm"
+                className="flex min-h-[76px] min-w-0 items-center gap-2.5 rounded-xl border border-black/5 px-2.5 py-2 shadow-sm"
+                style={{ backgroundColor: background }}
               >
                 <span
                   className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white"
@@ -1218,30 +1340,30 @@ const HomeScreen = ({
 
             <StatRow
               label="This Month"
-              value={`+${monthDelta}`}
-              fillWidth="65%"
-              cardClass="bg-blue-50"
-              barTrackClass="bg-blue-200/70"
-              fillClass="bg-blue-600"
-              valueClass="text-blue-700"
+              value={`+${categoryRecordsThisMonth}`}
+              fillWidth={`${liveCount ? (categoryRecordsThisMonth / liveCount) * 100 : 0}%`}
+              background="#EFF6FF"
+              track="#CFE1FF"
+              fill="#2563EB"
+              textColor="#1D4ED8"
             />
             <StatRow
               label="Completed"
-              value="87%"
-              fillWidth="87%"
-              cardClass="bg-emerald-50"
-              barTrackClass="bg-emerald-200/70"
-              fillClass="bg-emerald-600"
-              valueClass="text-emerald-800"
+              value={`${completedPercent}%`}
+              fillWidth={`${completedPercent}%`}
+              background="#ECFDF5"
+              track="#A7F3D0"
+              fill="#059669"
+              textColor="#065F46"
             />
             <StatRow
               label="Pending"
-              value={String(pendingCount)}
-              fillWidth={pendingCount > 0 ? '30%' : '0%'}
-              cardClass="bg-amber-50"
-              barTrackClass="bg-amber-200/70"
-              fillClass="bg-amber-500"
-              valueClass="text-amber-800"
+              value={String(pendingCategoryRecords)}
+              fillWidth={`${liveCount ? (pendingCategoryRecords / liveCount) * 100 : 0}%`}
+              background="#FFFBEB"
+              track="#FDE68A"
+              fill="#F59E0B"
+              textColor="#92400E"
             />
 
             <div className="grid grid-cols-2 gap-3 pt-2">
@@ -1275,24 +1397,9 @@ const HomeScreen = ({
             <WifiOff size={18} className="flex-shrink-0 mt-0.5" />
             <div>
               <p className="font-semibold text-sm">Currently Offline</p>
-              <p className="text-xs mt-1">Data will sync when you&apos;re back online.</p>
+              <p className="text-xs mt-1">Save locally. Changes sync automatically when you&apos;re back online.</p>
             </div>
           </div>
-        )}
-
-        {isOnline && pendingCount > 0 && (
-          <button
-            type="button"
-            onClick={syncData}
-            className="w-full text-white p-4 rounded-2xl shadow-md flex items-center justify-between active:scale-[0.98] transition"
-            style={{ backgroundColor: MOBILE.coral }}
-          >
-            <div className="text-left">
-              <p className="font-bold text-sm">Sync Data Now</p>
-              <p className="text-xs text-white/85">{pendingCount} change(s) ready</p>
-            </div>
-            <Upload size={20} />
-          </button>
         )}
 
       </div>
@@ -1406,6 +1513,18 @@ const NutriGridMobile = () => {
   const [editingRecord, setEditingRecord] = useState(null);
   const [recordsRefresh, setRecordsRefresh] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [accountActionError, setAccountActionError] = useState('');
+  const [syncNotification, setSyncNotification] = useState('');
+
+  const showSyncNotification = (message) => {
+    setSyncNotification(message);
+  };
+
+  useEffect(() => {
+    if (!syncNotification) return undefined;
+    const timeout = window.setTimeout(() => setSyncNotification(''), 4500);
+    return () => window.clearTimeout(timeout);
+  }, [syncNotification]);
 
   // Initialize app
   useEffect(() => {
@@ -1431,10 +1550,6 @@ const NutriGridMobile = () => {
         (error) => console.error('Location error:', error)
       );
     }
-
-    // Load pending visits
-    const pending = JSON.parse(localStorage.getItem('pendingVisits') || '[]');
-    setPendingVisits(pending);
 
     restoreSupabaseSession()
       .then((userData) => {
@@ -1466,10 +1581,20 @@ const NutriGridMobile = () => {
 
   const completeSignIn = (userData) => {
     setCurrentUser(userData);
+    setSearchQuery('');
+    setSearchResults([]);
+    setShowSearchSuggestions(false);
+    setSelectedCategory(null);
+    setRecordsRefresh((version) => version + 1);
     setUserName(
       userData.fullName || (userData.firstName
         ? `${userData.firstName}${userData.lastName ? ` ${userData.lastName}` : ''}`
         : userData.email?.split('@')[0] || 'User')
+    );
+    setPendingVisits(
+      getRecords(STORAGE_KEYS.pendingVisits).filter((record) =>
+        isOwnedByUser(record, userData.id)
+      )
     );
     setIsAuthenticated(true);
     setAppState('app');
@@ -1490,9 +1615,32 @@ const NutriGridMobile = () => {
       setIsAuthenticated(false);
       setCurrentUser(null);
       setSelectedCategory(null);
+      setSearchQuery('');
+      setSearchResults([]);
+      setShowSearchSuggestions(false);
       setShowCategoryForm(false);
       setEditingRecord(null);
       setAppState('signin');
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    const confirmed = window.confirm(
+      'Permanently delete your account? This is only available for an approved profile and cannot be undone.'
+    );
+    if (!confirmed) return;
+
+    setAccountActionError('');
+    try {
+      const { error } = await supabase.functions.invoke('delete-own-account');
+      if (error) {
+        setAccountActionError(error.message || 'Account deletion could not be completed.');
+        return;
+      }
+      await handleLogout();
+    } catch (error) {
+      console.error('Account deletion failed:', error);
+      setAccountActionError('Account deletion could not be completed. Please try again.');
     }
   };
 
@@ -1505,9 +1653,17 @@ const NutriGridMobile = () => {
         errors: recordResult.errors || [],
         skipped: recordResult.skipped,
       };
-      const latestVisits = JSON.parse(localStorage.getItem('pendingVisits') || '[]');
+      const latestVisits = getRecords(STORAGE_KEYS.pendingVisits).filter((record) =>
+        isOwnedByUser(record, currentUser?.id)
+      );
       setPendingVisits(latestVisits);
       setRecordsRefresh((version) => version + 1);
+
+      if (result.synced > 0) {
+        showSyncNotification(
+          `${result.synced} ${result.synced === 1 ? 'record' : 'records'} synced and saved in the Admin Dashboard and database.`
+        );
+      }
 
       if (notify) {
         if (result.skipped === 'offline') {
@@ -1521,10 +1677,6 @@ const NutriGridMobile = () => {
             `${result.synced} record(s) uploaded; ${result.errors.length} failed.\n\n${firstError}` +
             (remainingErrors ? `\n\n${remainingErrors} more error(s). Check the browser console.` : '')
           );
-        } else {
-          alert(result.synced
-            ? `${result.synced} record(s) synced to Supabase.`
-            : 'There are no unsynced records.');
         }
       }
       return result;
@@ -1544,6 +1696,10 @@ const NutriGridMobile = () => {
         void syncPendingTasks().then((result) => {
           if (result.errors?.length) {
             console.error('Some tasks are waiting to sync:', result.errors);
+          } else if (result.synced > 0) {
+            showSyncNotification(
+              `${result.synced} ${result.synced === 1 ? 'task' : 'tasks'} synced and saved in the Admin Dashboard and database.`
+            );
           }
         }).catch((error) => console.error('Could not sync pending tasks:', error));
       }
@@ -1556,7 +1712,7 @@ const NutriGridMobile = () => {
       window.removeEventListener('online', syncWhenOnline);
       window.clearInterval(timer);
     };
-  }, [isAuthenticated, currentUser?.role]);
+  }, [isAuthenticated, currentUser?.id, currentUser?.role]);
 
   useEffect(() => {
     const refreshPendingCount = () => setRecordsRefresh((version) => version + 1);
@@ -1582,22 +1738,28 @@ const NutriGridMobile = () => {
 
   const handleCategoryFormSubmit = async (formData) => {
     const key = storageKeyForCategory(formData.category);
-    const pending = { ...formData, synced: false, status: 'pending' };
-    upsertRecord(key, pending);
-    removeLegacyRecord(formData.category, pending.id);
+    const pending = {
+      ...formData,
+      created_by_user_id: currentUser?.id || '',
+      synced: false,
+      status: 'pending',
+    };
+    const ownedPending = pending;
+    upsertRecord(key, ownedPending);
+    removeLegacyRecord(formData.category, ownedPending.id);
     setEditingRecord(null);
     setShowCategoryForm(false);
     setRecordsRefresh((v) => v + 1);
 
-    const syncErr = await syncSingleRecord(formData.category, pending);
+    const syncErr = await syncSingleRecord(formData.category, ownedPending);
     if (!syncErr) {
-      upsertRecord(key, { ...pending, synced: true, status: 'Synced' });
+      upsertRecord(key, { ...ownedPending, synced: true, status: 'Synced' });
       setRecordsRefresh((v) => v + 1);
-      alert('Saved and synced to Supabase. Same data appears in Admin Dashboard.');
+      showSyncNotification('Record synced and saved in the Admin Dashboard and database.');
       return;
     }
     if (syncErr === 'offline') {
-      alert('Saved on this device. Will sync when you are back online.');
+      alert('Saved locally.');
       return;
     }
     if (syncErr === 'not-signed-in') {
@@ -1613,7 +1775,8 @@ const NutriGridMobile = () => {
     queueRecordDeletion(
       categoryId,
       id,
-      Boolean(record.synced || String(record.status || '').toLowerCase() === 'synced')
+      Boolean(record.synced || String(record.status || '').toLowerCase() === 'synced'),
+      record.created_by_user_id || currentUser?.id
     );
     deleteRecordById(storageKeyForCategory(categoryId), id);
     removeLegacyRecord(categoryId, id);
@@ -1633,7 +1796,7 @@ const NutriGridMobile = () => {
       alert('Deleted locally, but the deletion is still waiting to sync. Check your connection and sign-in, then retry.');
       return;
     }
-    alert('Record deleted from this device and Supabase.');
+    showSyncNotification('Record deletion synced to the Admin Dashboard and database.');
   };
 
   const startEditRecord = (record, categoryId) => {
@@ -1657,7 +1820,10 @@ const NutriGridMobile = () => {
     { id: 'monthlynatal', name: 'Monthly Natality', emoji: '📅', gradient: 'from-amber-400 to-yellow-600', bgColor: '#fff8e1', count: 12 },
   ];
 
-  const savedRecords = useMemo(() => buildSavedRecords(), [recordsRefresh]);
+  const savedRecords = useMemo(
+    () => buildSavedRecords().filter((record) => isOwnedByUser(record.data, currentUser?.id)),
+    [currentUser?.id, recordsRefresh]
+  );
 
   const performSearch = (query) => {
     setSearchQuery(query);
@@ -1728,24 +1894,28 @@ const NutriGridMobile = () => {
       const visitData = {
         ...formData,
         id: Date.now(),
+        created_by_user_id: currentUser?.id || '',
         synced: false,
         created_at: new Date().toISOString(),
         status: 'pending'
       };
 
       const updated = [...pendingVisits, visitData];
-      localStorage.setItem('pendingVisits', JSON.stringify(updated));
+      const allVisits = getRecords(STORAGE_KEYS.pendingVisits);
+      localStorage.setItem(
+        STORAGE_KEYS.pendingVisits,
+        JSON.stringify(replaceUserRecords(allVisits, currentUser?.id, updated))
+      );
       setPendingVisits(updated);
 
-      if (isOnline) {
-        await syncData();
+      if (navigator.onLine) {
+        const result = await syncData({ notify: false });
+        if (result.skipped || result.errors?.length) {
+          alert('Saved locally. Sync will retry automatically when available.');
+        }
+      } else {
+        alert('Saved locally.');
       }
-
-      alert(
-        isOnline 
-          ? '✅ Visit recorded and synced!' 
-          : '✅ Visit recorded! Will sync when online.'
-      );
 
       setFormData({
         purok: '',
@@ -2030,13 +2200,52 @@ const NutriGridMobile = () => {
   }
 
   if (appState === 'app' && isAuthenticated && currentUser?.role?.toLowerCase() === 'admin') {
-    return <AdminDashboard adminName={currentUser.fullName} onLogout={handleLogout} />;
+    return (
+      <AdminDashboard
+        adminName={currentUser.fullName}
+        currentUserId={currentUser.id}
+        onLogout={handleLogout}
+      />
+    );
   }
 
   // Show Main App
   if (appState === 'app' && isAuthenticated) {
     return (
       <>
+        {syncNotification && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="fixed left-1/2 top-4 z-[120] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-lg"
+          >
+            <CheckCircle size={19} className="mt-0.5 shrink-0 text-emerald-600" aria-hidden="true" />
+            <span className="flex-1 font-medium">{syncNotification}</span>
+            <button
+              type="button"
+              onClick={() => setSyncNotification('')}
+              aria-label="Dismiss sync notification"
+              className="rounded-full p-1 text-emerald-700 transition hover:bg-emerald-100"
+            >
+              <X size={16} />
+            </button>
+          </div>
+        )}
+        {accountActionError && (
+          <div
+            role="alert"
+            className="fixed left-1/2 top-4 z-[120] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 shadow-lg"
+          >
+            {accountActionError}
+            <button
+              type="button"
+              onClick={() => setAccountActionError('')}
+              className="ml-2 font-bold underline"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
         <SideMenu open={showMenu} onClose={() => setShowMenu(false)} onLogout={handleLogout} />
         <FieldResponsiveShell>
         <div className="max-w-md mx-auto min-h-screen flex flex-col overflow-x-hidden shadow-xl" style={{ backgroundColor: MOBILE.bg }}>
@@ -2068,8 +2277,17 @@ const NutriGridMobile = () => {
               setShowSearchSuggestions={setShowSearchSuggestions}
               performSearch={performSearch}
               isOnline={isOnline}
-              syncData={syncData}
               setEditingRecord={setEditingRecord}
+              currentUserId={currentUser?.id}
+              userEmail={currentUser?.email}
+              onDeleteAccount={handleDeleteAccount}
+            />
+          )}
+          {activeView === 'password' && (
+            <ForgotPassword
+              initialEmail={currentUser?.email}
+              onBack={() => setActiveView('home')}
+              onDone={handleLogout}
             />
           )}
           {activeView === 'visit' && <HouseVisitForm />}
@@ -2079,6 +2297,7 @@ const NutriGridMobile = () => {
               selectedCategory={selectedCategory}
               searchQuery={searchQuery}
               recordsRefresh={recordsRefresh}
+              currentUserId={currentUser?.id}
               pendingVisits={pendingVisits}
               setPendingVisits={setPendingVisits}
               startEditRecord={startEditRecord}

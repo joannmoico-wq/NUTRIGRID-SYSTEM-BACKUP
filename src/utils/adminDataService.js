@@ -35,6 +35,12 @@ const COLUMN_MAPS = {
   environmental: {
     total_hh: 'total_hh',
     total_families: 'total_families',
+    water_level_i: 'water_level_i',
+    water_level_ii: 'water_level_ii',
+    water_level_iii: 'water_level_iii',
+    without_potable_water: 'without_potable_water',
+    toilet_sanitary: 'toilet_sanitary',
+    toilet_not_sanitary: 'toilet_not_sanitary',
     visit_date: 'visit_date',
     environmental_sanitation_photo: 'photo_url',
   },
@@ -59,9 +65,16 @@ const COLUMN_MAPS = {
   monthlynatal: {
     name_of_mother: 'mother_name',
     name_of_child: 'child_name',
+    sex: 'sex',
+    dob: 'dob',
     birth_weight: 'birth_weight',
     wt_kg: 'weight_kg',
     ht_cm: 'height_cm',
+    length_cm: 'length_cm',
+    dow: 'dow',
+    w_a: 'w_a',
+    h_a: 'h_a',
+    w_l_h: 'w_l_h',
     iron_status: 'iron_status',
     remarks: 'remarks',
   },
@@ -76,11 +89,15 @@ const STORAGE_KEY_BY_CATEGORY = {
   monthlynatal: STORAGE_KEYS.monthlynatal,
 };
 
-function cacheSharedRecords(category, remoteRecords) {
+function cacheSharedRecords(category, remoteRecords, userId) {
   const key = STORAGE_KEY_BY_CATEGORY[category];
+  const localRecords = getRecords(key);
   const deletedIds = new Set(
     getPendingRecordDeletions()
-      .filter((item) => item.category === category)
+      .filter((item) =>
+        item.category === category &&
+        String(item.created_by_user_id || '') === String(userId || '')
+      )
       .map((item) => String(item.recordId))
   );
   const remoteById = new Map(
@@ -89,12 +106,20 @@ function cacheSharedRecords(category, remoteRecords) {
       .map((record) => [String(record.id), record])
   );
 
-  getRecords(key)
-    .filter((record) => !record.synced && !deletedIds.has(String(record.id)))
+  const pendingForAdmin = localRecords.filter(
+    (record) =>
+      !record.synced &&
+      String(record.created_by_user_id || '') === String(userId || '') &&
+      !deletedIds.has(String(record.id))
+  );
+  pendingForAdmin
     .forEach((record) => remoteById.set(String(record.id), record));
 
   const records = Array.from(remoteById.values());
-  setRecords(key, records);
+  const preservedPending = localRecords.filter(
+    (record) => !record.synced && !pendingForAdmin.includes(record)
+  );
+  setRecords(key, [...records, ...preservedPending]);
   return records;
 }
 
@@ -129,13 +154,16 @@ async function readAllRows(category, { table, idColumn }) {
     record.purok = row.purok ?? record.purok ?? '';
     record.id = payload.id ?? row.local_id ?? row[idColumn];
     record.created_at = row.created_at || payload.created_at;
+    record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || '';
     record.status = row.status || payload.status || 'Synced';
     record.synced = String(row.status || '').toLowerCase() === 'synced';
     return record;
   });
 }
 
-export async function loadAdminDataFromSupabase() {
+export async function loadAdminDataFromSupabase(userId) {
+  const { data: { session } } = await supabase.auth.getSession();
+  const activeUserId = userId || session?.user?.id || '';
   const results = await Promise.allSettled([
     // Keep Residents independent so another report table failure cannot hide the database household data.
     readAllRows('residents', ADMIN_TABLES.residents),
@@ -154,6 +182,14 @@ export async function loadAdminDataFromSupabase() {
     'pregnantwoman',
     'monthlynatal',
   ].map((category) => getRecords(STORAGE_KEY_BY_CATEGORY[category]));
+  localFallbacks.forEach((records, index) => {
+    localFallbacks[index] = records.filter(
+      (record) =>
+        record.synced ||
+        String(record.status || '').toLowerCase() === 'synced' ||
+        String(record.created_by_user_id || '') === String(activeUserId)
+    );
+  });
   const rowsFor = (index, category) => {
     const result = results[index];
     if (result.status === 'fulfilled') return result.value;
@@ -178,12 +214,12 @@ export async function loadAdminDataFromSupabase() {
   ];
 
   return {
-    households: toAdminResidents(cacheSharedRecords('residents', households)),
-    environmentalSanitationData: toAdminEnvironmental(cacheSharedRecords('environmental', environmentalSanitationData)),
-    infantFeedingData: toAdminInfantFeeding(cacheSharedRecords('infantfeeding', infantFeedingData)),
-    lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData)),
-    pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData)),
-    natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData)),
-    monthlyReportData: reloadAllAdminData().monthlyReportData,
+    households: toAdminResidents(cacheSharedRecords('residents', households, activeUserId)),
+    environmentalSanitationData: toAdminEnvironmental(cacheSharedRecords('environmental', environmentalSanitationData, activeUserId)),
+    infantFeedingData: toAdminInfantFeeding(cacheSharedRecords('infantfeeding', infantFeedingData, activeUserId)),
+    lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData, activeUserId)),
+    pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData, activeUserId)),
+    natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData, activeUserId)),
+    monthlyReportData: reloadAllAdminData(activeUserId).monthlyReportData,
   };
 }

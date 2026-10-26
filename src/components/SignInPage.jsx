@@ -1,6 +1,7 @@
 // Authentication is delegated to the Supabase callbacks supplied by the parent.
 
 import React, { useEffect, useState } from "react";
+import ForgotPassword from "./ForgotPassword";
 
 const svgProps = {
   width: 24,
@@ -97,6 +98,8 @@ const ACCOUNT_STYLES = `
 .account-switch { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; margin: 22px 0 0; font-size: 14px; color: var(--muted-foreground); }
 .account-text-button { color: var(--brand); background: transparent; height: auto; padding: 4px 2px; font-size: inherit; font-weight: 700; }
 .account-text-button:hover { text-decoration: underline; }
+.account-forgot-password { align-self: flex-end; margin-top: -10px; padding: 0; background: transparent; color: #2563eb; font-size: 13px; }
+.account-forgot-password:hover { text-decoration: underline; }
 .account-error { color: var(--destructive); font-size: 12px; margin: -3px 3px 0; }
 .account-dialog-overlay { position: fixed; inset: 0; z-index: 50; background: var(--overlay); backdrop-filter: blur(3px); }
 .account-dialog { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: calc(100% - 40px); max-width: 360px; border-radius: 24px; background: var(--card); padding: 30px; z-index: 51; box-shadow: var(--account-shadow); text-align: center; }
@@ -191,6 +194,7 @@ function Button({ variant = "account", className = "", children, ...props }) {
 
 function SignInPage({ onSignIn, onRegister }) {
   const [mode, setMode] = useState("login");
+  const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [fields, setFields] = useState({
     fullName: "",
     age: "",
@@ -202,6 +206,15 @@ function SignInPage({ onSignIn, onRegister }) {
   const [notice, setNotice] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const registering = mode === "register";
+  if (showForgotPassword) {
+    return (
+      <ForgotPassword
+        onBack={() => setShowForgotPassword(false)}
+        onDone={() => setShowForgotPassword(false)}
+      />
+    );
+  }
+
   const update = (key, value) => {
     setFields((current) => ({ ...current, [key]: value }));
     setError("");
@@ -354,6 +367,15 @@ function SignInPage({ onSignIn, onRegister }) {
               </Button>
             </div>
           </div>
+          {!registering && (
+            <button
+              type="button"
+              className="account-forgot-password"
+              onClick={() => setShowForgotPassword(true)}
+            >
+              forgot password?
+            </button>
+          )}
           {error && (
             <p className="account-error" role="alert">
               {error}
