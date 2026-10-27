@@ -37,6 +37,13 @@ const PRIORITY_STYLE = {
   Low: 'bg-slate-100 text-slate-600',
 };
 
+function localDateInputValue(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) {
   const [tasks, setTasks] = useState([]);
   const [bhws, setBhws] = useState([]);
@@ -46,6 +53,8 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
+  const [reschedulingTask, setReschedulingTask] = useState(null);
+  const [rescheduleDate, setRescheduleDate] = useState('');
   const [bhwLoadError, setBhwLoadError] = useState('');
 
   const load = async () => {
@@ -142,7 +151,7 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
   const counts = useMemo(
     () => ({
       All: tasks.length,
-      Pending: tasks.filter((t) => t.status === 'Pending').length,
+      Pending: tasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t)).length,
       Overdue: tasks.filter((t) => isTaskOverdue(t)).length,
       'In Progress': tasks.filter((t) => t.status === 'In Progress').length,
       Completed: tasks.filter((t) => t.status === 'Completed').length,
@@ -154,6 +163,8 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
     ? tasks
     : filter === 'Overdue'
       ? tasks.filter((t) => isTaskOverdue(t))
+      : filter === 'Pending'
+        ? tasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t))
       : tasks.filter((t) => t.status === filter)
   ).sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
 
@@ -218,6 +229,32 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
     }
   };
 
+  const openReschedule = (task) => {
+    setReschedulingTask(task);
+    setRescheduleDate(localDateInputValue());
+  };
+
+  const saveReschedule = async (event) => {
+    event.preventDefault();
+    if (!reschedulingTask || !rescheduleDate) return;
+
+    const updatedTask = { ...reschedulingTask, due_date: rescheduleDate };
+    saveTaskLocally(updatedTask, ['due_date']);
+    setTasks(getLocalTasks());
+    setReschedulingTask(null);
+    setRescheduleDate('');
+
+    try {
+      const result = await syncPendingTasks();
+      setMessage(result.errors?.length || result.skipped
+        ? 'New due date saved on this device. It will sync when online.'
+        : 'Task rescheduled.');
+    } catch (error) {
+      console.error('Could not sync task reschedule:', error);
+      setMessage('New due date saved on this device. It will sync when Supabase is available.');
+    }
+  };
+
   const editTask = (task) => {
     setEditingTask(task);
     setForm({
@@ -257,14 +294,6 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
         </div>
         <button
           type="button"
-          onClick={() => editTask(t)}
-          className="absolute right-12 bottom-3 rounded-full p-2 text-gray-400 opacity-0 transition hover:bg-violet-50 hover:text-violet-600 group-hover:opacity-100"
-          aria-label="Edit task"
-        >
-          <Edit size={15} />
-        </button>
-        <button
-          type="button"
           onClick={() => { setShowForm(true); void load(); }}
           className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold text-white shadow-md"
           style={{ background: 'linear-gradient(90deg,#8F65FF,#FF75C3)' }}
@@ -291,18 +320,23 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {visible.map((t) => (
-            <article
-              key={t.task_id}
-              className="group relative rounded-3xl border border-[#E8C4F0] bg-gradient-to-br from-white to-[#FAF5FF] p-5 shadow-sm transition hover:shadow-lg"
-            >
+          {visible.map((t) => {
+            const overdue = isTaskOverdue(t);
+            const displayedStatus = overdue ? 'Overdue' : t.status;
+            return (
+              <article
+                key={t.task_id}
+                className="group relative rounded-3xl border border-[#E8C4F0] bg-gradient-to-br from-white to-[#FAF5FF] p-5 shadow-sm transition hover:shadow-lg"
+              >
               <div className="mb-3 flex items-start justify-between gap-2">
                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${PRIORITY_STYLE[t.priority]}`}>
                   <Flag size={11} className="mr-1 inline" />
                   {t.priority}
                 </span>
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${STATUS_STYLE[t.status]}`}>
-                  {t.status}
+                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
+                  overdue ? 'bg-rose-100 text-rose-700' : STATUS_STYLE[t.status]
+                }`}>
+                  {displayedStatus}
                 </span>
               </div>
 
@@ -328,16 +362,85 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
                 )}
               </div>
 
+              <div className="absolute bottom-3 right-3 flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={() => editTask(t)}
+                  className="rounded-full p-2 text-gray-400 transition hover:bg-violet-50 hover:text-violet-600"
+                  aria-label="Edit task"
+                >
+                  <Edit size={15} />
+                </button>
+                {overdue && (
+                  <button
+                    type="button"
+                    onClick={() => openReschedule(t)}
+                    className="flex items-center gap-1 rounded-full bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-100"
+                    aria-label={`Reschedule ${t.title}`}
+                  >
+                    <Calendar size={14} /> Re-schedule
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => deleteTask(t.task_id)}
+                  className="rounded-full p-2 text-gray-400 transition hover:bg-rose-50 hover:text-rose-600"
+                  aria-label="Delete task"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+
+      {reschedulingTask && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
+          <form
+            onSubmit={saveReschedule}
+            className="w-full max-w-sm space-y-4 rounded-3xl bg-white p-6 shadow-2xl"
+          >
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold text-gray-900">Re-schedule task</h2>
               <button
                 type="button"
-                onClick={() => deleteTask(t.task_id)}
-                className="absolute right-3 bottom-3 rounded-full p-2 text-gray-400 opacity-0 transition hover:bg-rose-50 hover:text-rose-600 group-hover:opacity-100"
-                aria-label="Delete task"
+                onClick={() => setReschedulingTask(null)}
+                aria-label="Close reschedule dialog"
               >
-                <Trash2 size={15} />
+                <X size={20} />
               </button>
-            </article>
-          ))}
+            </div>
+            <p className="text-sm text-gray-600">{reschedulingTask.title}</p>
+            <label className="block text-xs font-semibold text-gray-600">
+              New due date
+              <input
+                type="date"
+                required
+                min={localDateInputValue()}
+                className={`${inputClass} mt-1`}
+                value={rescheduleDate}
+                onChange={(event) => setRescheduleDate(event.target.value)}
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setReschedulingTask(null)}
+                className="rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="rounded-full px-4 py-2 text-sm font-semibold text-white"
+                style={{ background: 'linear-gradient(90deg,#8F65FF,#FF75C3)' }}
+              >
+                Save new date
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

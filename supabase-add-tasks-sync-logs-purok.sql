@@ -24,6 +24,37 @@ alter table public.monthly_natality
   add column if not exists iron_status text,
   add column if not exists remarks text;
 
+-- Allow each approved field worker to restore only their own previously synced PWA records.
+do $$
+declare
+  table_name text;
+begin
+  foreach table_name in array array[
+    'residents',
+    'environmental_sanitation',
+    'infant_feeding',
+    'lactating_women',
+    'pregnant_women',
+    'monthly_natality'
+  ]
+  loop
+    execute format(
+      'alter table public.%I add column if not exists created_by_user_id uuid references auth.users(id) on delete set null',
+      table_name
+    );
+    execute format('grant select on public.%I to authenticated', table_name);
+    execute format(
+      'drop policy if exists nutrigrid_member_read_own on public.%I',
+      table_name
+    );
+    execute format(
+      'create policy nutrigrid_member_read_own on public.%I for select to authenticated using (public.is_approved_staff() and (created_by_user_id = (select auth.uid()) or data->>''created_by_user_id'' = (select auth.uid())::text))',
+      table_name
+    );
+  end loop;
+end
+$$;
+
 -- Remove the broad policy from the previous CRUD script, if it was run.
 -- Keep the existing approved read/insert/update policies in place.
 do $$

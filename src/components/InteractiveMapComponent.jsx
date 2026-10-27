@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Tooltip, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Popup, Tooltip, ZoomControl, useMapEvents } from 'react-leaflet';
 import { divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AlertTriangle } from 'lucide-react';
@@ -32,6 +32,13 @@ const ALAWIHAO_CENTERS = [
   [14.1108973, 122.9304014],
   [14.1108973, 122.9278014],
   [14.1077973, 122.9291014],
+];
+
+const LANDMARKS = [
+  {
+    name: 'Alawihao Elementary School',
+    position: [14.1096995, 122.9303074],
+  },
 ];
 
 const COLOR_CATEGORIES = [
@@ -317,31 +324,68 @@ function makePurokStats(name, datasets) {
   return stats;
 }
 
-function getOffsetPosition(lat, lng, index, count, zoom, markerRadius) {
-  const angle = (2 * Math.PI * index) / Math.max(count, 1);
-  const latitudeRadians = (lat * Math.PI) / 180;
-  const metersPerPixel = (156543.03392 * Math.cos(latitudeRadians)) / (2 ** zoom);
-  const offsetMeters = markerRadius * 2.4 * metersPerPixel;
-  const latitudeOffset = offsetMeters / 111320;
-  const longitudeOffset = offsetMeters / (111320 * Math.cos(latitudeRadians));
-  return [
-    lat + Math.sin(angle) * latitudeOffset,
-    lng + Math.cos(angle) * longitudeOffset,
-  ];
+function createPurokSummaryIcon(markers, size) {
+  const total = markers.reduce((sum, marker) => sum + marker.count, 0);
+  let startAngle = 0;
+  const slices = markers.map((marker) => {
+    const endAngle = startAngle + (marker.count / total) * 360;
+    const slice = `${marker.color} ${startAngle}deg ${endAngle}deg`;
+    startAngle = endAngle;
+    return slice;
+  });
+  const badgeSize = 20;
+  const radius = size * 0.9;
+  const canvasSize = Math.ceil(size + radius * 2 + badgeSize);
+  const center = canvasSize / 2;
+  const iconForCategory = (key) => {
+    if (key === 'pink') {
+      return '<circle cx="8" cy="3" r="2" fill="#fff"/><path d="M7 6h2.5a3 3 0 0 1 3 3v1.5a2.5 2.5 0 0 1-2.5 2.5H9v2H6.5v-4h3V9H7V6Z" fill="#fff"/><path d="M9.5 9.5a2.5 2.5 0 0 1 2.5 2.5" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round"/>';
+    }
+    if (key === 'violet' || key === 'maroon') {
+      return '<circle cx="6" cy="3" r="2" fill="#fff"/><circle cx="10.5" cy="9.5" r="1.7" fill="#fff"/><path d="M3 14v-2a3 3 0 0 1 3-3h1l2 2-1.5 1.5L9 15H6l-1.5-2V15H3Z" fill="#fff"/><path d="M7 8.5c1.8-1 4.5-.2 5 1.8" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/>';
+    }
+    if (key === 'brown' || key === 'purple') {
+      return '<circle cx="8" cy="5" r="3" fill="#fff"/><path d="M3.5 14a4.5 4.5 0 0 1 9 0v1h-9v-1Z" fill="#fff"/><circle cx="5" cy="5" r=".6" fill="' + COLORS.brown + '"/><circle cx="11" cy="5" r=".6" fill="' + COLORS.brown + '"/>';
+    }
+    if (key === 'blue') {
+      return '<circle cx="5" cy="5" r="2" fill="#fff"/><circle cx="11" cy="5" r="2" fill="#fff"/><circle cx="8" cy="3.5" r="2" fill="#fff"/><path d="M1.5 14a3.5 3.5 0 0 1 7 0v1h-7v-1Zm6 1v-1a3.5 3.5 0 0 1 7 0v1h-7Z" fill="#fff"/>';
+    }
+    if (key === 'black') {
+      return '<path d="M8 1.5S3.5 7 3.5 10.2a4.5 4.5 0 0 0 9 0C12.5 7 8 1.5 8 1.5Z" fill="#fff"/><path d="M6 10.5a2.2 2.2 0 0 0 2.2 2.2" fill="none" stroke="' + COLORS.black + '" stroke-width="1.2" stroke-linecap="round"/>';
+    }
+    if (key === 'gray') {
+      return '<path d="M4 2h7v4H4zM5 6v2h5V6m-5 2v3a3 3 0 0 0 6 0V8" fill="none" stroke="#fff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>';
+    }
+    return '<circle cx="8" cy="3.7" r="2.2" fill="#fff"/><path d="M4.2 14.3v-2.1c0-2 1.6-3.6 3.8-3.6s3.8 1.6 3.8 3.6v2.1H9.9v-2.1c0-1-.7-1.8-1.9-1.8s-1.9.8-1.9 1.8v2.1z" fill="#fff"/>';
+  };
+  const badges = markers.map((marker, index) => {
+    const angle = (-90 + (360 * index) / markers.length) * (Math.PI / 180);
+    const left = center + Math.cos(angle) * radius - badgeSize / 2;
+    const top = center + Math.sin(angle) * radius - badgeSize / 2;
+    return `<span title="${marker.label}: ${marker.count}" style="position:absolute;left:${left}px;top:${top}px;display:grid;place-items:center;width:${badgeSize}px;height:${badgeSize}px;border:1px solid #fff;border-radius:50%;background:${marker.color};box-shadow:0 1px 3px rgba(15,23,42,.35)">
+      <svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">${iconForCategory(marker.key)}</svg>
+    </span>`;
+  }).join('');
+  return divIcon({
+    className: 'nutrigrid-map-summary',
+    html: `<div aria-hidden="true" style="position:relative;width:${canvasSize}px;height:${canvasSize}px">
+      <div style="position:absolute;left:${center - size / 2}px;top:${center - size / 2}px;width:${size}px;height:${size}px;border:2px solid #fff;border-radius:50%;background:conic-gradient(${slices.join(',')});box-shadow:0 2px 5px rgba(15,23,42,.45)"></div>
+      ${badges}
+    </div>`,
+    iconSize: [canvasSize, canvasSize],
+    iconAnchor: [center, center],
+    popupAnchor: [0, -center],
+    tooltipAnchor: [0, -center],
+  });
 }
 
-function createPurokPin(color, size) {
-  const height = Math.round(size * 1.3);
+function createLandmarkIcon() {
   return divIcon({
-    className: 'nutrigrid-map-pin',
-    html: `<svg width="${size}" height="${height}" viewBox="0 0 32 42" aria-hidden="true" style="overflow:visible;filter:drop-shadow(0 2px 3px rgba(15,23,42,.4))">
-      <path d="M16 41S3 25.8 3 16A13 13 0 1 1 29 16C29 25.8 16 41 16 41Z" fill="${color}" stroke="#fff" stroke-width="2.5" stroke-linejoin="round"/>
-      <circle cx="16" cy="16" r="5" fill="#fff" stroke="rgba(15,23,42,.18)" stroke-width="1"/>
-    </svg>`,
-    iconSize: [size, height],
-    iconAnchor: [size / 2, height],
-    popupAnchor: [0, -height + 3],
-    tooltipAnchor: [0, -height + 2],
+    className: 'nutrigrid-map-landmark',
+    html: '<div style="display:flex;align-items:center;gap:5px;width:max-content;border:1px solid #cbd5e1;border-radius:8px;background:#fff;padding:5px 8px;color:#1e293b;font:600 12px/1.2 system-ui;box-shadow:0 2px 5px rgba(15,23,42,.25)"><span aria-hidden="true">🏫</span><span>Alawihao Elementary School</span></div>',
+    iconSize: [230, 30],
+    iconAnchor: [115, 15],
+    popupAnchor: [0, -15],
   });
 }
 
@@ -422,12 +466,12 @@ const InteractiveMapComponent = ({
     }),
     { records: 0, households: 0, noPotableWater: 0, noSanitaryToilets: 0 }
   );
-  const markerSize = Math.min(46, Math.max(16, 16 + (mapZoom - 12) * 5));
+  const markerSize = Math.min(46, Math.max(34, 34 + (mapZoom - 15) * 3));
 
   return (
     <div className="space-y-6">
       <style>{`
-        .nutrigrid-map-pin { background: transparent; border: 0; }
+        .nutrigrid-map-summary, .nutrigrid-map-landmark { background: transparent; border: 0; }
         .nutrigrid-purok-popup .leaflet-popup-content-wrapper {
           border-radius: 16px;
           padding: 8px 12px;
@@ -483,14 +527,33 @@ const InteractiveMapComponent = ({
             <MapContainer
               center={[14.1093473, 122.9291014]}
               zoom={15}
+              minZoom={13}
+              maxZoom={19}
+              scrollWheelZoom
+              touchZoom
+              doubleClickZoom
+              zoomControl={false}
               style={{ height: '500px', width: '100%' }}
               className="rounded-lg"
             >
               <MapZoomTracker onZoomChange={setMapZoom} />
+              <ZoomControl position="topright" />
               <TileLayer
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                 attribution="&copy; OpenStreetMap contributors"
+                maxNativeZoom={19}
+                maxZoom={19}
               />
+              {mapZoom >= 16 && LANDMARKS.map((landmark) => (
+                <Marker
+                  key={landmark.name}
+                  position={landmark.position}
+                  icon={createLandmarkIcon()}
+                  zIndexOffset={1000}
+                >
+                  <Popup>{landmark.name}</Popup>
+                </Marker>
+              ))}
               {puroks.map((purok) => {
                 const washMarkers = [
                   { key: 'black', label: 'Without potable water source', color: COLORS.black, count: purok.stats.noPotableWater },
@@ -499,74 +562,56 @@ const InteractiveMapComponent = ({
                 const visibleMarkers = mapMode === 'nutritional'
                   ? purok.stats.categoryMarkers
                   : washMarkers;
+                if (!visibleMarkers.length) return null;
                 return (
-                  <React.Fragment key={purok.id}>
-                    {mapMode === 'nutritional' && visibleMarkers.length === 0 && (
-                      <Marker
-                        position={[purok.lat, purok.lng]}
-                        icon={createPurokPin('#94a3b8', markerSize)}
-                      >
-                        <Tooltip direction="top" permanent>{purok.name}</Tooltip>
-                        <Popup
-                          className="nutrigrid-purok-popup"
-                          minWidth={Math.round(180 + markerSize * 2)}
-                          maxWidth={340}
+                  <Marker
+                    key={purok.id}
+                    position={[purok.lat, purok.lng]}
+                    icon={createPurokSummaryIcon(visibleMarkers, markerSize)}
+                  >
+                    <Tooltip direction="top" permanent>{purok.name}</Tooltip>
+                    <Popup
+                      className="nutrigrid-purok-popup"
+                      minWidth={Math.round(200 + markerSize)}
+                      maxWidth={360}
+                    >
+                      <div className="text-base font-bold">{purok.name}</div>
+                      <div className="mt-2 space-y-1">
+                        {visibleMarkers.map((marker) => (
+                          <div key={marker.key} className="flex items-center justify-between gap-4 text-sm">
+                            <span className="flex items-center gap-2">
+                              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: marker.color }} />
+                              {marker.label}
+                            </span>
+                            <strong>{marker.count}</strong>
+                          </div>
+                        ))}
+                      </div>
+                      {mapMode === 'nutritional' && visibleMarkers.some((marker) => marker.key === 'orange' || marker.key === 'yellow') && (
+                        <div
+                          role="alert"
+                          className={`mt-3 flex items-start gap-2 rounded-lg border p-3 text-sm font-bold ${
+                            visibleMarkers.some((marker) => marker.key === 'orange')
+                              ? 'border-red-300 bg-red-50 text-red-800'
+                              : 'border-amber-300 bg-amber-50 text-amber-900'
+                          }`}
                         >
-                          <div className="text-base font-bold">{purok.name}</div>
-                          <div className="mt-1 text-sm">No nutrition records available.</div>
-                        </Popup>
-                      </Marker>
-                    )}
-                    {visibleMarkers.map((marker, index) => (
-                      <Marker
-                        key={`${purok.id}-${marker.key}`}
-                        position={getOffsetPosition(
-                          purok.lat,
-                          purok.lng,
-                          index,
-                          visibleMarkers.length,
-                          mapZoom,
-                          markerSize
-                        )}
-                        icon={createPurokPin(marker.color, markerSize)}
-                      >
-                        {index === 0 && (
-                          <Tooltip direction="top" permanent>{purok.name}</Tooltip>
-                        )}
-                        <Popup
-                          className="nutrigrid-purok-popup"
-                          minWidth={Math.round(180 + markerSize * 2)}
-                          maxWidth={340}
-                        >
-                          <div className="text-base font-bold">{purok.name}</div>
-                          <div className="mt-1 text-sm">{marker.label}: {marker.count}</div>
-                          {mapMode === 'nutritional' && ['orange', 'yellow'].includes(marker.key) && (
-                            <div
-                              role="alert"
-                              className={`mt-3 flex items-start gap-2 rounded-lg border p-3 text-sm font-bold ${
-                                marker.key === 'orange'
-                                  ? 'border-red-300 bg-red-50 text-red-800'
-                                  : 'border-amber-300 bg-amber-50 text-amber-900'
-                              }`}
-                            >
-                              <AlertTriangle size={20} className="shrink-0" aria-hidden="true" />
-                              <span>
-                                {marker.key === 'orange'
-                                  ? 'NEED OF FEEDING PROGRAM'
-                                  : 'NEED OF PARENTS GUIDE'}
-                              </span>
-                            </div>
-                          )}
-                        </Popup>
-                      </Marker>
-                    ))}
-                  </React.Fragment>
+                          <AlertTriangle size={20} className="shrink-0" aria-hidden="true" />
+                          <span>
+                            {visibleMarkers.some((marker) => marker.key === 'orange')
+                              ? 'NEED OF FEEDING PROGRAM'
+                              : 'NEED OF PARENTS GUIDE'}
+                          </span>
+                        </div>
+                      )}
+                    </Popup>
+                  </Marker>
                 );
               })}
             </MapContainer>
           </div>
           <p className={`mt-2 text-xs ${secondaryTextClass}`}>
-            All ten purok markers are placed within Barangay Alawihao. Markers grow as you zoom in.
+            Use the map zoom buttons or pinch to reveal mapped roads and landmarks. Color-coded people icons show the categories recorded in each purok.
           </p>
           <div className={`mt-4 rounded-lg border p-4 ${panelClass}`}>
             <h3 className={`mb-1 font-bold ${primaryTextClass}`}>Color legend</h3>

@@ -252,7 +252,10 @@ export default function MyTasks() {
             const Icon = STEP_ICON[t.status] || Circle;
             const done = t.status === 'Completed';
             const overdue = isTaskOverdue(t);
-            const notes = Array.isArray(t.task_notes) ? t.task_notes : [];
+            const notes = (Array.isArray(t.task_notes) ? t.task_notes : [])
+              .filter(
+                (note) => !String(note?.message || note).includes('Automatically rescheduled from')
+              );
             return (
               <li
                 key={t.task_id}
@@ -318,12 +321,14 @@ export default function MyTasks() {
                     <span
                       key={s}
                       className={`flex-1 rounded-full py-1 text-center transition ${
-                        t.status === s
-                          ? 'bg-gradient-to-r from-[#8F65FF] to-[#FF75C3] text-white shadow'
+                        (s === 'Pending' && overdue) || t.status === s
+                          ? overdue && s === 'Pending'
+                            ? 'bg-rose-100 text-rose-700 shadow'
+                            : 'bg-gradient-to-r from-[#8F65FF] to-[#FF75C3] text-white shadow'
                           : 'text-gray-500'
                       }`}
                     >
-                      {s}
+                      {s === 'Pending' && overdue ? 'Overdue' : s}
                     </span>
                   ))}
                 </div>

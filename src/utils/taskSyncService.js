@@ -36,26 +36,20 @@ export function getLocalTasks() {
   return readArray(TASKS_STORAGE_KEY);
 }
 
-function taskDueEnd(task) {
-  if (!task?.due_date) return null;
-  const dueEnd = new Date(`${task.due_date}T23:59:59`);
-  return Number.isNaN(dueEnd.getTime()) ? null : dueEnd;
-}
-
-export function isTaskOverdue(task, now = new Date()) {
-  return task?.status !== 'Completed' && Boolean(taskDueEnd(task) && now > taskDueEnd(task));
-}
-
-function overdueRolloverReady(task, now = new Date()) {
-  const dueEnd = taskDueEnd(task);
-  return isTaskOverdue(task, now) && dueEnd && now.getTime() >= dueEnd.getTime() + 24 * 60 * 60 * 1000;
-}
-
 function todayIso(now = new Date()) {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
   const day = String(now.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+export function isTaskOverdue(task, now = new Date()) {
+  const dueDate = String(task?.due_date || '').slice(0, 10);
+  return (
+    task?.status !== 'Completed' &&
+    /^\d{4}-\d{2}-\d{2}$/.test(dueDate) &&
+    dueDate < todayIso(now)
+  );
 }
 
 function notificationClaimKey(taskId, rolloverCount) {
@@ -69,54 +63,11 @@ export function notifyTaskOnce(task, title = 'Task overdue') {
   if (localStorage.getItem(key)) return false;
   localStorage.setItem(key, '1');
   new Notification(title, {
-    body: `${task.title} was automatically rescheduled.`,
+    body: `${task.title} needs attention.`,
     icon: '/icon-192.png',
     tag: `nutrigrid-task-${task.task_id}-overdue-${count}`,
   });
   return true;
-}
-
-function appendSystemNote(task, oldDueDate, newDueDate, now) {
-  const notes = Array.isArray(task.task_notes) ? task.task_notes : [];
-  return [
-    ...notes,
-    {
-      type: 'system',
-      created_at: now.toISOString(),
-      message: `[System Action]: Task was not completed within 24 hours of its original due date. Automatically rescheduled from ${oldDueDate} to ${newDueDate}.`,
-    },
-  ];
-}
-
-export function processOverdueTasks(tasks, { notify = false, now = new Date() } = {}) {
-  let changed = false;
-  const processed = tasks.map((task) => {
-    if (
-      !overdueRolloverReady(task, now)
-      || task.overdue_last_processed_due_date === task.due_date
-    ) return task;
-    const newDueDate = todayIso(now);
-    const next = {
-      ...task,
-      original_due_date: task.original_due_date || task.due_date,
-      due_date: newDueDate,
-      overdue_count: Number(task.overdue_count || 0) + 1,
-      overdue_last_processed_at: now.toISOString(),
-      overdue_last_processed_due_date: task.due_date,
-      task_notes: appendSystemNote(task, task.due_date, newDueDate, now),
-    };
-    saveTaskLocally(next, [
-      'due_date',
-      'original_due_date',
-      'overdue_count',
-      'overdue_last_processed_at',
-      'task_notes',
-    ]);
-    if (notify) notifyTaskOnce(next);
-    changed = true;
-    return next;
-  });
-  return { tasks: changed ? getLocalTasks() : processed, changed };
 }
 
 export function getPendingTaskChanges() {
@@ -212,13 +163,9 @@ export function cacheBhwProfiles(profiles) {
 }
 
 export async function loadTasks({ assignedToUserId } = {}) {
-  const selectTasks = (tasks) => {
-    const overdue = processOverdueTasks(tasks, { notify: Boolean(assignedToUserId) });
-    const result = overdue.tasks;
-    return assignedToUserId
-      ? result.filter((task) => task.assigned_to_user_id === assignedToUserId)
-      : result;
-  };
+  const selectTasks = (tasks) => assignedToUserId
+    ? tasks.filter((task) => task.assigned_to_user_id === assignedToUserId)
+    : tasks;
   if (!navigator.onLine) {
     const local = getLocalTasks();
     return selectTasks(local);
