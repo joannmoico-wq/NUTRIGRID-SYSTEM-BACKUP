@@ -79,6 +79,7 @@ const MOBILE = {
 };
 
 const LEGACY_RECORD_KEYS = {
+  residents: 'pendingVisits',
   infantfeeding: 'records_infant_feeding',
   lactatingwoman: 'records_lactating_woman',
   pregnantwoman: 'records_pregnant_woman',

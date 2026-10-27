@@ -35,6 +35,28 @@ const LEGACY_SOURCES = [
 
 const isUnsynced = (r) => !r.synced && String(r.status || '').toLowerCase() !== 'synced';
 
+function isMissingOwnerColumnError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  return (
+    error?.code === '42703' ||
+    error?.code === 'PGRST204' ||
+    (
+      message.includes('created_by_user_id') &&
+      (message.includes('column') || message.includes('schema cache'))
+    )
+  );
+}
+
+function removeLegacyRecord(category, recordId) {
+  for (const source of LEGACY_SOURCES.filter((item) => item.category === category)) {
+    const records = readLegacy(source.key);
+    const remaining = records.filter((record) => String(record.id) !== String(recordId));
+    if (remaining.length !== records.length) {
+      localStorage.setItem(source.key, JSON.stringify(remaining));
+    }
+  }
+}
+
 function getDeviceId() {
   let id = localStorage.getItem('bns_device_id');
   if (!id) {
@@ -297,6 +319,7 @@ export async function syncPendingRecords({ includeShared = false } = {}) {
       results.errors.push(`${deletion.category} #${deletion.recordId} delete: ${error}`);
       continue;
     }
+    removeLegacyRecord(deletion.category, deletion.recordId);
     removePendingRecordDeletion(deletion.category, deletion.recordId);
     results.synced++;
   }
@@ -347,6 +370,11 @@ export async function syncPendingRecords({ includeShared = false } = {}) {
     for (let i = 0; i < records.length; i++) {
       const record = records[i];
       if (!record.created_by_user_id) continue;
+      if (getPendingRecordDeletions().some((deletion) =>
+        deletion.category === category &&
+        String(deletion.recordId) === String(record.id) &&
+        String(deletion.created_by_user_id || '') === String(record.created_by_user_id || '')
+      )) continue;
       if (
         !includeShared &&
         String(record.created_by_user_id || '') !== String(session.user.id)
@@ -427,15 +455,28 @@ export async function deleteRemoteRecord(
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return 'not-signed-in';
 
-  const { data, error } = await supabase
+  const ownerIdToDelete = ownerId || session.user.id;
+  const columnOwnerDelete = await supabase
     .from(table)
     .delete()
     .eq('data->>id', String(localId))
-    .eq('created_by_user_id', ownerId || session.user.id)
+    .eq('created_by_user_id', ownerIdToDelete)
     .select('data');
 
-  if (error) return error.message;
-  if (remoteRecordExpected && !data?.length) {
+  if (columnOwnerDelete.error && !isMissingOwnerColumnError(columnOwnerDelete.error)) {
+    return columnOwnerDelete.error.message;
+  }
+  if (columnOwnerDelete.data?.length) return null;
+
+  const payloadOwnerDelete = await supabase
+    .from(table)
+    .delete()
+    .eq('data->>id', String(localId))
+    .eq('data->>created_by_user_id', ownerIdToDelete)
+    .select('data');
+
+  if (payloadOwnerDelete.error) return payloadOwnerDelete.error.message;
+  if (remoteRecordExpected && !payloadOwnerDelete.data?.length) {
     return 'The shared record was not deleted. Check that the Supabase DELETE policy is enabled.';
   }
   return null;

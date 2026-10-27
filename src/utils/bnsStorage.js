@@ -75,6 +75,16 @@ export async function initializeLocalDatabase() {
   await bnsDatabase.open();
   for (const key of Object.keys(CATEGORY_TABLES)) {
     const table = tableForStorageKey(key);
+    const localStorageValue = localStorage.getItem(key);
+    if (localStorageValue !== null) {
+      const localRecords = getRecords(key);
+      await bnsDatabase.transaction('rw', table, async () => {
+        await table.clear();
+        if (localRecords.length) await table.bulkPut(localRecords);
+      });
+      continue;
+    }
+
     const indexedRecords = await table.toArray();
     if (indexedRecords.length) {
       publishRecords(key, indexedRecords);

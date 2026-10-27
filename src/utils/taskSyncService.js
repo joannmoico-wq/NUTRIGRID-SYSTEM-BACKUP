@@ -36,6 +36,25 @@ export function getLocalTasks() {
   return readArray(TASKS_STORAGE_KEY);
 }
 
+export function deduplicateTasks(tasks) {
+  const unique = new Map();
+  for (const task of tasks) {
+    const identity = task.title
+      ? JSON.stringify([
+          task.assigned_to_user_id,
+          task.title,
+          task.description,
+          task.purok,
+          task.due_date,
+          task.priority || 'Normal',
+          task.status || 'Pending',
+        ].map((value) => String(value ?? '').trim().toLowerCase()))
+      : `task:${task.task_id}`;
+    if (!unique.has(identity)) unique.set(identity, task);
+  }
+  return Array.from(unique.values());
+}
+
 function todayIso(now = new Date()) {
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -77,7 +96,9 @@ export function getPendingTaskChanges() {
 export function cacheRemoteTasks(remoteTasks) {
   const pending = getPendingTaskChanges();
   const deletedIds = new Set(
-    pending.filter((change) => change.operation === 'delete').map((change) => String(change.taskId))
+    pending
+      .filter((change) => change.operation === 'delete' && change.source === 'admin')
+      .map((change) => String(change.taskId))
   );
   const merged = new Map(
     remoteTasks
@@ -89,7 +110,7 @@ export function cacheRemoteTasks(remoteTasks) {
     .filter((change) => change.operation === 'upsert' && change.task)
     .forEach((change) => merged.set(String(change.taskId), change.task));
 
-  const tasks = Array.from(merged.values()).sort(
+  const tasks = deduplicateTasks(Array.from(merged.values())).sort(
     (left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0)
   );
   publishTasks(tasks, null, 'refresh', false);
@@ -141,13 +162,14 @@ function reconcileSyncedTaskId(localTaskId, remoteTaskId, syncedAt) {
   publishTasks(tasks, null, 'refresh');
 }
 
-export function deleteTaskLocally(taskId) {
+export function deleteTaskLocally(taskId, source = 'admin') {
   const tasks = getLocalTasks().filter((item) => String(item.task_id) !== String(taskId));
   const pending = getPendingTaskChanges();
   const nextPending = pending.filter((item) => String(item.taskId) !== String(taskId));
   nextPending.push({
     taskId: String(taskId),
     operation: 'delete',
+    source,
     updatedAt: new Date().toISOString(),
   });
   localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(nextPending));
@@ -163,12 +185,18 @@ export function cacheBhwProfiles(profiles) {
 }
 
 export async function loadTasks({ assignedToUserId } = {}) {
-  const selectTasks = (tasks) => assignedToUserId
-    ? tasks.filter((task) => task.assigned_to_user_id === assignedToUserId)
-    : tasks;
+  const selectTasks = (tasks) => {
+    const uniqueTasks = deduplicateTasks(tasks);
+    const assignedTasks = assignedToUserId
+      ? uniqueTasks.filter((task) => task.assigned_to_user_id === assignedToUserId)
+      : uniqueTasks;
+    return assignedToUserId
+      ? assignedTasks.filter((task) => !isTaskOverdue(task))
+      : assignedTasks;
+  };
+
   if (!navigator.onLine) {
-    const local = getLocalTasks();
-    return selectTasks(local);
+    return selectTasks(getLocalTasks());
   }
 
   let query = supabase.from('tasks').select('*').order('created_at', { ascending: false });
@@ -206,6 +234,30 @@ export async function syncPendingTasks() {
         let response;
         let syncedTaskId = change.taskId;
         if (change.operation === 'delete') {
+          if (!change.source) {
+            const existing = await supabase
+              .from('tasks')
+              .select('task_id, due_date, status, assigned_to_user_id')
+              .eq('task_id', change.taskId)
+              .maybeSingle();
+            if (existing.error) {
+              result.errors.push(
+                `Task ${change.taskId} pending-delete check: ${existing.error.message}`
+              );
+              continue;
+            }
+            if (existing.data && isTaskOverdue(existing.data)) {
+              const remaining = getPendingTaskChanges().filter(
+                (item) => String(item.taskId) !== String(change.taskId)
+              );
+              localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(remaining));
+              console.warn(
+                `Kept overdue task ${change.taskId} in Supabase; only hide it from the assigned BHW's PWA.`
+              );
+              result.synced++;
+              continue;
+            }
+          }
           response = await supabase.from('tasks').delete().eq('task_id', change.taskId);
         } else {
           const { task } = change;

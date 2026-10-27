@@ -4,6 +4,7 @@ import {
   cacheBhwProfiles,
   createLocalTaskId,
   deleteTaskLocally,
+  deduplicateTasks,
   getCachedBhwProfiles,
   getLocalTasks,
   loadTasks,
@@ -63,7 +64,7 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
       setTasks(taskData);
     } catch (error) {
       console.error('Could not load tasks:', error);
-      setTasks(getLocalTasks());
+      setTasks(deduplicateTasks(getLocalTasks()));
       setMessage(`Could not refresh tasks: ${error.message}`);
     }
 
@@ -189,7 +190,7 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
       created_at: editingTask?.created_at || new Date().toISOString(),
     };
     saveTaskLocally(task);
-    setTasks(getLocalTasks());
+    setTasks(deduplicateTasks(getLocalTasks()));
     setForm(emptyForm);
     setShowForm(false);
     setEditingTask(null);
@@ -217,7 +218,7 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
   const deleteTask = async (id) => {
     if (!confirm('Delete this task?')) return;
     deleteTaskLocally(id);
-    setTasks(getLocalTasks());
+    setTasks(deduplicateTasks(getLocalTasks()));
     try {
       const result = await syncPendingTasks();
       setMessage(result.errors?.length || result.skipped
@@ -240,7 +241,7 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
 
     const updatedTask = { ...reschedulingTask, due_date: rescheduleDate };
     saveTaskLocally(updatedTask, ['due_date']);
-    setTasks(getLocalTasks());
+    setTasks(deduplicateTasks(getLocalTasks()));
     setReschedulingTask(null);
     setRescheduleDate('');
 

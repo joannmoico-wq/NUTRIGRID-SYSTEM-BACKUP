@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { supabase } from '../utils/supabaseClient';
 import {
   getLocalTasks,
+  deduplicateTasks,
   loadTasks,
   saveTaskLocally,
   syncPendingTasks,
@@ -44,7 +45,7 @@ export default function MyTasks() {
       setTasks(await loadTasks({ assignedToUserId: user.id }));
     } catch (error) {
       console.error('Could not load assigned tasks:', error);
-      setTasks(getLocalTasks().filter((task) => task.assigned_to_user_id === user.id));
+      setTasks(deduplicateTasks(getLocalTasks()).filter((task) => task.assigned_to_user_id === user.id));
     }
   }, []);
 
@@ -143,7 +144,11 @@ export default function MyTasks() {
       status: next,
       completed_at: next === 'Completed' ? new Date().toISOString() : null,
     }, ['status', 'completed_at']);
-    setTasks(getLocalTasks().filter((task) => task.assigned_to_user_id === t.assigned_to_user_id));
+    setTasks(
+      deduplicateTasks(getLocalTasks()).filter(
+        (task) => task.assigned_to_user_id === t.assigned_to_user_id
+      )
+    );
     try {
       const result = await syncPendingTasks();
       if (result.errors?.length) {
