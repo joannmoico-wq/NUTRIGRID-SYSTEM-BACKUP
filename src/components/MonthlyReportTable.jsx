@@ -33,6 +33,7 @@ export default function MonthlyReportTable({
   onDeleteLine,
   onAddLine,
   onGenerateReport,
+  exportActions,
 }) {
   const [editing, setEditing] = useState(null);
 
@@ -89,7 +90,7 @@ export default function MonthlyReportTable({
               Add New
             </button>
           )}
-          {onGenerateReport && (
+          {exportActions || (onGenerateReport && (
             <button
               type="button"
               onClick={onGenerateReport}
@@ -99,7 +100,7 @@ export default function MonthlyReportTable({
               <FileDown size={16} />
               Generate Monthly Report
             </button>
-          )}
+          ))}
         </div>
       </div>
 
@@ -173,7 +174,6 @@ export default function MonthlyReportTable({
           </tbody>
         </table>
       </div>
-
       {editing && (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/50 p-4">
           <form

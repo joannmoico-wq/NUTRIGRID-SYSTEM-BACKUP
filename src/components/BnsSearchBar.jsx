@@ -1,4 +1,5 @@
-import React, { useRef } from 'react';
+import React, { useLayoutEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Search, X } from 'lucide-react';
 import { getRecordDisplayTitle } from '../utils/bnsStorage';
 
@@ -16,8 +17,10 @@ const BnsSearchBar = ({
   widthClass = 'w-full',
   tone = 'admin',
   darkMode = false,
+  portalSuggestions = false,
 }) => {
   const inputRef = useRef(null);
+  const [portalPosition, setPortalPosition] = useState(null);
 
   const hasQuery = Boolean(query?.trim());
 
@@ -76,6 +79,31 @@ const BnsSearchBar = ({
   };
 
   const visible = showSuggestions && hasQuery;
+
+  useLayoutEffect(() => {
+    if (!visible || !portalSuggestions) {
+      setPortalPosition(null);
+      return undefined;
+    }
+
+    const updatePosition = () => {
+      const bounds = inputRef.current?.parentElement?.getBoundingClientRect();
+      if (!bounds) return;
+      const width = Math.min(bounds.width, window.innerWidth - 16);
+      setPortalPosition({
+        left: Math.max(8, Math.min(bounds.left, window.innerWidth - width - 8)),
+        top: bounds.bottom + 6,
+        width,
+      });
+    };
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [visible, portalSuggestions]);
 
   return (
     <div className={`relative ${widthClass} max-w-full ${className}`}>
@@ -142,12 +170,15 @@ const BnsSearchBar = ({
         )}
       </div>
 
-      {visible && (
-        <ul
-          className={`absolute left-0 right-0 top-[calc(100%+6px)] z-50 max-h-64 sm:max-h-72 overflow-y-auto overflow-x-hidden rounded-2xl border py-2 shadow-lg ${t.dropdown}`}
-          role="listbox"
-          style={{ maxWidth: '100%' }}
-        >
+      {visible && (() => {
+        const suggestions = (
+          <ul
+            className={`z-[10000] max-h-64 sm:max-h-72 overflow-y-auto overflow-x-hidden rounded-2xl border py-2 shadow-lg ${t.dropdown}`}
+            role="listbox"
+            style={portalSuggestions
+              ? { position: 'fixed', ...portalPosition, maxWidth: 'calc(100vw - 16px)' }
+              : { position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, maxWidth: '100%' }}
+          >
           {results.length === 0 ? (
             <li className="px-4 py-3 text-sm text-gray-500">
               {emptyMessage}
@@ -160,9 +191,9 @@ const BnsSearchBar = ({
               </li>
 
               {results.map((record) => {
-                const title = record.isNav
-                  ? record.categoryName
-                  : getRecordDisplayTitle(record.data);
+                const title = record.displayTitle || (
+                  record.isNav ? record.categoryName : getRecordDisplayTitle(record.data)
+                );
 
                 return (
                   <li
@@ -191,7 +222,7 @@ const BnsSearchBar = ({
                         </p>
                       </div>
 
-                      {!record.isNav && (
+                      {!record.isNav && !record.hideStatus && (
                         <span
                           className={`shrink-0 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full ${
                             record.synced
@@ -208,8 +239,13 @@ const BnsSearchBar = ({
               })}
             </>
           )}
-        </ul>
-      )}
+          </ul>
+        );
+        if (portalSuggestions) {
+          return portalPosition ? createPortal(suggestions, document.body) : null;
+        }
+        return suggestions;
+      })()}
     </div>
   );
 };

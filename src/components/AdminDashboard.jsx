@@ -6,8 +6,10 @@ import {
   nextRecordId,
   reloadAllAdminData,
   filterRecordsBySearch,
+  recordMatchesSearch,
   countPendingAcrossCategories,
   getRecords,
+  buildSavedRecords,
   performRecordSearch,
   getRecordDisplayTitle,
   storageKeyForCategory,
@@ -23,6 +25,10 @@ import BnsSearchBar from './BnsSearchBar';
 import AdminTasks from './AdminTasks';
 import AdminReportTable, { ACTIONS_HEAD_CELL, ReportHeader, REPORT_META } from './AdminReportTable';
 import InteractiveMapComponent from './InteractiveMapComponent';
+import AdminDocuments from './AdminDocuments';
+import ReportExportActions from './ReportExportActions';
+import ConfirmActionDialog from './ConfirmActionDialog';
+import TaskIcon from './TaskIcon';
 import {
   Home,
   Users,
@@ -39,6 +45,7 @@ import {
   Sun,
   ClipboardList,
   UserCircle,
+  KeyRound,
   Droplets,
   Milk,
   Calendar,
@@ -50,6 +57,7 @@ import {
 } from 'lucide-react';
 import { getCategoryForm } from './CategorySpecificForms';
 import { normalizePurokName, sortPurokCounts } from '../utils/purok';
+import { isTaskOverdue } from '../utils/taskSyncService';
 import {
   PieChart,
   Pie,
@@ -119,8 +127,10 @@ const AdminHeader = ({
   darkMode,
   adminName,
   searchTerm,
+  setSearchTerm,
   performSearch,
   searchResults,
+  setSearchResults,
   showSearchSuggestions,
   setShowSearchSuggestions,
   showNotifications,
@@ -130,13 +140,31 @@ const AdminHeader = ({
   notifRef,
   setDarkMode,
   setActiveTab,
+  setSelectedTaskFilter,
+  activeTab,
+  adminEmail,
+  onLogout,
 }) => {
+  const [showAccountMenu, setShowAccountMenu] = useState(false);
+  const [accountMessage, setAccountMessage] = useState('');
+  const [accountBusy, setAccountBusy] = useState(false);
+  const accountRef = useRef(null);
   const textColor = darkMode ? THEME.dark.text : THEME.light.text;
   const mutedColor = darkMode ? THEME.dark.muted : THEME.light.muted;
   const iconButtonStyle = {
     backgroundColor: darkMode ? THEME.dark.card : THEME.light.input,
     border: `1px solid ${darkMode ? THEME.dark.border : THEME.light.border}`,
   };
+
+  useEffect(() => {
+    const closeAccountMenu = (event) => {
+      if (accountRef.current && !accountRef.current.contains(event.target)) {
+        setShowAccountMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', closeAccountMenu);
+    return () => document.removeEventListener('mousedown', closeAccountMenu);
+  }, []);
 
   return (
     <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-5 sm:py-4 lg:px-8 lg:py-5">
@@ -153,14 +181,38 @@ const AdminHeader = ({
           onSelectResult={(record) => {
             if (record.isNav) {
               setActiveTab(record.tab);
+            } else if (record.categoryId === 'tasks') {
+              const task = record.data;
+              setSelectedTaskFilter(
+                isTaskOverdue(task)
+                  ? 'Overdue'
+                  : task.status === 'In Progress'
+                    ? 'In Progress'
+                    : task.status === 'Completed'
+                      ? 'Completed'
+                      : 'Pending'
+              );
+              setSearchTerm('');
+              setSearchResults([]);
+              setActiveTab('tasks');
+            } else if (record.categoryId === 'documents') {
+              setSearchTerm(record.data.name || '');
+              setActiveTab('documents');
+              setShowSearchSuggestions(false);
             } else {
-              performSearch(getRecordDisplayTitle(record.data));
+              setShowSearchSuggestions(false);
               setActiveTab(record.tab);
             }
           }}
           onFocusSuggestions={() => setShowSearchSuggestions(true)}
           onBlurSuggestions={() => setShowSearchSuggestions(false)}
-          placeholder="Search records..."
+          placeholder={
+            activeTab === 'tasks'
+              ? 'Search tasks...'
+              : activeTab === 'documents'
+                ? 'Search documents...'
+                : 'Search records...'
+          }
           emptyMessage="No matching records"
           widthClass="w-36 sm:w-56 md:w-72 lg:w-80"
           tone="admin"
@@ -238,12 +290,86 @@ const AdminHeader = ({
             </div>
           )}
         </div>
+        <div className="relative" ref={accountRef}>
+          <button
+            type="button"
+            onClick={() => {
+              setShowAccountMenu((open) => !open);
+              setShowNotifications(false);
+              setAccountMessage('');
+            }}
+            className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm hover:opacity-95 transition ${
+              showAccountMenu ? 'ring-2 ring-[#8F65FF]/40' : ''
+            }`}
+            style={iconButtonStyle}
+            aria-label="Account options"
+            aria-expanded={showAccountMenu}
+          >
+            <UserCircle size={19} style={{ color: mutedColor }} />
+          </button>
+          {showAccountMenu && (
+            <div
+              className="absolute right-0 z-50 mt-2 w-64 rounded-2xl border p-2 shadow-xl"
+              style={{
+                backgroundColor: darkMode ? THEME.dark.card : THEME.light.card,
+                borderColor: darkMode ? THEME.dark.border : THEME.light.border,
+              }}
+            >
+              <p className="truncate px-3 py-2 text-xs" style={{ color: mutedColor }}>{adminEmail}</p>
+              <button
+                type="button"
+                disabled={accountBusy || !adminEmail}
+                onClick={async () => {
+                  setAccountBusy(true);
+                  setAccountMessage('');
+                  try {
+                    const { error } = await supabase.auth.resetPasswordForEmail(adminEmail);
+                    if (error) throw new Error(error.message);
+                    setAccountMessage('Password reset instructions sent to your email.');
+                  } catch (error) {
+                    console.error('Could not send admin password reset:', error);
+                    setAccountMessage(`Could not send reset email: ${error.message}`);
+                  } finally {
+                    setAccountBusy(false);
+                  }
+                }}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-violet-50 disabled:opacity-60"
+                style={{ color: textColor }}
+              >
+                <KeyRound size={16} /> Reset password
+              </button>
+              <button
+                type="button"
+                disabled={accountBusy}
+                onClick={async () => {
+                  if (!window.confirm('Permanently delete this approved admin account? This cannot be undone.')) return;
+                  setAccountBusy(true);
+                  setAccountMessage('');
+                  try {
+                    const { error } = await supabase.functions.invoke('delete-own-account');
+                    if (error) throw new Error(error.message);
+                    await onLogout?.();
+                  } catch (error) {
+                    console.error('Could not delete admin account:', error);
+                    setAccountMessage(`Account deletion failed: ${error.message}`);
+                  } finally {
+                    setAccountBusy(false);
+                  }
+                }}
+                className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
+              >
+                <Trash2 size={16} /> Delete account
+              </button>
+              {accountMessage && <p role="status" className="px-3 py-2 text-xs text-violet-700">{accountMessage}</p>}
+            </div>
+          )}
+        </div>
       </div>
     </header>
   );
 };
 
-const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => {
+const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', currentUserId }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [isExpanded, setIsExpanded] = useState(() => window.matchMedia('(min-width: 768px)').matches);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem(DARK_MODE_KEY) === 'true');
@@ -251,9 +377,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
   const [searchTerm, setSearchTerm] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
+  const [selectedTaskFilter, setSelectedTaskFilter] = useState(null);
   const [showNotifications, setShowNotifications] = useState(false);
   const [adminFormCategory, setAdminFormCategory] = useState(null);
   const [adminEditingRecord, setAdminEditingRecord] = useState(null);
+  const [adminConfirmation, setAdminConfirmation] = useState(null);
+  const [adminConfirmationBusy, setAdminConfirmationBusy] = useState(false);
   const [residentPurokFilter, setResidentPurokFilter] = useState('');
   const [scheduledVisitPurok, setScheduledVisitPurok] = useState('');
   const notifRef = useRef(null);
@@ -365,8 +494,30 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
 
   const performSearch = (query) => {
     setSearchTerm(query);
-    setSearchResults(query.trim() ? performRecordSearch(query) : []);
+    setSearchResults(
+      query.trim() && !['tasks', 'documents'].includes(activeTab)
+        ? performRecordSearch(buildSavedRecords(), query)
+        : []
+    );
   };
+  const handleSearchResultsChange = useCallback((results) => {
+    setSearchResults((current) => {
+      if (
+        current.length === results.length &&
+        current.every((item, index) => item.id === results[index]?.id)
+      ) {
+        return current;
+      }
+      return results;
+    });
+  }, []);
+  useEffect(() => {
+    if (!['tasks', 'documents'].includes(activeTab)) {
+      setSearchResults(
+        searchTerm.trim() ? performRecordSearch(buildSavedRecords(), searchTerm) : []
+      );
+    }
+  }, [activeTab, searchTerm]);
 
   const notificationItems = useMemo(() => {
     const items = [];
@@ -524,8 +675,22 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     { name: 'Pending', value: stats.pending, color: THEME.accentPink, pct: pendingPct },
   ];
 
+  const requestAdminConfirmation = (message, action, options = {}) => {
+    setAdminConfirmation({ message, action, ...options });
+  };
+
+  const confirmAdminAction = async () => {
+    if (!adminConfirmation) return;
+    setAdminConfirmationBusy(true);
+    try {
+      await adminConfirmation.action();
+      setAdminConfirmation(null);
+    } finally {
+      setAdminConfirmationBusy(false);
+    }
+  };
+
   const adminDelete = async (storageKey, id, remoteRecord) => {
-    if (!confirm('Delete this record permanently?')) return;
     const category = categoryIdForStorageKey(storageKey);
     if (!category || category === 'monthlyreport') {
       deleteRecordById(storageKey, id);
@@ -582,38 +747,37 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       const raw = row?._raw || getRecords(storageKey).find((r) => r.id === id);
       if (raw) openCategoryForm(formCategory, raw);
     },
-    onDelete: (id) => adminDelete(storageKey, id, dataset.find((row) => row.id === id)?._raw),
+    onDelete: (id) => requestAdminConfirmation(
+      'Are you sure you want to delete this record? This cannot be undone.',
+      () => adminDelete(storageKey, id, dataset.find((row) => row.id === id)?._raw),
+      { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
+    ),
   });
 
-  const filterAdminTableData = (rows, term) => {
+  const filterAdminTableData = (rows, term, categoryId) => {
     if (!term.trim()) return rows;
     const q = term.trim().toLowerCase();
-    return rows.filter((row) =>
-      Object.entries(row).some(
-        ([key, value]) =>
-          key !== '_raw' && key !== 'id' && value != null && String(value).toLowerCase().includes(q)
-      )
-    );
+    return rows.filter((row) => recordMatchesSearch({ ...row, category: categoryId }, q));
   };
 
   const filteredEnvironmental = useMemo(
-    () => filterAdminTableData(environmentalSanitationData, searchTerm),
+    () => filterAdminTableData(environmentalSanitationData, searchTerm, 'environmental'),
     [environmentalSanitationData, searchTerm]
   );
   const filteredInfantFeeding = useMemo(
-    () => filterAdminTableData(infantFeedingData, searchTerm),
+    () => filterAdminTableData(infantFeedingData, searchTerm, 'infantfeeding'),
     [infantFeedingData, searchTerm]
   );
   const filteredLactating = useMemo(
-    () => filterAdminTableData(lactatingWomenData, searchTerm),
+    () => filterAdminTableData(lactatingWomenData, searchTerm, 'lactatingwoman'),
     [lactatingWomenData, searchTerm]
   );
   const filteredPregnant = useMemo(
-    () => filterAdminTableData(pregnantWomenData, searchTerm),
+    () => filterAdminTableData(pregnantWomenData, searchTerm, 'pregnantwoman'),
     [pregnantWomenData, searchTerm]
   );
   const filteredNatality = useMemo(
-    () => filterAdminTableData(natalityData, searchTerm),
+    () => filterAdminTableData(natalityData, searchTerm, 'monthlynatal'),
     [natalityData, searchTerm]
   );
 
@@ -652,8 +816,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     { id: 'monthlyNatality', icon: Calendar, label: 'Monthly Natality' },
     { id: 'monthlyReport', icon: FileSpreadsheet, label: 'Monthly Report' },
     { id: 'documents', icon: FileText, label: 'Documents' },
-    { id: 'tasks', icon: ClipboardList, label: 'Tasks' },
-    { id: 'users', icon: Settings, label: 'Settings' },
+    { id: 'tasks', icon: TaskIcon, label: 'Tasks' },
   ];
 
   // ====================================================================
@@ -729,7 +892,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
   const getColumnKey = (col) =>
     col.charAt(0).toLowerCase() + col.slice(1).replace(/\s+(.)/g, (_, char) => char.toUpperCase());
 
-  const exportPdfFile = async ({ fileName, title, headers, rows, preamble = [], headRows }) => {
+  const exportPdfFile = async ({ fileName, title, headers, rows, preamble = [], headRows, signatureDataUrl }) => {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
       import('jspdf'),
       import('jspdf-autotable'),
@@ -762,11 +925,53 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       head: headRows || [headers],
       body: rows,
       theme: 'grid',
-      margin: { top: 24, right: 18, bottom: 24, left: 18 },
-      styles: { font: 'helvetica', fontSize: headers.length > 18 ? 5 : headers.length > 10 ? 6 : 8, cellPadding: 3, overflow: 'linebreak' },
+      margin: { top: 24, right: 18, bottom: 100, left: 18 },
+      styles: { font: 'helvetica', fontSize: headers.length > 18 ? 5 : headers.length > 10 ? 6 : 8, cellPadding: 3, overflow: 'linebreak', halign: 'center' },
+      bodyStyles: { halign: 'center' },
       headStyles: { fillColor: [238, 234, 246], textColor: [35, 35, 45], fontStyle: 'bold', halign: 'center' },
       horizontalPageBreak: headers.length > 18,
       horizontalPageBreakRepeat: 1,
+    });
+
+    const pageHeight = document.internal.pageSize.getHeight();
+    const approvalHeight = 76;
+    let approvalY = document.lastAutoTable.finalY + 24;
+    if (approvalY + approvalHeight > pageHeight - 18) {
+      document.addPage();
+      approvalY = 36;
+    }
+
+    if (signatureDataUrl) {
+      const signatureDimensions = await new Promise((resolve, reject) => {
+        const image = new Image();
+        image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => reject(new Error('Could not decode the selected signature image.'));
+        image.src = signatureDataUrl;
+      });
+      const scale = Math.min(120 / signatureDimensions.width, 30 / signatureDimensions.height);
+      const signatureWidth = signatureDimensions.width * scale;
+      const signatureHeight = signatureDimensions.height * scale;
+      const preparedCenter = pageWidth / 6;
+      document.addImage(signatureDataUrl, signatureDataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG',
+        preparedCenter - signatureWidth / 2, approvalY, signatureWidth, signatureHeight);
+    }
+
+    const approvalColumns = [
+      { center: pageWidth / 6, name: 'LAARNI B. POMADA', role: 'Barangay Nutrition Scholar' },
+      { center: pageWidth / 2, name: 'EVANGELINE S. CANIT, RM', role: 'Rural Health Midwife' },
+      { center: (pageWidth * 5) / 6, name: 'ANITA P. AURO, RN, RM', role: 'Municipal Nutrition Action Officer II' },
+    ];
+    approvalColumns.forEach(({ center, name, role }, index) => {
+      const label = ['PREPARED BY:', 'CHECKED:', 'NOTED:'][index];
+      document.setFont('helvetica', 'normal');
+      document.setFontSize(8);
+      document.text(label, center, approvalY + 38, { align: 'center' });
+      document.setFont('helvetica', 'bold');
+      document.setFontSize(8);
+      document.text(name, center, approvalY + 50, { align: 'center' });
+      document.setFont('helvetica', 'normal');
+      document.setFontSize(7);
+      document.text(role, center, approvalY + 62, { align: 'center', maxWidth: pageWidth / 3 - 24 });
     });
 
     document.save(`${fileName}.pdf`);
@@ -965,11 +1170,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       >
         <Icon size={26} strokeWidth={2} className="text-white" />
       </div>
-      <div className="min-w-0">
-        <p className="text-sm font-bold truncate" style={{ color: darkMode ? THEME.dark.muted : THEME.light.muted }}>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-bold" style={{ color: darkMode ? THEME.dark.muted : THEME.light.muted }}>
           {label}
         </p>
-        <p className="text-3xl font-extrabold leading-tight mt-0.5" style={{ color: darkMode ? THEME.dark.text : THEME.light.text }}>
+        <p className="mt-0.5 text-left text-3xl font-extrabold leading-tight" style={{ color: darkMode ? THEME.dark.text : THEME.light.text }}>
           {value}
         </p>
       </div>
@@ -1016,8 +1221,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
             <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: THEME.accentGradient }}>
               <UserCircle size={32} className="text-white" />
             </div>
-            <div>
-              <p className="text-4xl font-extrabold" style={{ color: titleColor }}>
+            <div className="min-w-0 flex-1">
+              <p className="text-left text-4xl font-extrabold" style={{ color: titleColor }}>
                 {stats.totalHouseholds + stats.childrenUnderFive}
               </p>
               <p className="text-sm font-medium mt-1" style={{ color: mutedColor }}>
@@ -1210,6 +1415,25 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     'estCarenderia',
     'estRestaurant',
   ];
+  const environmentalExportHeaders = [
+    'Purok',
+    'Total HH',
+    'Total Families',
+    'Compost Pit',
+    'Collect',
+    'Others',
+    'Level I',
+    'Level II',
+    'Level III',
+    'Without potable water source',
+    'w/ Sanitary Toilet',
+    'w/out Sanitary Toilet',
+    'Sari-Sari Store',
+    'Grocery Stores',
+    'Bakery',
+    'Carenderia',
+    'Restaurant',
+  ];
 
   const environmentalHeadRows = [
     [
@@ -1349,13 +1573,19 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
           />
         }
         emptyMessage={searchTerm.trim() || residentPurokFilter ? 'No records match the current filters.' : 'No records yet.'}
-        onExport={() =>
-          exportPdfFile({
+        exportActions={
+          <ReportExportActions
+            title="Residents Masterlist"
+            fileName="alawihao-residents"
+            headers={['Purok', 'Household Head', 'Members', 'Last Visit']}
+            rows={filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit])}
+            onExportPdf={() => exportPdfFile({
             fileName: 'alawihao-residents',
             title: 'Residents Masterlist',
             headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
-            rows: filteredHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
-          })
+            rows: filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
+            })}
+          />
         }
         {...residentActions}
       />
@@ -1368,7 +1598,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       exportPdfFile({
         fileName: 'alawihao-environmental-sanitation-2026',
         title: 'BNS Environmental Sanitation Report',
-        headers: environmentalHeadRows[1].map((c) => c.label),
+        headers: environmentalExportHeaders,
         rows: tableData.map((record) =>
           environmentalColumnKeys.map((key) =>
             ['garbageCompostPit', 'garbageCollect', 'garbageOthers', 'waterLevelI', 'waterLevelII', 'waterLevelIII', 'withoutPotableWater', 'toiletWithSanitary', 'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery', 'estBakery', 'estCarenderia', 'estRestaurant'].includes(key)
@@ -1422,7 +1652,28 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         }
         emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
         minTableWidth={1100}
-        onExport={exportReport}
+        exportActions={
+          <ReportExportActions
+            title="BNS Environmental Sanitation Report"
+            fileName="alawihao-environmental-sanitation-2026"
+            headers={environmentalExportHeaders}
+            rows={tableData.map((record) =>
+              environmentalColumnKeys.map((key) =>
+                [
+                  'garbageCompostPit', 'garbageCollect', 'garbageOthers', 'waterLevelI',
+                  'waterLevelII', 'waterLevelIII', 'withoutPotableWater', 'toiletWithSanitary',
+                  'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery',
+                  'estBakery', 'estCarenderia', 'estRestaurant',
+                ].includes(key) ? markCheck(record[key]) : record[key] ?? ''
+              )
+            )}
+            preamble={[
+              `Barangay: ${REPORT_META.barangay}`,
+              `Report Year: ${REPORT_META.reportYear}`,
+            ]}
+            onExportPdf={exportReport}
+          />
+        }
         {...environmentalActions}
       />
     );
@@ -1451,8 +1702,24 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         />
       }
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
-      onExport={() =>
-        exportPdfFile({
+      exportActions={
+        <ReportExportActions
+          title="Infant Feeding (0-5 mo)"
+          fileName="alawihao-infant-feeding"
+          headers={['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months']}
+          rows={filteredInfantFeeding.map((row) => [
+            row.no,
+            row.purok,
+            row.motherName,
+            row.childName,
+            row.week1,
+            row.month1,
+            row.month2,
+            row.month3,
+            row.month4,
+            row.month5,
+          ])}
+          onExportPdf={() => exportPdfFile({
           fileName: 'alawihao-infant-feeding',
           title: 'Infant Feeding (0-5 mo)',
           headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months'],
@@ -1468,12 +1735,23 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
             row.month4,
             row.month5,
           ]),
-        })
+          })}
+        />
       }
       {...infantFeedingActions}
     />
   );
 
+  const lactatingExportHeaders = [
+    'No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name',
+    'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'PhilHealth',
+    '4Ps', 'Wt.', 'Ht.', 'BMI', 'MUAC', 'Date Delivered',
+  ];
+  const lactatingExportRows = filteredLactating.map((row) => [
+    row.no, row.purok, row.dateRegistration, row.familySerial, row.lastName, row.firstName,
+    row.middleName, row.spouseName, row.contactNumber, row.birthday, row.age, row.civilStatus,
+    row.philhealth, row.fourPs, row.wt, row.ht, row.bmi, row.muac, row.dateDelivered,
+  ]);
   const LactatingWomen = () => (
     <AdminReportTable
       darkMode={darkMode}
@@ -1534,33 +1812,26 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         />
       }
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
-      onExport={() =>
-        exportPdfFile({
-          fileName: 'alawihao-lactating-women',
-          title: 'Masterlist Lactating Women',
-          headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'PhilHealth', '4Ps', 'Wt.', 'Ht.', 'BMI', 'MUAC', 'Date Delivered'],
-          rows: filteredLactating.map((row) => [
-            row.no,
-            row.purok,
-            row.dateRegistration,
-            row.familySerial,
-            row.lastName,
-            row.firstName,
-            row.middleName,
-            row.spouseName,
-            row.contactNumber,
-            row.birthday,
-            row.age,
-            row.civilStatus,
-            row.philhealth,
-            row.fourPs,
-            row.wt,
-            row.ht,
-            row.bmi,
-            row.muac,
-            row.dateDelivered,
-          ]),
-        })
+      onExport={() => exportPdfFile({
+        fileName: 'alawihao-lactating-women',
+        title: 'Masterlist Lactating Women',
+        headers: lactatingExportHeaders,
+        rows: lactatingExportRows,
+      })}
+      exportActions={
+        <ReportExportActions
+          title="Masterlist Lactating Women"
+          fileName="alawihao-lactating-women"
+          headers={lactatingExportHeaders}
+          rows={lactatingExportRows}
+          onExportPdf={(signatureDataUrl) => exportPdfFile({
+            fileName: 'alawihao-lactating-women',
+            title: 'Masterlist Lactating Women',
+            headers: lactatingExportHeaders,
+            rows: lactatingExportRows,
+            signatureDataUrl,
+          })}
+        />
       }
       minTableWidth={1700}
       {...lactatingActions}
@@ -1642,6 +1913,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     />
   );
 
+  const natalityExportHeaders = [
+    'No.', 'Purok', 'Mother', 'Child', 'Sex', 'DOB', 'Birth Weight', 'Follow-up Date',
+    'AIM (Months)', 'Length (cm)', 'Wt (kg)', 'Height (cm)', 'W/A', 'H/A', 'W/L/H',
+    'Iron/Services', 'Remarks',
+  ];
+  const natalityExportRows = filteredNatality.map((row) => [
+    row.no, row.purok, row.motherName, row.childName, row.sex, row.dob, row.birthWeight,
+    row.dow, row.aim, row.length, row.weight, row.height, row.wA, row.hA, row.wLH,
+    row.ironStatus, row.remarks,
+  ]);
   const MonthlyNatality = () => (
     <AdminReportTable
       darkMode={darkMode}
@@ -1659,54 +1940,65 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         />
       }
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
-      onExport={() =>
-        exportPdfFile({
-          fileName: 'alawihao-monthly-natality',
-          title: 'Monthly Natality',
-          headers: ['No.', 'Purok', 'Mother', 'Child', 'Sex', 'DOB', 'Birth Weight', 'Follow-up Date', 'AIM (Months)', 'Length (cm)', 'Wt (kg)', 'Height (cm)', 'W/A', 'H/A', 'W/L/H', 'Iron/Services', 'Remarks'],
-          rows: filteredNatality.map((row) => [
-            row.no,
-            row.purok,
-            row.motherName,
-            row.childName,
-            row.sex,
-            row.dob,
-            row.birthWeight,
-            row.dow,
-            row.aim,
-            row.length,
-            row.weight,
-            row.height,
-            row.wA,
-            row.hA,
-            row.wLH,
-            row.ironStatus,
-            row.remarks,
-          ]),
-        })
+      onExport={() => exportPdfFile({
+        fileName: 'alawihao-monthly-natality',
+        title: 'Monthly Natality',
+        headers: natalityExportHeaders,
+        rows: natalityExportRows,
+      })}
+      exportActions={
+        <ReportExportActions
+          title="Monthly Natality"
+          fileName="alawihao-monthly-natality"
+          headers={natalityExportHeaders}
+          rows={natalityExportRows}
+          onExportPdf={(signatureDataUrl) => exportPdfFile({
+            fileName: 'alawihao-monthly-natality',
+            title: 'Monthly Natality',
+            headers: natalityExportHeaders,
+            rows: natalityExportRows,
+            signatureDataUrl,
+          })}
+        />
       }
       minTableWidth={1900}
       {...natalityActions}
     />
   );
 
+  const monthlyReportExportHeaders = [
+    'Indicator', 'M1 Male', 'M1 Female', 'M2 Male', 'M2 Female', 'M3 Male', 'M3 Female',
+    'Total Male', 'Total Female',
+  ];
+  const monthlyReportExportRows = monthlyReportData
+    .filter((row) => !row.isHeader)
+    .map((row) => [
+      row.indicator || row.subcategory, row.m1M, row.m1F, row.m2M, row.m2F,
+      row.m3M, row.m3F, row.tM, row.tF,
+    ]);
   const MonthlyReport = () => (
     <MonthlyReportTable
       darkMode={darkMode}
       data={monthlyReportData}
-      onSaveLine={(line) => {
-        upsertRecord(STORAGE_KEYS.monthlyReport, line);
-        refreshData();
-      }}
-      onDeleteLine={(id) => {
-        if (!confirm('Remove this indicator line from the local report?')) return;
-        deleteRecordById(STORAGE_KEYS.monthlyReport, id);
-        refreshData();
-      }}
+      onSaveLine={(line) => requestAdminConfirmation(
+        'Are you sure you want to save these indicator changes?',
+        () => {
+          upsertRecord(STORAGE_KEYS.monthlyReport, line);
+          refreshData();
+        }
+      )}
+      onDeleteLine={(id) => requestAdminConfirmation(
+        'Are you sure you want to delete this indicator?',
+        () => {
+          deleteRecordById(STORAGE_KEYS.monthlyReport, id);
+          refreshData();
+        },
+        { title: 'Delete indicator', confirmLabel: 'Delete', destructive: true }
+      )}
       onAddLine={() => {
         const label = prompt('New indicator label');
         if (!label?.trim()) return;
-        upsertRecord(STORAGE_KEYS.monthlyReport, {
+        const newIndicator = {
           id: nextRecordId(),
           slug: `custom-${Date.now()}`,
           indicator: label.trim(),
@@ -1724,51 +2016,49 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
           m3F: 0,
           tM: 0,
           tF: 0,
-        });
-        refreshData();
+        };
+        requestAdminConfirmation(
+          `Are you sure you want to save the indicator "${label.trim()}"?`,
+          () => {
+            upsertRecord(STORAGE_KEYS.monthlyReport, newIndicator);
+            refreshData();
+          }
+        );
       }}
-      onGenerateReport={() =>
-        exportPdfFile({
-          fileName: 'alawihao-essential-health-services-2026',
-          title: 'Essential Health Services Monthly Report',
-          headers: [
-            'Indicator',
-            'M1 Male',
-            'M1 Female',
-            'M2 Male',
-            'M2 Female',
-            'M3 Male',
-            'M3 Female',
-            'Total Male',
-            'Total Female',
-          ],
-          rows: monthlyReportData
-            .filter((row) => !row.isHeader)
-            .map((row) => [
-              row.indicator || row.subcategory,
-              row.m1M,
-              row.m1F,
-              row.m2M,
-              row.m2F,
-              row.m3M,
-              row.m3F,
-              row.tM,
-              row.tF,
-            ]),
-          preamble: [
+      onGenerateReport={() => exportPdfFile({
+        fileName: 'alawihao-essential-health-services-2026',
+        title: 'Essential Health Services Monthly Report',
+        headers: monthlyReportExportHeaders,
+        rows: monthlyReportExportRows,
+        preamble: [
+          'SUB-TASK GROUP SOCIAL RECOVERY & SUB-TASK UNIT ESSENTIAL HEALTH SERVICES',
+          `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
+        ],
+      })}
+      exportActions={
+        <ReportExportActions
+          title="Essential Health Services Monthly Report"
+          fileName="alawihao-essential-health-services-2026"
+          headers={monthlyReportExportHeaders}
+          rows={monthlyReportExportRows}
+          preamble={[
             'SUB-TASK GROUP SOCIAL RECOVERY & SUB-TASK UNIT ESSENTIAL HEALTH SERVICES',
             `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
-          ],
-        })
+          ]}
+          onExportPdf={(signatureDataUrl) => exportPdfFile({
+            fileName: 'alawihao-essential-health-services-2026',
+            title: 'Essential Health Services Monthly Report',
+            headers: monthlyReportExportHeaders,
+            rows: monthlyReportExportRows,
+            signatureDataUrl,
+            preamble: [
+              'SUB-TASK GROUP SOCIAL RECOVERY & SUB-TASK UNIT ESSENTIAL HEALTH SERVICES',
+              `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
+            ],
+          })}
+        />
       }
     />
-  );
-
-  const Documents = () => (
-    <div className="p-16 rounded-3xl text-center" style={cardSurfaceStyle}>
-      <FileText size={48} className="mx-auto text-gray-300 mb-4" />
-      <p className="text-gray-500">Document management coming soon</p>
-    </div>
   );
 
   const UserManagement = () => (
@@ -1818,11 +2108,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         >
           <AdminHeader
             title={pageTitles[activeTab]}
+            activeTab={activeTab}
             darkMode={darkMode}
             adminName={adminName}
             searchTerm={searchTerm}
+            setSearchTerm={setSearchTerm}
             performSearch={performSearch}
             searchResults={searchResults}
+            setSearchResults={setSearchResults}
             showSearchSuggestions={showSearchSuggestions}
             setShowSearchSuggestions={setShowSearchSuggestions}
             showNotifications={showNotifications}
@@ -1832,6 +2125,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
             notifRef={notifRef}
             setDarkMode={setDarkMode}
             setActiveTab={setActiveTab}
+            setSelectedTaskFilter={setSelectedTaskFilter}
+            adminEmail={adminEmail}
+            onLogout={onLogout}
           />
           <div className="min-w-0 flex-1 overflow-y-auto px-3 pb-5 sm:px-5 sm:pb-6 lg:px-8 lg:pb-8">
             {adminDataStatus === 'loading' && (
@@ -1854,11 +2150,20 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
             {activeTab === 'pregnantWoman' && <PregnantWomen />}
             {activeTab === 'monthlyNatality' && <MonthlyNatality />}
             {activeTab === 'monthlyReport' && <MonthlyReport />}
-            {activeTab === 'documents' && <Documents />}
+            {activeTab === 'documents' && (
+              <AdminDocuments
+                darkMode={darkMode}
+                searchQuery={searchTerm}
+                onSearchResultsChange={handleSearchResultsChange}
+              />
+            )}
             {activeTab === 'tasks' && (
               <AdminTasks
                 initialPurok={scheduledVisitPurok}
                 onInitialTaskHandled={clearScheduledVisitPurok}
+                searchQuery={searchTerm}
+                onSearchResultsChange={handleSearchResultsChange}
+                selectedTaskFilter={selectedTaskFilter}
               />
             )}
             {activeTab === 'users' && <UserManagement />}
@@ -1896,7 +2201,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
               <AdminCategoryForm
                 userName={adminName}
                 initialData={adminEditingRecord}
-                onSubmit={async (record) => {
+                onSubmit={(record) => requestAdminConfirmation(
+                  `Are you sure you want to ${adminEditingRecord ? 'edit' : 'save'} this record?`,
+                  async () => {
                   const key = storageKeyForCategory(record.category);
                   const pending = {
                     ...record,
@@ -1946,13 +2253,24 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
                     setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
                     alert('Saved on this device, but could not update the shared Supabase records. Check the admin write policy and try again.');
                   }
-                }}
+                  }
+                )}
                 onCancel={closeCategoryForm}
               />
             </div>
           </section>
         </div>
       )}
+      <ConfirmActionDialog
+        open={Boolean(adminConfirmation)}
+        title={adminConfirmation?.title || 'Confirm changes'}
+        message={adminConfirmation?.message}
+        confirmLabel={adminConfirmation?.confirmLabel || (adminEditingRecord ? 'Save changes' : 'Save')}
+        destructive={adminConfirmation?.destructive}
+        busy={adminConfirmationBusy}
+        onCancel={() => setAdminConfirmation(null)}
+        onConfirm={() => void confirmAdminAction()}
+      />
     </div>
   );
 };

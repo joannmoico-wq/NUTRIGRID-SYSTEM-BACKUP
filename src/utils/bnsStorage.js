@@ -298,13 +298,97 @@ export function categoryIdForStorageKey(storageKey) {
   );
 }
 
-function valueMatchesQuery(value, q, depth = 0) {
+const NON_SEARCHABLE_FIELDS = new Set([
+  'id',
+  'created_at',
+  'updated_at',
+  'created_by_user_id',
+  'synced',
+  'status',
+  'no',
+  '_raw',
+  'photo_url',
+  'residents_photo',
+  'environmental_sanitation_photo',
+  'gps_lat',
+  'gps_lng',
+]);
+
+const SEARCH_FIELDS_BY_CATEGORY = {
+  residents: ['household_head', 'purok', 'total_members', 'visit_date', 'head', 'members', 'lastVisit'],
+  environmental: [
+    'purok', 'total_hh', 'total_families', 'compost_pit', 'garbage_collect', 'garbage_others',
+    'water_level_i', 'water_level_ii', 'water_level_iii', 'without_potable_water',
+    'toilet_sanitary', 'toilet_not_sanitary', 'selling_iodized_sari', 'selling_fortified_grocery',
+    'establishments_bakery', 'establishments_carenderia', 'establishments_restaurant',
+    'totalHH', 'totalFamilies', 'garbageCompostPit', 'garbageCollect', 'garbageOthers',
+    'waterLevelI', 'waterLevelII', 'waterLevelIII', 'withoutPotableWater', 'toiletWithSanitary',
+    'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery', 'estBakery',
+    'estCarenderia', 'estRestaurant',
+  ],
+  infantfeeding: [
+    'purok', 'mother_name', 'child_name', 'feeding_1_week', 'feeding_1_month',
+    'feeding_2_month', 'feeding_3_month', 'feeding_4_month', 'feeding_5_month',
+    'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5',
+  ],
+  lactatingwoman: [
+    'purok', 'date_of_registration', 'family_serial_number', 'last_name', 'first_name',
+    'middle_name', 'spouse_name', 'contact_number', 'birthday', 'age', 'civil_status',
+    'philhealth_member', 'four_ps_beneficiary', 'weight', 'height', 'bmi', 'muac',
+    'date_delivered', 'dateRegistration', 'familySerial', 'lastName', 'firstName',
+    'middleName', 'spouseName', 'contactNumber', 'civilStatus', 'philhealth', 'fourPs',
+    'wt', 'ht', 'dateDelivered',
+  ],
+  pregnantwoman: [
+    'purok', 'date_of_registration', 'family_serial_number', 'last_name', 'first_name',
+    'middle_name', 'spouse_name', 'contact_number', 'birthday', 'age', 'civil_status', 'lmp',
+    'expected_date_of_delivery', 'philhealth_member', 'four_ps_beneficiary', 'weight', 'height',
+    'bmi', 'muac', 'dateRegistration', 'familySerial', 'lastName', 'firstName', 'middleName',
+    'spouseName', 'contactNumber', 'civilStatus', 'expectedDelivery', 'philhealth', 'fourPs',
+    'wt', 'ht',
+  ],
+  monthlynatal: [
+    'purok', 'mother_name', 'child_name', 'sex', 'dob', 'birth_weight', 'birth_weight_kg',
+    'dow', 'weight_kg', 'length_cm', 'height_cm', 'aim', 'w_a', 'h_a', 'w_l_h',
+    'iron_status', 'iron_given', 'remarks', 'notes', 'month', 'motherName', 'childName',
+    'birthWeight', 'weight', 'length', 'height', 'wA', 'hA', 'wLH', 'ironStatus',
+  ],
+};
+
+function getCategorySearchFields(categoryId) {
+  if (!categoryId) return null;
+  const normalized = String(categoryId).toLowerCase();
+  return SEARCH_FIELDS_BY_CATEGORY[normalized] || null;
+}
+
+function recordHasSearchMatch(data, query, categoryId) {
+  const fields = getCategorySearchFields(categoryId);
+  const searchableData = fields
+    ? Object.fromEntries(fields.filter((field) => field in data).map((field) => [field, data[field]]))
+    : data;
+  return Object.entries(searchableData).some(([field, value]) => valueMatchesQuery(value, query, 0, field));
+}
+
+function isNonSearchableField(fieldName) {
+  const normalized = fieldName.toLowerCase();
+  return (
+    NON_SEARCHABLE_FIELDS.has(normalized) ||
+    normalized.endsWith('_id') ||
+    normalized === 'uuid' ||
+    normalized === 'user_id'
+  );
+}
+
+function valueMatchesQuery(value, q, depth = 0, fieldName = '') {
   if (value == null || depth > 4) return false;
+  if (isNonSearchableField(fieldName)) return false;
   if (typeof value === 'object') {
     if (Array.isArray(value)) {
-      return value.some((item) => valueMatchesQuery(item, q, depth + 1));
+      return value.some((item) => valueMatchesQuery(item, q, depth + 1, fieldName));
     }
-    return Object.values(value).some((item) => valueMatchesQuery(item, q, depth + 1));
+    return Object.entries(value).some(([key, item]) =>
+      valueMatchesQuery(item, q, depth + 1, key)
+    );
   }
   return String(value).toLowerCase().includes(q);
 }
@@ -312,7 +396,11 @@ function valueMatchesQuery(value, q, depth = 0) {
 export function recordMatchesSearch(record, query) {
   if (!query.trim()) return true;
   const q = query.trim().toLowerCase();
-  return valueMatchesQuery(record, q);
+  const categoryId = record.categoryId || record.category;
+  if (record.data && typeof record.data === 'object') {
+    return recordHasSearchMatch(record.data, q, categoryId);
+  }
+  return recordHasSearchMatch(record, q, categoryId);
 }
 
 export function filterRecordsBySearch(records, query) {
@@ -374,28 +462,15 @@ export function buildSavedRecords() {
 }
 
 /**
- * Case-insensitive, partial, multi-field search (category, all data fields, timestamp).
+ * Case-insensitive, partial search over categories and user-facing record fields.
  */
 export function performRecordSearch(savedRecords, query) {
   if (query.trim() === '') return [];
 
-  const lowerQuery = query.toLowerCase();
+  const lowerQuery = query.trim().toLowerCase();
 
   return savedRecords.filter((record) => {
-    if (record.categoryName?.toLowerCase().includes(lowerQuery)) return true;
-
-    for (const [, value] of Object.entries(record.data || {})) {
-      if (value != null && typeof value !== 'object' && String(value).toLowerCase().includes(lowerQuery)) {
-        return true;
-      }
-      if (value != null && typeof value === 'object' && recordMatchesSearch(value, query)) {
-        return true;
-      }
-    }
-
-    if (String(record.timestamp).toLowerCase().includes(lowerQuery)) return true;
-
-    return false;
+    return recordHasSearchMatch(record.data || {}, lowerQuery, record.categoryId);
   });
 }
 

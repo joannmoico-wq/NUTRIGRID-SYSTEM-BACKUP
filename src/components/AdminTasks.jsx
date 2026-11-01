@@ -12,7 +12,9 @@ import {
   syncPendingTasks,
   isTaskOverdue,
 } from '../utils/taskSyncService';
-import { ClipboardList, Plus, Trash2, Calendar, MapPin, Flag, X, Edit } from 'lucide-react';
+import { Plus, Trash2, Calendar, MapPin, Flag, X, Edit } from 'lucide-react';
+import TaskIcon from './TaskIcon';
+import ConfirmActionDialog from './ConfirmActionDialog';
 
 const PRIORITIES = ['High', 'Normal', 'Low'];
 const FILTERS = ['All', 'Overdue', 'Pending', 'In Progress', 'Completed'];
@@ -45,7 +47,13 @@ function localDateInputValue(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
-export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) {
+export default function AdminTasks({
+  initialPurok = '',
+  onInitialTaskHandled,
+  searchQuery = '',
+  onSearchResultsChange,
+  selectedTaskFilter,
+}) {
   const [tasks, setTasks] = useState([]);
   const [bhws, setBhws] = useState([]);
   const [form, setForm] = useState(emptyForm);
@@ -57,6 +65,23 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
   const [reschedulingTask, setReschedulingTask] = useState(null);
   const [rescheduleDate, setRescheduleDate] = useState('');
   const [bhwLoadError, setBhwLoadError] = useState('');
+  const [confirmation, setConfirmation] = useState(null);
+  const [confirmationBusy, setConfirmationBusy] = useState(false);
+
+  const runConfirmedAction = async () => {
+    if (!confirmation) return;
+    setConfirmationBusy(true);
+    try {
+      await confirmation.action();
+      setConfirmation(null);
+    } finally {
+      setConfirmationBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedTaskFilter) setFilter(selectedTaskFilter);
+  }, [selectedTaskFilter]);
 
   const load = async () => {
     try {
@@ -160,13 +185,59 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
     [tasks]
   );
 
-  const visible = (filter === 'All'
-    ? tasks
-    : filter === 'Overdue'
-      ? tasks.filter((t) => isTaskOverdue(t))
-      : filter === 'Pending'
-        ? tasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t))
-      : tasks.filter((t) => t.status === filter)
+  const taskSuggestions = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return [];
+    return tasks
+      .filter((task) => {
+        const values = [
+          task.title,
+          task.description,
+          task.purok,
+          task.status,
+          task.priority,
+          task.due_date,
+          bhwName(task.assigned_to_user_id),
+        ];
+        return values.some((value) => String(value || '').toLowerCase().includes(query));
+      })
+      .slice(0, 20)
+      .map((task) => ({
+        id: task.task_id,
+        categoryId: 'tasks',
+        categoryName: `${bhwName(task.assigned_to_user_id)} · ${isTaskOverdue(task) ? 'Overdue' : task.status}`,
+        displayTitle: task.title,
+        data: task,
+        timestamp: task.due_date,
+        synced: true,
+      }));
+  }, [tasks, searchQuery, bhws]);
+  useEffect(() => {
+    onSearchResultsChange?.(taskSuggestions);
+  }, [taskSuggestions, onSearchResultsChange]);
+
+  const searchedTasks = searchQuery.trim()
+    ? tasks.filter((task) =>
+        [
+          task.title,
+          task.description,
+          task.purok,
+          task.status,
+          task.priority,
+          task.due_date,
+          bhwName(task.assigned_to_user_id),
+        ].some((value) => String(value || '').toLowerCase().includes(searchQuery.trim().toLowerCase()))
+      )
+    : tasks;
+  const visible = (searchQuery.trim()
+    ? searchedTasks
+    : filter === 'All'
+      ? searchedTasks
+      : filter === 'Overdue'
+        ? searchedTasks.filter((t) => isTaskOverdue(t))
+        : filter === 'Pending'
+          ? searchedTasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t))
+          : searchedTasks.filter((t) => t.status === filter)
   ).sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
 
   const saveTask = async (e) => {
@@ -175,7 +246,6 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
       setMessage('Choose a BHW to assign this task to.');
       return;
     }
-    setBusy(true);
     const task = {
       ...(editingTask || {}),
       task_id: editingTask?.task_id ?? createLocalTaskId(),
@@ -189,6 +259,11 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
       completed_at: editingTask?.completed_at || null,
       created_at: editingTask?.created_at || new Date().toISOString(),
     };
+    setConfirmation({
+      message: `Are you sure you want to ${editingTask ? 'edit' : 'save'} this task?`,
+      confirmLabel: editingTask ? 'Save changes' : 'Save',
+      action: async () => {
+        setBusy(true);
     saveTaskLocally(task);
     setTasks(deduplicateTasks(getLocalTasks()));
     setForm(emptyForm);
@@ -213,10 +288,17 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
     } finally {
       setBusy(false);
     }
+      },
+    });
   };
 
   const deleteTask = async (id) => {
-    if (!confirm('Delete this task?')) return;
+    setConfirmation({
+      title: 'Delete task',
+      message: 'Are you sure you want to delete this task?',
+      confirmLabel: 'Delete',
+      destructive: true,
+      action: async () => {
     deleteTaskLocally(id);
     setTasks(deduplicateTasks(getLocalTasks()));
     try {
@@ -228,6 +310,8 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
       console.error('Could not sync task deletion:', error);
       setMessage('Deleted on this device. The deletion will sync when Supabase is available.');
     }
+      },
+    });
   };
 
   const openReschedule = (task) => {
@@ -240,6 +324,10 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
     if (!reschedulingTask || !rescheduleDate) return;
 
     const updatedTask = { ...reschedulingTask, due_date: rescheduleDate };
+    setConfirmation({
+      message: 'Are you sure you want to save this new due date?',
+      confirmLabel: 'Save new date',
+      action: async () => {
     saveTaskLocally(updatedTask, ['due_date']);
     setTasks(deduplicateTasks(getLocalTasks()));
     setReschedulingTask(null);
@@ -254,6 +342,8 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
       console.error('Could not sync task reschedule:', error);
       setMessage('New due date saved on this device. It will sync when Supabase is available.');
     }
+      },
+    });
   };
 
   const editTask = (task) => {
@@ -315,7 +405,7 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
       {/* Task grid */}
       {visible.length === 0 ? (
         <div className="rounded-3xl border-2 border-dashed border-[#E8C4F0] bg-white/60 p-12 text-center">
-          <ClipboardList size={40} className="mx-auto text-[#8F65FF]/50" />
+          <TaskIcon size={48} className="mx-auto text-[#8F65FF]/70" />
           <p className="mt-3 font-semibold text-gray-700">No tasks here yet</p>
           <p className="text-sm text-gray-500">Create a task and assign it to a BHW.</p>
         </div>
@@ -535,6 +625,16 @@ export default function AdminTasks({ initialPurok = '', onInitialTaskHandled }) 
           </form>
         </div>
       )}
+      <ConfirmActionDialog
+        open={Boolean(confirmation)}
+        title={confirmation?.title || 'Confirm changes'}
+        message={confirmation?.message}
+        confirmLabel={confirmation?.confirmLabel || 'Save'}
+        destructive={confirmation?.destructive}
+        busy={confirmationBusy}
+        onCancel={() => setConfirmation(null)}
+        onConfirm={() => void runConfirmedAction()}
+      />
     </div>
   );
 }

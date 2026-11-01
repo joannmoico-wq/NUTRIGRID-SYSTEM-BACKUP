@@ -1272,7 +1272,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
 };
 
 const FEEDING_METHODS = [
-  { value: '', label: '— Not yet / N/A —' },
+  { value: 'NA', label: 'Not yet / N/A' },
   { value: 'E', label: 'E — Exclusive Breastfeeding' },
   { value: 'M', label: 'M — Mixed Feeding' },
   { value: 'N', label: 'N — Not Breastfeeding' },
@@ -1281,6 +1281,7 @@ const FEEDING_METHODS = [
 function normalizeFeedingMethod(value) {
   const method = String(value || '').trim().toLowerCase();
   if (!method) return '';
+  if (['na', 'n/a', 'not yet'].includes(method)) return 'NA';
   if (['e', 'ebf', 'exclusive breastfeeding'].includes(method)) return 'E';
   if (['m', 'mixed', 'mixed feeding'].includes(method)) return 'M';
   if (['n', 'not breastfeeding', 'formula', 'water/tea', 'other'].includes(method)) return 'N';
@@ -1375,8 +1376,9 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
         <p className="text-xs text-pink-800">E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding</p>
         {feedingFields.map(({ key, label }) => (
           <div key={key}>
-            <label className="block text-sm font-semibold text-gray-700 mb-2">{label}</label>
+            <label className="block text-sm font-semibold text-gray-700 mb-2">{label} *</label>
             <select
+              required
               value={formData[key]}
               onChange={(e) => updateField(key, e.target.value)}
               className={fieldClass}

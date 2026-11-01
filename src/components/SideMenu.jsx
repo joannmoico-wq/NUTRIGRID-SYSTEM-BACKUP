@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../utils/supabaseClient';
+import { deduplicateTasks, getLocalTasks, loadTasks, isTaskOverdue } from '../utils/taskSyncService';
 import { X, ChevronLeft, ChevronRight, Clock, Circle, LogOut } from 'lucide-react';
 import MyTasks from './MyTasks';
 
@@ -30,7 +31,7 @@ const DAY_TONES = [
 
 const TASK_ICON_BG = ['bg-[#DDEBFF]', 'bg-[#FFE1F0]', 'bg-[#E4DEFF]', 'bg-[#FFEBD9]', 'bg-[#DFF7EC]'];
 
-export default function SideMenu({ open, onClose, onLogout }) {
+export default function SideMenu({ open, onClose, onLogout, taskNavigationDate }) {
   const [tasks, setTasks] = useState([]);
   const [anchor, setAnchor] = useState(() => startOfWeek(new Date()));
   const [selected, setSelected] = useState(() => toKey(new Date()));
@@ -40,31 +41,40 @@ export default function SideMenu({ open, onClose, onLogout }) {
     return new Date(now.getFullYear(), now.getMonth(), 1);
   });
 
-  // Each time the panel opens, jump back to the current week and today
+  // Open the calendar on the due date when launched from a task notification.
   useEffect(() => {
     if (open) {
-      const now = new Date();
-      setAnchor(startOfWeek(now));
-      setSelected(toKey(now));
-      setMonth(new Date(now.getFullYear(), now.getMonth(), 1));
+      const requestedDate = taskNavigationDate
+        ? new Date(`${taskNavigationDate.slice(0, 10)}T00:00:00`)
+        : new Date();
+      const validRequestedDate = Number.isNaN(requestedDate.getTime()) ? new Date() : requestedDate;
+      setAnchor(startOfWeek(validRequestedDate));
+      setSelected(toKey(validRequestedDate));
+      setMonth(new Date(validRequestedDate.getFullYear(), validRequestedDate.getMonth(), 1));
     }
-  }, [open]);
+  }, [open, taskNavigationDate]);
 
   const load = useCallback(async () => {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
+    const { data: { session } } = await supabase.auth.getSession();
+    const user = session?.user;
     if (!user) {
       setTasks([]);
       return;
     }
-    const { data } = await supabase
-      .from('tasks')
-      .select('task_id, title, status, due_date, priority, purok')
-      .eq('assigned_to_user_id', user.id)
-      .neq('status', 'Completed')
-      .order('due_date', { ascending: true, nullsFirst: false });
-    setTasks(data || []);
+    try {
+      const data = await loadTasks({ assignedToUserId: user.id });
+      setTasks(data.filter((task) => task.status !== 'Completed'));
+    } catch (error) {
+      console.error('Could not load sidebar tasks:', error);
+      setTasks(
+        deduplicateTasks(getLocalTasks()).filter(
+          (task) =>
+            task.assigned_to_user_id === user.id &&
+            task.status !== 'Completed' &&
+            !isTaskOverdue(task)
+        )
+      );
+    }
   }, []);
 
   useEffect(() => {
@@ -291,11 +301,7 @@ export default function SideMenu({ open, onClose, onLogout }) {
             </div>
           </div>
 
-          {dayTasks.length === 0 ? (
-            <div className="rounded-3xl bg-white/70 p-6 text-center text-sm text-gray-500">
-              Nothing due this day.
-            </div>
-          ) : (
+          {dayTasks.length > 0 && (
             <ul className="space-y-3">
               {dayTasks.map((t, i) => {
                 const Icon = t.status === 'In Progress' ? Clock : Circle;

@@ -33,7 +33,6 @@ import {
   recordMatchesSearch,
   buildSavedRecords,
   performRecordSearch,
-  getRecordDisplayTitle,
   queueRecordDeletion,
 } from '../utils/bnsStorage';
 import {
@@ -47,7 +46,13 @@ import {
   syncPendingRecords,
   syncSingleRecord,
 } from '../utils/syncService';
-import { syncPendingTasks } from '../utils/taskSyncService';
+import {
+  deduplicateTasks,
+  getLocalTasks,
+  isTaskOverdue,
+  loadTasks,
+  syncPendingTasks,
+} from '../utils/taskSyncService';
 import ReportRowActions from './ReportRowActions';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
 import { sortPurokCounts, PUROK_OPTIONS } from '../utils/purok';
@@ -58,6 +63,7 @@ import AdminDashboard from './AdminDashboard';
 import SideMenu from './SideMenu';
 import ForgotPassword from './ForgotPassword';
 import { supabase } from '../utils/supabaseClient';
+import ConfirmActionDialog from './ConfirmActionDialog';
 import {
   EnvironmentalSanitationForm,
   ResidentsForm,
@@ -84,6 +90,17 @@ const LEGACY_RECORD_KEYS = {
   lactatingwoman: 'records_lactating_woman',
   pregnantwoman: 'records_pregnant_woman',
 };
+const PWA_READ_NOTIFICATIONS_KEY = 'nutrigrid_pwa_read_notifications';
+
+function getReadNotificationIds() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(PWA_READ_NOTIFICATIONS_KEY) || '[]');
+    return new Set(Array.isArray(stored) ? stored.map(String) : []);
+  } catch (error) {
+    console.error('Could not read PWA notification state:', error);
+    return new Set();
+  }
+}
 
 function removeLegacyRecord(category, id) {
   const key = LEGACY_RECORD_KEYS[category];
@@ -192,9 +209,9 @@ const FieldSearchInput = ({
     results={searchResults}
     showSuggestions={showSearchSuggestions}
     onSelectResult={(record) => {
-      performSearch(getRecordDisplayTitle(record.data));
       setSelectedCategory(record.categoryId);
-      setActiveView('home');
+      setShowSearchSuggestions(false);
+      setActiveView('records');
     }}
     onFocusSuggestions={() => setShowSearchSuggestions(true)}
     onBlurSuggestions={() => setShowSearchSuggestions(false)}
@@ -262,6 +279,7 @@ const RecordsList = ({
   performSearch,
   setSelectedCategory,
   currentUserId,
+  requestConfirmation,
 }) => {
   const [filter, setFilter] = useState('all');
 
@@ -309,7 +327,9 @@ const RecordsList = ({
       );
 
   const handleDeleteRecord = (id) => {
-    if (confirm('Delete this record? It will be permanently removed from your phone.')) {
+    requestConfirmation(
+      'Are you sure you want to delete this record permanently from your phone?',
+      () => {
       const updated = pendingVisits.filter(v => v.id !== id);
       const allVisits = getRecords(STORAGE_KEYS.pendingVisits);
       localStorage.setItem(
@@ -317,7 +337,9 @@ const RecordsList = ({
         JSON.stringify(replaceUserRecords(allVisits, currentUserId, updated))
       );
       setPendingVisits(updated);
-    }
+      },
+      { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
+    );
   };
 
   const formatLastVisit = (record) => {
@@ -419,6 +441,104 @@ const RecordsList = ({
           {categoryRecords.length > 0 && (
             <p className="text-xs text-gray-400 text-center mt-3 px-2">
               Swipe sideways to see all columns on small screens.
+            </p>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (selectedCategory === 'environmental') {
+    const environmentalColumns = [
+      ['purok', 'Purok'],
+      ['total_hh', 'Total HH'],
+      ['total_families', 'Families'],
+      ['compost_pit', 'Compost'],
+      ['garbage_collect', 'Collection'],
+      ['garbage_others', 'Other garbage'],
+      ['water_level_i', 'Water I'],
+      ['water_level_ii', 'Water II'],
+      ['water_level_iii', 'Water III'],
+      ['without_potable_water', 'No potable water'],
+      ['toilet_sanitary', 'Sanitary toilet'],
+      ['toilet_not_sanitary', 'No sanitary toilet'],
+      ['selling_iodized_sari', 'Salt: sari-sari'],
+      ['selling_iodized_grocery', 'Salt: grocery'],
+      ['selling_iodized_bakery', 'Salt: bakery'],
+      ['selling_iodized_carenderia', 'Salt: carenderia'],
+      ['selling_fortified_grocery', 'Fortified: grocery'],
+      ['selling_fortified_bakery', 'Fortified: bakery'],
+      ['selling_fortified_restaurant', 'Fortified: restaurant'],
+      ['establishments_hospital', 'Hospital'],
+      ['establishments_hotel', 'Hotel'],
+      ['establishments_restaurant', 'Restaurant'],
+      ['establishments_carenderia', 'Carenderia'],
+      ['establishments_bakery', 'Bakery'],
+      ['establishments_grocery', 'Grocery'],
+      ['establishments_sari', 'Sari-sari'],
+      ['visit_date', 'Visit date'],
+      ['visited_by', 'Visited by'],
+      ['notes', 'Notes'],
+      ['status', 'Status'],
+    ];
+    const allEnvironmentalRecords = mergeWithLegacyFiltered(categoryRecords, 'records_environmental');
+    const yesNo = (value) => value ? 'Yes' : '—';
+
+    return (
+      <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
+        <PageHeader
+          title="Environmental Sanitation"
+          subtitle={recordsSubtitle(allEnvironmentalRecords.length)}
+          onBack={() => setActiveView('home')}
+          showSearch
+          searchQuery={searchQuery}
+          performSearch={performSearch}
+          searchResults={searchResults}
+          showSearchSuggestions={showSearchSuggestions}
+          setShowSearchSuggestions={setShowSearchSuggestions}
+          setSelectedCategory={setSelectedCategory}
+          setActiveView={setActiveView}
+        />
+        <div className="px-3 pt-4">
+          <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
+            <div className="overflow-x-auto">
+              <div className="min-w-[2350px]">
+                <div className="grid grid-cols-[repeat(31,minmax(4.5rem,1fr))] gap-1 border-b border-green-200 bg-green-50 px-3 py-3 text-center text-[10px] font-semibold uppercase tracking-wide text-green-900">
+                  {[...environmentalColumns.map(([, label]) => label), 'Actions'].map((label) => (
+                    <span key={label} className="truncate">{label}</span>
+                  ))}
+                </div>
+                {allEnvironmentalRecords.length === 0 ? (
+                  <div className="px-4 py-10 text-center text-sm text-gray-500">
+                    {emptyRecordsMessage('No environmental sanitation records yet. Tap New Visit to add one.')}
+                  </div>
+                ) : (
+                  allEnvironmentalRecords.map((record, index) => (
+                    <div
+                      key={record.id ?? index}
+                      className="grid grid-cols-[repeat(31,minmax(4.5rem,1fr))] items-center gap-1 border-b border-gray-100 px-3 py-2.5 text-center text-[11px] text-gray-800"
+                    >
+                      {environmentalColumns.map(([key]) => (
+                        <span key={key} className="truncate" title={String(record[key] ?? '')}>
+                          {typeof record[key] === 'boolean'
+                            ? yesNo(record[key])
+                            : key === 'visit_date'
+                              ? formatTableDate(record[key])
+                              : key === 'status'
+                                ? statusLabel(record)
+                                : record[key] || '—'}
+                        </span>
+                      ))}
+                      <RecordActions record={record} />
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+          {allEnvironmentalRecords.length > 0 && (
+            <p className="mt-3 px-2 text-center text-xs text-gray-400">
+              Swipe sideways to view all sanitation columns.
             </p>
           )}
         </div>
@@ -964,8 +1084,11 @@ const HomeScreen = ({
   currentUserId,
   userEmail,
   onDeleteAccount,
+  onOpenAssignedTask,
+  onClearSyncNotification,
 }) => {
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [readNotificationIds, setReadNotificationIds] = useState(getReadNotificationIds);
   const userCategoryRecords = DASHBOARD_CATEGORIES.map((category) => ({
     ...category,
     records: getUserRecords(storageKeyForCategory(category.id), currentUserId),
@@ -982,11 +1105,109 @@ const HomeScreen = ({
       !record.synced &&
       String(record.status || '').toLowerCase() !== 'synced'
   ).length;
-  const notificationCount = pendingRecordCount + pendingVisitCount;
-  const pendingCount = notificationCount;
+  const [assignedTasks, setAssignedTasks] = useState([]);
+  const pendingSyncCount = pendingRecordCount + pendingVisitCount;
+  const pendingSyncNotifications = userCategoryRecords.flatMap((category) =>
+    category.records
+      .filter((record) => !record.synced && String(record.status || '').toLowerCase() !== 'synced')
+      .map((record) => ({
+        id: `sync:${category.id}:${record.id}`,
+        categoryId: category.id,
+        label: category.name,
+      }))
+  );
+  const pendingVisitNotifications = pendingVisits
+    .filter(
+      (record) =>
+        isOwnedByUser(record, currentUserId) &&
+        !record.synced &&
+        String(record.status || '').toLowerCase() !== 'synced'
+    )
+    .map((record) => ({ id: `visit:${record.id}`, label: 'Pending field visit' }));
+  const unreadSyncNotifications = [
+    ...pendingSyncNotifications,
+    ...pendingVisitNotifications,
+  ].filter((item) => !readNotificationIds.has(item.id));
+  const unreadAssignedTasks = assignedTasks.filter(
+    (task) => !readNotificationIds.has(`task:${task.task_id}`)
+  );
+  const notificationCount = unreadSyncNotifications.length + unreadAssignedTasks.length;
+  const markNotificationsRead = (ids) => {
+    const next = new Set(readNotificationIds);
+    ids.forEach((id) => next.add(id));
+    setReadNotificationIds(next);
+    try {
+      localStorage.setItem(PWA_READ_NOTIFICATIONS_KEY, JSON.stringify(Array.from(next)));
+    } catch (error) {
+      console.error('Could not save PWA notification state:', error);
+    }
+  };
   const q = searchQuery.trim().toLowerCase();
   const [sharedHouseholdsByPurok, setSharedHouseholdsByPurok] = useState([]);
   const [sharedPurokStatus, setSharedPurokStatus] = useState('loading');
+
+  useEffect(() => {
+    if (!currentUserId) {
+      setAssignedTasks([]);
+      return undefined;
+    }
+
+    let active = true;
+    const refreshAssignedTasks = async () => {
+      const localTasks = deduplicateTasks(getLocalTasks()).filter(
+        (task) =>
+          task.assigned_to_user_id === currentUserId &&
+          task.status !== 'Completed' &&
+          !isTaskOverdue(task)
+      );
+      if (active) setAssignedTasks(localTasks);
+
+      if (!navigator.onLine) return;
+      try {
+        const freshTasks = await loadTasks({ assignedToUserId: currentUserId });
+        if (active) {
+          setAssignedTasks(freshTasks.filter((task) => task.status !== 'Completed'));
+        }
+      } catch (error) {
+        console.error('Could not refresh assigned-task notifications:', error);
+      }
+    };
+
+    void refreshAssignedTasks();
+    const channel = supabase
+      .channel(`pwa-task-notifications-${currentUserId}`)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'tasks',
+          filter: `assigned_to_user_id=eq.${currentUserId}`,
+        },
+        () => void refreshAssignedTasks()
+      )
+      .subscribe();
+    const interval = window.setInterval(refreshAssignedTasks, 60000);
+    const handleOnline = () => void refreshAssignedTasks();
+    const handleTaskChange = () => void refreshAssignedTasks();
+    const handleStorage = (event) => {
+      if (event.key === 'nutrigrid_tasks' || event.key === 'nutrigrid_pending_task_changes') {
+        handleTaskChange();
+      }
+    };
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('bns-tasks-changed', handleTaskChange);
+    window.addEventListener('storage', handleStorage);
+
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('bns-tasks-changed', handleTaskChange);
+      window.removeEventListener('storage', handleStorage);
+      void supabase.removeChannel(channel);
+    };
+  }, [currentUserId]);
 
   useEffect(() => {
     let active = true;
@@ -1152,36 +1373,72 @@ const HomeScreen = ({
                 </div>
                 <div className="max-h-56 overflow-y-auto p-3 space-y-2 text-xs">
                   {notificationCount === 0 ? (
-                    <p className="text-gray-500 py-2">All records are up to date.</p>
+                    <p className="text-gray-500 py-2">No new notifications.</p>
                   ) : (
-                    categoriesWithCounts
-                      .filter((cat) =>
-                        cat.records.some((r) =>
-                          !r.synced && String(r.status || '').toLowerCase() !== 'synced'
-                        )
-                      )
-                      .map((cat) => {
-                        const n = cat.records.filter(
-                          (r) => !r.synced && String(r.status || '').toLowerCase() !== 'synced'
-                        ).length;
+                    <>
+                      {categoriesWithCounts.map((category) => {
+                        const unreadRecords = unreadSyncNotifications.filter(
+                          (item) => item.categoryId === category.id
+                        );
+                        if (!unreadRecords.length) return null;
                         return (
                           <button
-                            key={cat.id}
+                            key={category.id}
                             type="button"
                             onClick={() => {
-                              setSelectedCategory(cat.id);
+                              markNotificationsRead(unreadRecords.map((item) => item.id));
+                              onClearSyncNotification?.();
+                              setSelectedCategory(category.id);
                               setShowNotifications(false);
                             }}
-                            className="w-full text-left p-2 rounded-lg hover:bg-blue-50"
+                            className="w-full rounded-lg p-2 text-left hover:bg-blue-50"
                           >
-                            <span className="font-semibold">{cat.name}</span>
-                            <span className="text-amber-600 ml-1">— {n} pending sync</span>
+                            <span className="font-semibold">{category.name}</span>
+                            <span className="ml-1 text-amber-600">— {unreadRecords.length} pending sync</span>
                           </button>
                         );
-                      })
-                  )}
-                  {pendingVisitCount > 0 && (
-                    <p className="text-amber-700 pt-1">{pendingVisitCount} house visit(s) pending sync</p>
+                      })}
+                      {pendingVisitNotifications.some((item) => !readNotificationIds.has(item.id)) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const unreadVisits = pendingVisitNotifications.filter(
+                              (item) => !readNotificationIds.has(item.id)
+                            );
+                            markNotificationsRead(unreadVisits.map((item) => item.id));
+                            onClearSyncNotification?.();
+                            setSelectedCategory('residents');
+                            setShowNotifications(false);
+                          }}
+                          className="w-full rounded-lg p-2 text-left text-amber-700 hover:bg-amber-50"
+                        >
+                          {pendingVisitNotifications.filter((item) => !readNotificationIds.has(item.id)).length} field visit(s) pending sync
+                        </button>
+                      )}
+                      {unreadAssignedTasks.length > 0 && (
+                        <div className="border-t border-gray-100 pt-2">
+                          <p className="px-2 pb-1 font-semibold text-violet-700">Assigned tasks</p>
+                          {unreadAssignedTasks.map((task) => (
+                            <button
+                              key={task.task_id}
+                              type="button"
+                              onClick={() => {
+                                markNotificationsRead([`task:${task.task_id}`]);
+                                setShowNotifications(false);
+                                onOpenAssignedTask(task);
+                              }}
+                              className="w-full rounded-lg p-2 text-left hover:bg-blue-50"
+                            >
+                              <span className="block truncate font-semibold">{task.title}</span>
+                              <span className="text-gray-500">
+                                {task.due_date ? `Due ${task.due_date}` : task.status || 'Pending'}
+                                {task.purok ? ` · ${task.purok}` : ''}
+                              </span>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -1214,7 +1471,7 @@ const HomeScreen = ({
               { label: 'Total Households', value: residentRecords.length, icon: Users, color: '#5575F7', background: '#EFF6FF' },
               { label: 'Pregnant Women', value: pregnantWomenCount, icon: Heart, color: '#E854A8', background: '#FDF2F8' },
               { label: 'Children (0-5)', value: childrenCount, icon: Baby, color: '#16A889', background: '#ECFDF5' },
-              { label: 'Reports Pending', value: notificationCount, icon: FileText, color: '#8F65FF', background: '#F5F3FF' },
+              { label: 'Reports Pending', value: pendingSyncCount, icon: FileText, color: '#8F65FF', background: '#F5F3FF' },
             ].map(({ label, value, icon: Icon, color, background }) => (
               <div
                 key={label}
@@ -1506,6 +1763,7 @@ const NutriGridMobile = () => {
   const [activeView, setActiveView] = useState('home');
   const [userName, setUserName] = useState('');
   const [showMenu, setShowMenu] = useState(false);
+  const [taskNavigationDate, setTaskNavigationDate] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
@@ -1516,6 +1774,23 @@ const NutriGridMobile = () => {
   const [showNotifications, setShowNotifications] = useState(false);
   const [accountActionError, setAccountActionError] = useState('');
   const [syncNotification, setSyncNotification] = useState('');
+  const [pendingConfirmation, setPendingConfirmation] = useState(null);
+  const [confirmationBusy, setConfirmationBusy] = useState(false);
+
+  const requestConfirmation = (message, action, options = {}) => {
+    setPendingConfirmation({ message, action, ...options });
+  };
+
+  const runConfirmedAction = async () => {
+    if (!pendingConfirmation) return;
+    setConfirmationBusy(true);
+    try {
+      await pendingConfirmation.action();
+      setPendingConfirmation(null);
+    } finally {
+      setConfirmationBusy(false);
+    }
+  };
 
   const showSyncNotification = (message) => {
     setSyncNotification(message);
@@ -1737,7 +2012,7 @@ const NutriGridMobile = () => {
     };
   }, []);
 
-  const handleCategoryFormSubmit = async (formData) => {
+  const saveCategoryForm = async (formData) => {
     const key = storageKeyForCategory(formData.category);
     const pending = {
       ...formData,
@@ -1770,8 +2045,15 @@ const NutriGridMobile = () => {
     alert(`Saved locally, but sync failed: ${syncErr}`);
   };
 
-  const deleteCategoryRecord = async (categoryId, record) => {
-    if (!confirm('Delete this record? This removes it from Field Worker and Admin.')) return;
+  const handleCategoryFormSubmit = (formData) => requestConfirmation(
+    `Are you sure you want to ${editingRecord ? 'edit' : 'save'} this ${selectedCategoryData?.name || 'record'}?`,
+    () => saveCategoryForm(formData),
+    { confirmLabel: editingRecord ? 'Save changes' : 'Save' }
+  );
+
+  const deleteCategoryRecord = (categoryId, record) => requestConfirmation(
+    'Are you sure you want to delete this record? This removes it from Field Worker and Admin.',
+    async () => {
     const id = record.id;
     queueRecordDeletion(
       categoryId,
@@ -1798,7 +2080,9 @@ const NutriGridMobile = () => {
       return;
     }
     showSyncNotification('Record deletion synced to the Admin Dashboard and database.');
-  };
+    },
+    { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
+  );
 
   const startEditRecord = (record, categoryId) => {
     setSelectedCategory(record.category || categoryId);
@@ -1890,6 +2174,7 @@ const NutriGridMobile = () => {
 
     const handleSubmit = async (e) => {
       e.preventDefault();
+      requestConfirmation('Are you sure you want to save this household visit?', async () => {
       setIsSubmitting(true);
 
       const visitData = {
@@ -1939,6 +2224,7 @@ const NutriGridMobile = () => {
       setIsSubmitting(false);
 
       setTimeout(() => setActiveView('home'), 1500);
+      }, { confirmLabel: 'Save' });
     };
 
     return (
@@ -2204,6 +2490,7 @@ const NutriGridMobile = () => {
     return (
       <AdminDashboard
         adminName={currentUser.fullName}
+        adminEmail={currentUser.email}
         currentUserId={currentUser.id}
         onLogout={handleLogout}
       />
@@ -2247,7 +2534,12 @@ const NutriGridMobile = () => {
             </button>
           </div>
         )}
-        <SideMenu open={showMenu} onClose={() => setShowMenu(false)} onLogout={handleLogout} />
+        <SideMenu
+          open={showMenu}
+          onClose={() => setShowMenu(false)}
+          onLogout={handleLogout}
+          taskNavigationDate={taskNavigationDate}
+        />
         <FieldResponsiveShell>
         <div className="max-w-md mx-auto min-h-screen flex flex-col overflow-x-hidden shadow-xl" style={{ backgroundColor: MOBILE.bg }}>
           <div className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar">
@@ -2282,6 +2574,11 @@ const NutriGridMobile = () => {
               currentUserId={currentUser?.id}
               userEmail={currentUser?.email}
               onDeleteAccount={handleDeleteAccount}
+              onOpenAssignedTask={(task) => {
+                setTaskNavigationDate(task.due_date || '');
+                setShowMenu(true);
+              }}
+              onClearSyncNotification={() => setSyncNotification('')}
             />
           )}
           {activeView === 'password' && (
@@ -2310,11 +2607,22 @@ const NutriGridMobile = () => {
               setShowSearchSuggestions={setShowSearchSuggestions}
               performSearch={performSearch}
               setSelectedCategory={setSelectedCategory}
+              requestConfirmation={requestConfirmation}
             />
           )}
           </div>
         </div>
         </FieldResponsiveShell>
+        <ConfirmActionDialog
+          open={Boolean(pendingConfirmation)}
+          title={pendingConfirmation?.title || 'Confirm changes'}
+          message={pendingConfirmation?.message}
+          confirmLabel={pendingConfirmation?.confirmLabel || 'Save'}
+          destructive={pendingConfirmation?.destructive}
+          busy={confirmationBusy}
+          onCancel={() => setPendingConfirmation(null)}
+          onConfirm={() => void runConfirmedAction()}
+        />
       </>
     );
   }

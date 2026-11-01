@@ -10,7 +10,10 @@ import {
   notifyTaskOnce,
 } from '../utils/taskSyncService';
 import { registerPushToken } from '../utils/pushNotifications';
-import { ClipboardList, Calendar, MapPin, Bell, CheckCircle2, Circle, Clock } from 'lucide-react';
+import { Calendar, MapPin, Bell, CheckCircle2, Circle, Clock } from 'lucide-react';
+import BnsSearchBar from './BnsSearchBar';
+import TaskIcon from './TaskIcon';
+import ConfirmActionDialog from './ConfirmActionDialog';
 
 const NEXT_STATUS = { Pending: 'In Progress', 'In Progress': 'Completed', Completed: 'Pending' };
 
@@ -23,10 +26,14 @@ const STEP_ICON = {
 export default function MyTasks() {
   const [tasks, setTasks] = useState([]);
   const [banner, setBanner] = useState(null);
+  const [pendingTaskChange, setPendingTaskChange] = useState(null);
+  const [taskChangeBusy, setTaskChangeBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
   const [pushMessage, setPushMessage] = useState('');
   const [registeringPush, setRegisteringPush] = useState(false);
   const [expandedNotes, setExpandedNotes] = useState({});
+  const [taskSearch, setTaskSearch] = useState('');
+  const [showTaskSuggestions, setShowTaskSuggestions] = useState(false);
   const pushRegistrationAttempted = useRef(false);
   const [permission, setPermission] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
@@ -139,6 +146,10 @@ export default function MyTasks() {
 
   const advance = async (t) => {
     const next = NEXT_STATUS[t.status] || 'Pending';
+    setPendingTaskChange({
+      message: `Are you sure you want to update "${t.title}" to ${next}?`,
+      confirmLabel: 'Save changes',
+      action: async () => {
     saveTaskLocally({
       ...t,
       status: next,
@@ -162,6 +173,19 @@ export default function MyTasks() {
     } catch (error) {
       console.error('Task status is saved locally and waiting to sync:', error);
       setSyncMessage(`Saved on this device; Supabase update failed and will retry automatically: ${error.message}`);
+    }
+      },
+    });
+  };
+
+  const confirmTaskChange = async () => {
+    if (!pendingTaskChange) return;
+    setTaskChangeBusy(true);
+    try {
+      await pendingTaskChange.action();
+      setPendingTaskChange(null);
+    } finally {
+      setTaskChangeBusy(false);
     }
   };
 
@@ -191,12 +215,36 @@ export default function MyTasks() {
     }
   };
 
-  const open = tasks
+  const query = taskSearch.trim().toLowerCase();
+  const taskSuggestions = query
+    ? tasks
+        .filter((task) =>
+          [task.title, task.description, task.purok, task.status, task.priority, task.due_date]
+            .some((value) => String(value || '').toLowerCase().includes(query))
+        )
+        .slice(0, 20)
+        .map((task) => ({
+          id: task.task_id,
+          categoryId: 'tasks',
+          categoryName: task.status,
+          displayTitle: task.title,
+          data: task,
+          timestamp: task.due_date,
+          synced: true,
+        }))
+    : [];
+  const filteredTasks = query
+    ? tasks.filter((task) =>
+        [task.title, task.description, task.purok, task.status, task.priority, task.due_date]
+          .some((value) => String(value || '').toLowerCase().includes(query))
+      )
+    : tasks;
+  const open = filteredTasks
     .filter((t) => t.status !== 'Completed')
     .sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
   const orderedTasks = [
     ...open,
-    ...tasks.filter((task) => task.status === 'Completed'),
+    ...filteredTasks.filter((task) => task.status === 'Completed'),
   ];
 
   return (
@@ -214,6 +262,15 @@ export default function MyTasks() {
           </button>
         </div>
       )}
+      <ConfirmActionDialog
+        open={Boolean(pendingTaskChange)}
+        title="Confirm task update"
+        message={pendingTaskChange?.message}
+        confirmLabel={pendingTaskChange?.confirmLabel || 'Save'}
+        busy={taskChangeBusy}
+        onCancel={() => setPendingTaskChange(null)}
+        onConfirm={() => void confirmTaskChange()}
+      />
       {syncMessage && (
         <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
           {syncMessage}
@@ -240,16 +297,37 @@ export default function MyTasks() {
           {pushMessage}
         </p>
       )}
+      <BnsSearchBar
+        query={taskSearch}
+        onSearch={(value) => {
+          setTaskSearch(value);
+          setShowTaskSuggestions(true);
+        }}
+        results={taskSuggestions}
+        showSuggestions={showTaskSuggestions}
+        onFocusSuggestions={() => setShowTaskSuggestions(true)}
+        onBlurSuggestions={() => setShowTaskSuggestions(false)}
+        onSelectResult={(result) => {
+          setTaskSearch(result.data.title || '');
+          setShowTaskSuggestions(false);
+        }}
+        placeholder="Search your tasks..."
+        emptyMessage="No matching tasks"
+        tone="field"
+        portalSuggestions
+      />
       {permission === 'denied' && (
         <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
           Notifications are blocked. Allow them for NutriGrid in your browser settings to receive task alerts.
         </p>
       )}
 
-      {tasks.length === 0 ? (
+      {filteredTasks.length === 0 ? (
         <div className="rounded-2xl border-2 border-dashed border-[#E8C4F0] bg-white/70 p-6 text-center">
-          <ClipboardList size={32} className="mx-auto text-[#8F65FF]/50" />
-          <p className="mt-2 text-sm text-gray-600">No tasks assigned to you yet.</p>
+          <TaskIcon size={44} className="mx-auto text-[#8F65FF]/70" />
+          <p className="mt-2 text-sm text-gray-600">
+            {query ? 'No tasks match your search.' : 'No tasks assigned to you yet.'}
+          </p>
         </div>
       ) : (
         <ul className="space-y-3">

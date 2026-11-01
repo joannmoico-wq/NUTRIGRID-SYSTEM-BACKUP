@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Tooltip, ZoomControl, useMapEvents } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polygon, Popup, Tooltip, ZoomControl, useMapEvents } from 'react-leaflet';
 import { divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { AlertTriangle } from 'lucide-react';
@@ -33,6 +33,81 @@ const ALAWIHAO_CENTERS = [
   [14.1108973, 122.9278014],
   [14.1077973, 122.9291014],
 ];
+
+const PUROK_BOUNDARY_COLORS = [
+  { fill: '#EFF7DF', border: '#83A84F' },
+  { fill: '#DDEBC3', border: '#799B42' },
+  { fill: '#C9E7F5', border: '#5D9FBE' },
+  { fill: '#B7CBE6', border: '#607DAF' },
+  { fill: '#E7C3DD', border: '#A96C9A' },
+  { fill: '#C4EEF2', border: '#55A9B2' },
+  { fill: '#B8C2F3', border: '#6575C0' },
+  { fill: '#F5CFE3', border: '#C16C99' },
+  { fill: '#F4B6D2', border: '#B94E80' },
+  { fill: '#F8EAB7', border: '#B59638' },
+];
+
+function buildIllustrativePurokBoundaries() {
+  const points = ALAWIHAO_CENTERS.map(([lat, lng]) => [lng, lat]);
+  const longitudes = points.map(([lng]) => lng);
+  const latitudes = points.map(([, lat]) => lat);
+  const paddingLng = 0.00115;
+  const paddingLat = 0.00105;
+  const bounds = [
+    [Math.min(...longitudes) - paddingLng, Math.min(...latitudes) - paddingLat],
+    [Math.max(...longitudes) + paddingLng, Math.min(...latitudes) - paddingLat],
+    [Math.max(...longitudes) + paddingLng, Math.max(...latitudes) + paddingLat],
+    [Math.min(...longitudes) - paddingLng, Math.max(...latitudes) + paddingLat],
+  ];
+
+  return points.map(([x, y], index) => {
+    let polygon = bounds;
+    points.forEach(([otherX, otherY], otherIndex) => {
+      if (otherIndex === index || !polygon.length) return;
+      const a = 2 * (otherX - x);
+      const b = 2 * (otherY - y);
+      const c = otherX * otherX + otherY * otherY - x * x - y * y;
+      const clipped = [];
+      polygon.forEach((point, pointIndex) => {
+        const next = polygon[(pointIndex + 1) % polygon.length];
+        const value = a * point[0] + b * point[1] - c;
+        const nextValue = a * next[0] + b * next[1] - c;
+        const inside = value <= 0;
+        const nextInside = nextValue <= 0;
+        if (inside) clipped.push(point);
+        if (inside !== nextInside) {
+          const ratio = value / (value - nextValue);
+          clipped.push([
+            point[0] + ratio * (next[0] - point[0]),
+            point[1] + ratio * (next[1] - point[1]),
+          ]);
+        }
+      });
+      polygon = clipped;
+    });
+    const inset = polygon.map(([lng, lat]) => [
+      x + (lng - x) * 0.78,
+      y + (lat - y) * 0.78,
+    ]);
+    const irregular = inset.flatMap((point, edgeIndex) => {
+      const next = inset[(edgeIndex + 1) % inset.length];
+      const middleLng = (point[0] + next[0]) / 2;
+      const middleLat = (point[1] + next[1]) / 2;
+      const distance = Math.hypot(middleLng - x, middleLat - y) || 1;
+      const offset = (edgeIndex % 2 === index % 2 ? 1 : -1) * 0.000035;
+      return [
+        point,
+        [
+          middleLng + ((middleLng - x) / distance) * offset,
+          middleLat + ((middleLat - y) / distance) * offset,
+        ],
+      ];
+    });
+    return irregular.map(([lng, lat]) => [lat, lng]);
+  });
+}
+
+const ILLUSTRATIVE_PUROK_BOUNDARIES = buildIllustrativePurokBoundaries();
 
 const LANDMARKS = [
   {
@@ -484,6 +559,15 @@ const InteractiveMapComponent = ({
           line-height: 1.5;
           font-size: 14px;
         }
+        .nutrigrid-purok-label {
+          padding: 2px 6px;
+          border: 1px solid rgba(120, 100, 145, .35);
+          border-radius: 9999px;
+          background: rgba(255, 255, 255, .88);
+          color: #3f3650;
+          font: 600 11px/1.35 system-ui, sans-serif;
+          box-shadow: 0 1px 3px rgba(15, 23, 42, .16);
+        }
       `}</style>
       <div className={`rounded-lg border p-6 ${darkMode ? 'border-slate-700 bg-gradient-to-r from-slate-900 via-[#252242] to-[#351b4b]' : 'border-blue-200 bg-gradient-to-r from-blue-50 to-purple-50'}`}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
@@ -522,6 +606,9 @@ const InteractiveMapComponent = ({
       </div>
 
       <div className="space-y-5">
+        <p className={`text-xs ${secondaryTextClass}`}>
+          Purok outlines are illustrative guides based on marker locations, not official surveyed boundaries.
+        </p>
         <div>
           <div className={`relative z-0 isolate overflow-hidden rounded-lg border shadow-lg ${panelClass}`}>
             <MapContainer
@@ -544,6 +631,27 @@ const InteractiveMapComponent = ({
                 maxNativeZoom={19}
                 maxZoom={19}
               />
+              {puroks.map((purok, index) => (
+                <Polygon
+                  key={`boundary-${purok.id}`}
+                  positions={ILLUSTRATIVE_PUROK_BOUNDARIES[index]}
+                  pathOptions={{
+                    color: PUROK_BOUNDARY_COLORS[index].border,
+                    weight: 2,
+                    opacity: 0.9,
+                    fillColor: PUROK_BOUNDARY_COLORS[index].fill,
+                    fillOpacity: 0.52,
+                  }}
+                >
+                  <Tooltip
+                    direction="center"
+                    permanent
+                    className="nutrigrid-purok-label"
+                  >
+                    {purok.name}
+                  </Tooltip>
+                </Polygon>
+              ))}
               {mapZoom >= 16 && LANDMARKS.map((landmark) => (
                 <Marker
                   key={landmark.name}
@@ -569,7 +677,6 @@ const InteractiveMapComponent = ({
                     position={[purok.lat, purok.lng]}
                     icon={createPurokSummaryIcon(visibleMarkers, markerSize)}
                   >
-                    <Tooltip direction="top" permanent>{purok.name}</Tooltip>
                     <Popup
                       className="nutrigrid-purok-popup"
                       minWidth={Math.round(200 + markerSize)}

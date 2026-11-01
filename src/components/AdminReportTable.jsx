@@ -55,6 +55,7 @@ export default function AdminReportTable({
   onEdit,
   onDelete,
   onExport,
+  exportActions,
   getCellValue,
   emptyMessage = 'No records yet.',
   minTableWidth = 720,
@@ -131,7 +132,7 @@ export default function AdminReportTable({
               Add New
             </button>
           )}
-          {onExport && (
+          {exportActions || (onExport && (
             <button
               type="button"
               onClick={onExport}
@@ -141,7 +142,7 @@ export default function AdminReportTable({
               <Download size={16} />
               Export
             </button>
-          )}
+          ))}
         </div>
       </div>
 
