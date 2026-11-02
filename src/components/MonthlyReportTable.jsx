@@ -36,19 +36,38 @@ export default function MonthlyReportTable({
   exportActions,
 }) {
   const [editing, setEditing] = useState(null);
+  const [adding, setAdding] = useState(false);
 
   const rows = useMemo(() => data.map((row) => sumTotals(row)), [data]);
+  const selectableRows = rows.filter((row) => !row.isHeader);
 
   const openEdit = (row) => {
     if (row.isHeader) return;
+    setAdding(false);
     setEditing({ ...row });
+  };
+
+  const openAdd = () => {
+    const firstLine = selectableRows[0];
+    if (!firstLine) return;
+    setAdding(true);
+    setEditing({
+      ...firstLine,
+    });
   };
 
   const saveEdit = (e) => {
     e.preventDefault();
     if (!editing) return;
-    onSaveLine?.(sumTotals(editing));
+    if (adding) {
+      const selectedLine = selectableRows.find((row) => String(row.slug) === String(editing.slug));
+      if (!selectedLine) return;
+      onAddLine?.(sumTotals({ ...selectedLine, ...editing }));
+    } else {
+      onSaveLine?.(sumTotals(editing));
+    }
     setEditing(null);
+    setAdding(false);
   };
 
   return (
@@ -79,15 +98,15 @@ export default function MonthlyReportTable({
       >
         <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">{rows.length} record(s)</span>
         <div className="flex items-center gap-2">
-          {onAddLine && (
+          {onAddLine && selectableRows.length > 0 && (
             <button
               type="button"
-              onClick={onAddLine}
+              onClick={openAdd}
               className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm"
               style={{ background: 'linear-gradient(90deg, #2D3A8C 0%, #3D4FA8 100%)' }}
             >
               <Plus size={16} />
-              Add New
+              Enter Monthly Data
             </button>
           )}
           {exportActions || (onGenerateReport && (
@@ -164,7 +183,7 @@ export default function MonthlyReportTable({
                       <ReportRowActions
                         darkMode={darkMode}
                         onEdit={() => openEdit(row)}
-                        onDelete={() => onDeleteLine?.(row.id)}
+                        onDelete={() => onDeleteLine?.(row)}
                       />
                     </td>
                   </>
@@ -182,13 +201,34 @@ export default function MonthlyReportTable({
           >
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
-                <p className="text-xs font-bold uppercase text-gray-400">Edit counts</p>
-                <p className="text-sm font-bold text-gray-900 dark:text-white">{displayIndicator(editing)}</p>
+                <p className="text-xs font-bold uppercase text-gray-400">{adding ? 'Enter monthly data' : 'Edit counts'}</p>
+                {!adding && <p className="text-sm font-bold text-gray-900 dark:text-white">{displayIndicator(editing)}</p>}
               </div>
-              <button type="button" onClick={() => setEditing(null)} aria-label="Close">
+              <button type="button" onClick={() => { setEditing(null); setAdding(false); }} aria-label="Close">
                 <X size={20} />
               </button>
             </div>
+            {adding && (
+              <label className="mb-3 block text-xs font-semibold text-gray-600 dark:text-gray-300">
+                Select indicator
+                <select
+                  required
+                  autoFocus
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-2 text-sm dark:border-gray-600 dark:bg-[#1e1e30]"
+                  value={editing.slug || ''}
+                  onChange={(e) => {
+                    const selected = selectableRows.find((row) => String(row.slug) === e.target.value);
+                    if (selected) setEditing({ ...selected });
+                  }}
+                >
+                  {selectableRows.map((row) => (
+                    <option key={row.slug || row.id} value={row.slug}>
+                      {displayIndicator(row)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               {COUNT_KEYS.filter((k) => !k.startsWith('t')).map((key) => (
                 <label key={key} className="text-xs font-semibold text-gray-600 dark:text-gray-300">
@@ -213,11 +253,8 @@ export default function MonthlyReportTable({
               className="mt-5 w-full rounded-xl py-2.5 text-sm font-bold text-white"
               style={{ background: 'linear-gradient(90deg, #8F65FF, #FF75C3)' }}
             >
-              Save (this device only)
+              {adding ? 'Save monthly data' : 'Save'}
             </button>
-            <p className="mt-2 text-center text-[10px] text-gray-500">
-              Monthly report lines are stored locally until the Supabase table is ready.
-            </p>
           </form>
         </div>
       )}

@@ -34,6 +34,7 @@ import {
   buildSavedRecords,
   performRecordSearch,
   queueRecordDeletion,
+  sortRecordsNewestFirst,
 } from '../utils/bnsStorage';
 import {
   registerWithSupabase,
@@ -43,6 +44,7 @@ import {
 } from '../utils/supabaseAuth';
 import {
   getSharedHouseholdCountsByPurok,
+  pullUserRecordsFromSupabase,
   syncPendingRecords,
   syncSingleRecord,
 } from '../utils/syncService';
@@ -139,7 +141,9 @@ function isOwnedByUser(record, userId) {
 }
 
 function getUserRecords(storageKey, userId) {
-  return getRecords(storageKey).filter((record) => isOwnedByUser(record, userId));
+  return sortRecordsNewestFirst(
+    getRecords(storageKey).filter((record) => isOwnedByUser(record, userId))
+  );
 }
 
 function replaceUserRecords(records, userId, updatedUserRecords) {
@@ -304,7 +308,10 @@ const RecordsList = ({
       searchQuery
     );
     const ids = new Set(canonicalRecords.map((r) => String(r.id)));
-    return [...canonicalRecords, ...filteredLegacy.filter((r) => !ids.has(String(r.id)))];
+    return sortRecordsNewestFirst([
+      ...canonicalRecords,
+      ...filteredLegacy.filter((r) => !ids.has(String(r.id))),
+    ]);
   };
 
   const recordsSubtitle = (count, label = 'record(s)') =>
@@ -1093,20 +1100,7 @@ const HomeScreen = ({
     ...category,
     records: getUserRecords(storageKeyForCategory(category.id), currentUserId),
   }));
-  const pendingRecordCount = userCategoryRecords.reduce(
-    (count, category) => count + category.records.filter(
-      (record) => !record.synced && String(record.status || '').toLowerCase() !== 'synced'
-    ).length,
-    0
-  );
-  const pendingVisitCount = pendingVisits.filter(
-    (record) =>
-      isOwnedByUser(record, currentUserId) &&
-      !record.synced &&
-      String(record.status || '').toLowerCase() !== 'synced'
-  ).length;
   const [assignedTasks, setAssignedTasks] = useState([]);
-  const pendingSyncCount = pendingRecordCount + pendingVisitCount;
   const pendingSyncNotifications = userCategoryRecords.flatMap((category) =>
     category.records
       .filter((record) => !record.synced && String(record.status || '').toLowerCase() !== 'synced')
@@ -1244,6 +1238,10 @@ const HomeScreen = ({
     ...cat,
     count: cat.records.length,
   }));
+  const totalCategoryRecordCount = categoriesWithCounts.reduce(
+    (total, category) => total + category.count,
+    0
+  );
 
   const residentRecords = getUserRecords(STORAGE_KEYS.residents, currentUserId);
   const pregnantWomenCount = getUserRecords(STORAGE_KEYS.pregnantwoman, currentUserId).length;
@@ -1471,22 +1469,25 @@ const HomeScreen = ({
               { label: 'Total Households', value: residentRecords.length, icon: Users, color: '#5575F7', background: '#EFF6FF' },
               { label: 'Pregnant Women', value: pregnantWomenCount, icon: Heart, color: '#E854A8', background: '#FDF2F8' },
               { label: 'Children (0-5)', value: childrenCount, icon: Baby, color: '#16A889', background: '#ECFDF5' },
-              { label: 'Reports Pending', value: pendingSyncCount, icon: FileText, color: '#8F65FF', background: '#F5F3FF' },
-            ].map(({ label, value, icon: Icon, color, background }) => (
+              { label: 'Total Records', value: totalCategoryRecordCount, icon: UserCircle, color: '#8F65FF', background: '#F5F3FF' },
+            ].map(({ label, value, subtitle, icon: Icon, color, background }) => (
               <div
                 key={label}
                 className="flex min-h-[76px] min-w-0 items-center gap-2.5 rounded-xl border border-black/5 px-2.5 py-2 shadow-sm"
                 style={{ backgroundColor: background }}
               >
                 <span
-                  className="grid h-9 w-9 shrink-0 place-items-center rounded-xl text-white"
+                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white"
                   style={{ backgroundColor: color }}
                 >
-                  <Icon size={18} aria-hidden="true" />
+                  <Icon size={22} aria-hidden="true" />
                 </span>
-                <span className="min-w-0">
+                <span className="min-w-0 flex-1">
                   <span className="block truncate text-[10px] font-semibold leading-tight text-gray-600">{label}</span>
-                  <span className="mt-0.5 block text-xl font-bold leading-none text-gray-900">{value}</span>
+                  <span className="mt-0.5 block w-full text-left text-xl font-bold leading-none text-gray-900">{value}</span>
+                  {subtitle && (
+                    <span className="mt-0.5 block text-[9px] leading-tight text-gray-500">{subtitle}</span>
+                  )}
                 </span>
               </div>
             ))}
@@ -1787,6 +1788,9 @@ const NutriGridMobile = () => {
     try {
       await pendingConfirmation.action();
       setPendingConfirmation(null);
+    } catch (error) {
+      console.error('Confirmed action failed:', error);
+      alert(error.message || 'The action could not be completed. Please try again.');
     } finally {
       setConfirmationBusy(false);
     }
@@ -1929,6 +1933,11 @@ const NutriGridMobile = () => {
         errors: recordResult.errors || [],
         skipped: recordResult.skipped,
       };
+      if (currentUser?.id) {
+        const pullResult = await pullUserRecordsFromSupabase(currentUser.id);
+        result.records += pullResult.records || 0;
+        result.errors.push(...(pullResult.errors || []));
+      }
       const latestVisits = getRecords(STORAGE_KEYS.pendingVisits).filter((record) =>
         isOwnedByUser(record, currentUser?.id)
       );

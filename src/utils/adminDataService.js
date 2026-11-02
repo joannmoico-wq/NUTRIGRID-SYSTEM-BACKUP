@@ -1,8 +1,8 @@
 import { supabase } from './supabaseClient';
 import {
   getPendingRecordDeletions,
+  getDeletedMonthlyReportSlugs,
   getRecords,
-  reloadAllAdminData,
   setRecords,
   STORAGE_KEYS,
   toAdminEnvironmental,
@@ -12,8 +12,12 @@ import {
   toAdminPregnant,
   toAdminResidents,
 } from './bnsStorage';
+import { DEFAULT_MONTHLY_REPORT_LINES, mergeMonthlyReportLines } from './monthlyReportTemplate';
 
 const PAGE_SIZE = 1000;
+const MONTHLY_REPORT_TABLE = 'monthly_report';
+const MONTHLY_REPORT_BARANGAY = DEFAULT_MONTHLY_REPORT_LINES[0].barangay;
+const MONTHLY_REPORT_YEAR = DEFAULT_MONTHLY_REPORT_LINES[0].reportYear;
 
 const ADMIN_TABLES = {
   residents: { table: 'residents', idColumn: 'resident_id' },
@@ -161,6 +165,81 @@ async function readAllRows(category, { table, idColumn }) {
   });
 }
 
+function monthlyReportFromRow(row) {
+  return {
+    id: row.monthly_report_id,
+    slug: row.slug,
+    indicator: row.indicator,
+    category: row.category || row.indicator,
+    subcategory: row.subcategory || '',
+    groupLabel: row.group_label || row.category || row.indicator,
+    isHeader: row.is_header,
+    sortOrder: row.sort_order,
+    barangay: row.barangay,
+    reportYear: row.report_year,
+    m1M: row.m1_male,
+    m1F: row.m1_female,
+    m2M: row.m2_male,
+    m2F: row.m2_female,
+    m3M: row.m3_male,
+    m3F: row.m3_female,
+    tM: row.total_male,
+    tF: row.total_female,
+    status: 'Synced',
+    synced: true,
+  };
+}
+
+export async function saveMonthlyReportLine(line) {
+  const { data, error } = await supabase
+    .from(MONTHLY_REPORT_TABLE)
+    .upsert({
+      slug: line.slug,
+      indicator: line.indicator,
+      category: line.category || line.indicator,
+      subcategory: line.subcategory || null,
+      group_label: line.groupLabel || line.category || line.indicator,
+      is_header: Boolean(line.isHeader),
+      sort_order: Number(line.sortOrder) || 0,
+      barangay: line.barangay || MONTHLY_REPORT_BARANGAY,
+      report_year: Number(line.reportYear) || MONTHLY_REPORT_YEAR,
+      m1_male: Number(line.m1M) || 0,
+      m1_female: Number(line.m1F) || 0,
+      m2_male: Number(line.m2M) || 0,
+      m2_female: Number(line.m2F) || 0,
+      m3_male: Number(line.m3M) || 0,
+      m3_female: Number(line.m3F) || 0,
+    }, { onConflict: 'barangay,report_year,slug' })
+    .select('*')
+    .single();
+
+  if (error) throw new Error(`Could not save monthly report to Supabase: ${error.message}`);
+  return monthlyReportFromRow(data);
+}
+
+export async function deleteMonthlyReportLine(line) {
+  const { error } = await supabase
+    .from(MONTHLY_REPORT_TABLE)
+    .delete()
+    .eq('barangay', line.barangay || MONTHLY_REPORT_BARANGAY)
+    .eq('report_year', Number(line.reportYear) || MONTHLY_REPORT_YEAR)
+    .eq('slug', line.slug);
+
+  if (error) throw new Error(`Could not delete monthly report line from Supabase: ${error.message}`);
+}
+
+async function readMonthlyReportLines() {
+  const { data, error } = await supabase
+    .from(MONTHLY_REPORT_TABLE)
+    .select('*')
+    .eq('barangay', MONTHLY_REPORT_BARANGAY)
+    .eq('report_year', MONTHLY_REPORT_YEAR)
+    .order('sort_order', { ascending: true });
+
+  if (error) throw new Error(`${MONTHLY_REPORT_TABLE}: ${error.message}`);
+  return (data || []).map(monthlyReportFromRow);
+}
+
 export async function loadAdminDataFromSupabase(userId) {
   const { data: { session } } = await supabase.auth.getSession();
   const activeUserId = userId || session?.user?.id || '';
@@ -172,6 +251,7 @@ export async function loadAdminDataFromSupabase(userId) {
     readAllRows('lactatingwoman', ADMIN_TABLES.lactatingwoman),
     readAllRows('pregnantwoman', ADMIN_TABLES.pregnantwoman),
     readAllRows('monthlynatal', ADMIN_TABLES.monthlynatal),
+    readMonthlyReportLines(),
   ]);
 
   const localFallbacks = [
@@ -204,6 +284,7 @@ export async function loadAdminDataFromSupabase(userId) {
     lactatingWomenData,
     pregnantWomenData,
     natalityData,
+    remoteMonthlyReportData,
   ] = [
     rowsFor(0, 'residents'),
     rowsFor(1, 'environmental'),
@@ -211,7 +292,20 @@ export async function loadAdminDataFromSupabase(userId) {
     rowsFor(3, 'lactatingwoman'),
     rowsFor(4, 'pregnantwoman'),
     rowsFor(5, 'monthlynatal'),
+    results[6].status === 'fulfilled'
+      ? results[6].value
+      : (() => {
+          console.error('Could not load monthly report lines from Supabase:', results[6].reason);
+          return [];
+        })(),
   ];
+  const localMonthlyReportData = getRecords(STORAGE_KEYS.monthlyReport);
+  const deletedMonthlyReportSlugs = getDeletedMonthlyReportSlugs();
+  const monthlyReportData = mergeMonthlyReportLines([
+    ...localMonthlyReportData,
+    ...remoteMonthlyReportData,
+  ]).filter((record) => !deletedMonthlyReportSlugs.has(String(record.slug)));
+  setRecords(STORAGE_KEYS.monthlyReport, monthlyReportData);
 
   return {
     households: toAdminResidents(cacheSharedRecords('residents', households, activeUserId)),
@@ -220,6 +314,6 @@ export async function loadAdminDataFromSupabase(userId) {
     lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData, activeUserId)),
     pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData, activeUserId)),
     natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData, activeUserId)),
-    monthlyReportData: reloadAllAdminData(activeUserId).monthlyReportData,
+    monthlyReportData,
   };
 }

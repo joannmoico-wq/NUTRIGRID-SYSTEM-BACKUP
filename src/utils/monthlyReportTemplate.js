@@ -25,7 +25,7 @@ function reportLine({ id, slug, indicator, isHeader = false, sortOrder }) {
   };
 }
 
-/** Essential health services lines (UI template — local storage only for now). */
+/** Default indicator lines shown until a report year is loaded from Supabase. */
 export const DEFAULT_MONTHLY_REPORT_LINES = [
   reportLine({ id: 1, slug: 'hdr-new-cases', indicator: 'New Cases of', isHeader: true }),
   reportLine({ id: 2, slug: 'wasted-mam', indicator: 'Wasted (MAM)' }),

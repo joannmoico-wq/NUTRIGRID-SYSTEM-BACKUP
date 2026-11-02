@@ -1,8 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Download, FileText, Image, Trash2, UploadCloud, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, FileText, Folder, Image, Trash2, UploadCloud, X } from 'lucide-react';
 
 const DATABASE_NAME = 'nutrigrid-admin-documents';
 const STORE_NAME = 'documents';
+const RECORD_CATEGORY_FOLDERS = [
+  'Residents',
+  'Environmental Sanitation',
+  'Infant Feeding',
+  'Lactating Woman',
+  'Pregnant Woman',
+  'Monthly Natality',
+];
 
 function getDocumentSearchTerms(document) {
   const extension = document.name.includes('.') ? document.name.split('.').pop().toLowerCase() : '';
@@ -86,27 +94,85 @@ function formatFileSize(size) {
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+function getDocumentMonth(document) {
+  if (document.monthKey) return document.monthKey;
+  if (!document.addedAt) return '';
+  const date = new Date(document.addedAt);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getDocumentTimestamp(document) {
+  const dateValue = document.recordDate || document.addedAt;
+  if (!dateValue) return 0;
+  const dateOnly = String(dateValue).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  const date = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(dateValue);
+  return Number.isNaN(date.getTime()) ? 0 : date.getTime();
+}
+
+function getDocumentFolderName(document) {
+  const category = document.categoryLabel || document.category;
+  return RECORD_CATEGORY_FOLDERS.includes(category) ? category : 'Other Documents';
+}
+
+function formatMonth(monthKey) {
+  const [year, month] = monthKey.split('-').map(Number);
+  return new Date(year, month - 1, 1).toLocaleDateString('en', {
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+function formatDocumentDate(value) {
+  if (!value) return '';
+  if (typeof value === 'number' && value <= 0) return '';
+  const dateString = String(value);
+  const dateOnly = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const date = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
 export default function AdminDocuments({
   darkMode = false,
   searchQuery = '',
   onSearchResultsChange,
+  pwaPhotos = [],
+  onDeletePwaPhoto,
 }) {
   const [documents, setDocuments] = useState([]);
+  const [selectedMonth, setSelectedMonth] = useState('all');
+  const [openedFolder, setOpenedFolder] = useState(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [previewDocument, setPreviewDocument] = useState(null);
   const fileInput = useRef(null);
   const cardClass = darkMode ? 'border-slate-700 bg-[#26263B] text-white' : 'border-[#E8C4F0] bg-white text-gray-900';
-  const documentUrls = useMemo(() => documents.map((document) => (
-    (document.blob || document.file)
-      ? { id: document.id, url: URL.createObjectURL(document.blob || document.file) }
-      : null
-  )).filter(Boolean), [documents]);
+  const allDocuments = useMemo(() => [...pwaPhotos, ...documents], [pwaPhotos, documents]);
+  const documentUrls = useMemo(() => allDocuments.map((document) => {
+    if (document.url) return { id: document.id, url: document.url, revoke: false };
+    if (document.blob || document.file) {
+      return {
+        id: document.id,
+        url: URL.createObjectURL(document.blob || document.file),
+        revoke: true,
+      };
+    }
+    return null;
+  }).filter(Boolean), [allDocuments]);
+  const monthOptions = useMemo(
+    () => Array.from(new Set(allDocuments.map(getDocumentMonth).filter(Boolean))).sort().reverse(),
+    [allDocuments]
+  );
   const documentSuggestions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
-    return documents
+    return allDocuments
       .filter((document) =>
         getDocumentSearchTerms(document)
           .some((value) => String(value || '').toLowerCase().includes(query))
@@ -118,23 +184,44 @@ export default function AdminDocuments({
         categoryName: document.type,
         displayTitle: document.path,
         data: document,
-        timestamp: new Date(document.addedAt).toISOString(),
+        timestamp: new Date(document.addedAt || 0).toISOString(),
         hideStatus: true,
       }));
-  }, [documents, searchQuery]);
+  }, [allDocuments, searchQuery]);
   useEffect(() => {
     onSearchResultsChange?.(documentSuggestions);
   }, [documentSuggestions, onSearchResultsChange]);
 
-  const filteredDocuments = searchQuery.trim()
-    ? documents.filter((document) =>
-        getDocumentSearchTerms(document)
-          .some((value) => String(value || '').toLowerCase().includes(searchQuery.trim().toLowerCase()))
-      )
-    : documents;
+  const filteredDocuments = allDocuments.filter((document) => {
+    const matchesSearch = !searchQuery.trim() ||
+      getDocumentSearchTerms(document)
+        .some((value) => String(value || '').toLowerCase().includes(searchQuery.trim().toLowerCase()));
+    const matchesMonth = selectedMonth === 'all' || getDocumentMonth(document) === selectedMonth;
+    return matchesSearch && matchesMonth;
+  }).sort((left, right) => getDocumentTimestamp(right) - getDocumentTimestamp(left));
+  const documentFolders = useMemo(() => {
+    const folders = new Map([
+      ...RECORD_CATEGORY_FOLDERS.map((name) => [name, []]),
+      ['Other Documents', []],
+    ]);
+    filteredDocuments.forEach((document) => {
+      const folderName = getDocumentFolderName(document);
+      folders.get(folderName).push(document);
+    });
+    return Array.from(folders.entries())
+      .map(([name, folderDocuments]) => [
+        name,
+        folderDocuments.sort((left, right) => getDocumentTimestamp(right) - getDocumentTimestamp(left)),
+      ])
+      .sort(([, leftDocuments], [, rightDocuments]) => {
+        const latestLeft = leftDocuments.length ? getDocumentTimestamp(leftDocuments[0]) : -1;
+        const latestRight = rightDocuments.length ? getDocumentTimestamp(rightDocuments[0]) : -1;
+        return latestRight - latestLeft;
+      });
+  }, [filteredDocuments]);
 
   useEffect(() => () => {
-    documentUrls.forEach(({ url }) => URL.revokeObjectURL(url));
+    documentUrls.filter(({ revoke }) => revoke).forEach(({ url }) => URL.revokeObjectURL(url));
   }, [documentUrls]);
 
   const refresh = useCallback(async () => {
@@ -256,16 +343,52 @@ export default function AdminDocuments({
       />
 
       <div className="mb-7">
-        <h2 className="font-semibold">
-          Uploaded files <span className="text-sm font-normal text-gray-500">({filteredDocuments.length})</span>
-        </h2>
-        {filteredDocuments.length === 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="font-semibold">
+            Uploaded files <span className="text-sm font-normal text-gray-500">({filteredDocuments.length})</span>
+          </h2>
+          <label className="relative flex items-center">
+            <span className="sr-only">Filter documents by month</span>
+            <select
+              value={selectedMonth}
+              onChange={(event) => {
+                setSelectedMonth(event.target.value);
+                setOpenedFolder(null);
+              }}
+              className="appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-9 text-sm text-gray-700 shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+            >
+              <option value="all">All months</option>
+              {monthOptions.map((month) => (
+                <option key={month} value={month}>{formatMonth(month)}</option>
+              ))}
+            </select>
+            <ChevronDown size={16} className="pointer-events-none absolute right-3 text-gray-500" aria-hidden="true" />
+          </label>
+        </div>
+        {filteredDocuments.length === 0 && (searchQuery || selectedMonth !== 'all') ? (
           <p className="mt-3 rounded-xl bg-gray-50 p-4 text-sm text-gray-500">
-            {searchQuery ? 'No files match your search.' : 'Your uploaded pictures and documents will appear here.'}
+            {searchQuery || selectedMonth !== 'all'
+              ? 'No files match the selected filters.'
+              : 'Your uploaded pictures and documents will appear here.'}
           </p>
         ) : (
-          <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-            {filteredDocuments.map((document) => {
+          openedFolder ? (
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => setOpenedFolder(null)}
+                className="mb-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium text-violet-700 hover:bg-violet-50"
+              >
+                <ChevronLeft size={17} aria-hidden="true" />
+                All folders
+              </button>
+              <h3 className="mb-3 text-sm font-semibold text-gray-700">{openedFolder}</h3>
+              {(documentFolders.find(([name]) => name === openedFolder)?.[1] || []).length === 0 ? (
+                <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-500">
+                  No files in this category yet.
+                </p>
+              ) : <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                {(documentFolders.find(([month]) => month === openedFolder)?.[1] || []).map((document) => {
               const fileUrl = documentUrls.find((entry) => entry.id === document.id)?.url;
               const imageUrl = (document.type || '').startsWith('image/') ? fileUrl : null;
               return (
@@ -292,25 +415,56 @@ export default function AdminDocuments({
                   )}
                   <div className="p-3">
                     <p className="truncate text-sm font-medium" title={document.path}>{document.name}</p>
+                    <p className="mt-0.5 text-xs text-gray-500">
+                      {formatDocumentDate(document.recordDate || document.addedAt) || 'Date unavailable'}
+                    </p>
                     <p className="mt-0.5 text-xs text-gray-500">{formatFileSize(document.size)}</p>
+                    {document.source === 'PWA' && (
+                      <p className="mt-1 text-[11px] font-medium text-violet-700">PWA record photo</p>
+                    )}
                     <div className="mt-2 flex justify-end gap-1">
-                      <a
-                        href={fileUrl}
-                        download={document.name}
-                        className="rounded-lg p-2 text-gray-500 hover:bg-violet-50 hover:text-violet-700"
-                        aria-label={`Download ${document.name}`}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (document.source === 'PWA') {
+                            if (onDeletePwaPhoto) onDeletePwaPhoto(document);
+                            else setError('Photo deletion is unavailable. Refresh the dashboard and try again.');
+                            return;
+                          }
+                          void remove(document.id);
+                        }}
+                        className="rounded-lg p-2 text-gray-500 hover:bg-rose-50 hover:text-rose-700"
+                        aria-label={`Delete ${document.name}`}
                       >
-                        <Download size={16} />
-                      </a>
-                      <button type="button" onClick={() => void remove(document.id)} className="rounded-lg p-2 text-gray-500 hover:bg-rose-50 hover:text-rose-700" aria-label={`Delete ${document.name}`}>
                         <Trash2 size={16} />
                       </button>
                     </div>
                   </div>
                 </li>
               );
-            })}
-          </ul>
+                })}
+              </ul>}
+            </div>
+          ) : (
+            <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+              {documentFolders.map(([folderName, folderDocuments]) => (
+                <li key={folderName}>
+                  <button
+                    type="button"
+                    onClick={() => setOpenedFolder(folderName)}
+                    className="flex min-h-36 w-full flex-col items-center justify-center rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-amber-300 hover:bg-amber-50 hover:shadow-md"
+                    aria-label={`Open ${folderName} folder`}
+                  >
+                    <Folder size={62} strokeWidth={1.6} className="fill-amber-300 text-amber-500" aria-hidden="true" />
+                    <span className="mt-2 line-clamp-2 text-sm font-medium text-gray-800">{folderName}</span>
+                    <span className="mt-0.5 text-xs text-gray-500">
+                      {folderDocuments.length} {folderDocuments.length === 1 ? 'file' : 'files'}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )
         )}
       </div>
 

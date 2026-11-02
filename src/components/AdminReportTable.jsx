@@ -19,7 +19,7 @@ export const ACTIONS_HEAD_CELL = { label: 'Actions', rowSpan: 2 };
 const thClass =
   'border border-gray-200 bg-[#F3EEF9] px-2 py-2.5 text-[10px] font-bold uppercase leading-tight text-gray-700 dark:border-gray-600 dark:bg-gray-700/60 dark:text-gray-200';
 const tdClass =
-  'border border-gray-200 px-2 py-2 text-xs text-gray-800 dark:border-gray-600 dark:text-gray-200';
+  'border border-gray-200 px-2 py-2 text-xs font-semibold text-gray-800 dark:border-gray-600 dark:text-gray-200';
 
 export function ReportHeader({ title, subtitle, fields = [] }) {
   return (

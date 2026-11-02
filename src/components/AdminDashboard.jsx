@@ -3,11 +3,9 @@ import {
   STORAGE_KEYS,
   deleteRecordById,
   upsertRecord,
-  nextRecordId,
   reloadAllAdminData,
   filterRecordsBySearch,
   recordMatchesSearch,
-  countPendingAcrossCategories,
   getRecords,
   buildSavedRecords,
   performRecordSearch,
@@ -16,7 +14,11 @@ import {
   categoryIdForStorageKey,
   queueRecordDeletion,
 } from '../utils/bnsStorage';
-import { loadAdminDataFromSupabase } from '../utils/adminDataService';
+import {
+  deleteMonthlyReportLine,
+  loadAdminDataFromSupabase,
+  saveMonthlyReportLine,
+} from '../utils/adminDataService';
 import { syncPendingRecords, syncSingleRecord } from '../utils/syncService';
 import { supabase } from '../utils/supabaseClient';
 import MonthlyReportTable from './MonthlyReportTable';
@@ -43,7 +45,6 @@ import {
   Baby,
   Moon,
   Sun,
-  ClipboardList,
   UserCircle,
   KeyRound,
   Droplets,
@@ -53,6 +54,7 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   X,
 } from 'lucide-react';
 import { getCategoryForm } from './CategorySpecificForms';
@@ -69,8 +71,7 @@ import {
   Legend,
   Tooltip,
   Line,
-  Area,
-  ComposedChart,
+  LineChart,
 } from 'recharts';
 
 const THEME = {
@@ -109,6 +110,16 @@ const ADMIN_FORM_TITLES = {
   pregnantwoman: 'Pregnant Woman - New Registration',
   monthlynatal: 'Monthly Natality - New Record',
 };
+
+const BNS_RHM_SIGNATURE_OPTIONS = [
+  { id: 'bns', label: 'BNS', role: 'Barangay Nutrition Scholar' },
+  { id: 'rhm', label: 'RURAL HEALTH MIDWIFE', role: 'Rural Health Midwife' },
+];
+
+const BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS = [
+  { id: 'bns', label: 'BNS', role: 'Barangay Nutrition Scholar' },
+  { id: 'rhm', label: 'RHM/RHMPP/NDP', role: 'RHM/RHMPP/NDP' },
+];
 
 const NOTIF_LABELS = {
   [STORAGE_KEYS.residents]: 'Residents',
@@ -371,6 +382,16 @@ const AdminHeader = ({
 
 const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', currentUserId }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [monthlyTrendView, setMonthlyTrendView] = useState('new-repeat');
+  const [monthlyTrendEndMonth, setMonthlyTrendEndMonth] = useState(() => {
+    const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
+    if (!reportMonthMatch) {
+      const now = new Date();
+      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    const monthIndex = new Date(`${reportMonthMatch[1]} 1, ${reportMonthMatch[2]}`).getMonth();
+    return `${reportMonthMatch[2]}-${String(monthIndex + 1).padStart(2, '0')}`;
+  });
   const [isExpanded, setIsExpanded] = useState(() => window.matchMedia('(min-width: 768px)').matches);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem(DARK_MODE_KEY) === 'true');
   const adminName = profileName?.trim() || 'Admin';
@@ -421,6 +442,80 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     environmentalSanitationData,
     monthlyReportData,
   } = adminData;
+
+  const pwaPhotoDocuments = useMemo(() => {
+    const categories = [
+      { id: 'residents', label: 'Residents', records: households },
+      { id: 'environmental', label: 'Environmental Sanitation', records: environmentalSanitationData },
+      { id: 'infantfeeding', label: 'Infant Feeding', records: infantFeedingData },
+      { id: 'lactatingwoman', label: 'Lactating Woman', records: lactatingWomenData },
+      { id: 'pregnantwoman', label: 'Pregnant Woman', records: pregnantWomenData },
+      { id: 'monthlynatal', label: 'Monthly Natality', records: natalityData },
+    ];
+
+    return categories.flatMap(({ id, label, records }) =>
+      (records || []).flatMap((record, index) => {
+        const raw = record._raw || record;
+        const image = raw.photo_url ||
+          raw.residents_photo ||
+          raw.environmental_sanitation_photo ||
+          record.environmentalSanitationPhoto;
+        if (
+          typeof image !== 'string' ||
+          (!image.startsWith('data:image/') && !/^https?:\/\//i.test(image))
+        ) return [];
+
+        const personName = raw.household_head ||
+          raw.child_name ||
+          raw.mother_name ||
+          [raw.first_name, raw.middle_name, raw.last_name].filter(Boolean).join(' ') ||
+          `Record ${record.id ?? index + 1}`;
+        const dateValue = raw.visit_date ||
+          raw.date_of_registration ||
+          raw.dow ||
+          raw.created_at ||
+          raw.month ||
+          '';
+        const monthMatch = String(dateValue).match(/^(20\d{2})[-/](\d{1,2})/);
+        const monthKey = monthMatch
+          ? `${monthMatch[1]}-${monthMatch[2].padStart(2, '0')}`
+          : '';
+        const parsedDate = dateValue
+          ? new Date(/^\d{4}-\d{2}$/.test(String(dateValue)) ? `${dateValue}-01` : dateValue)
+          : null;
+        const addedAt = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.getTime() : 0;
+        const extension = image.match(/^data:image\/([a-z0-9.+-]+);/i)?.[1] ||
+          image.match(/\.([a-z0-9]+)(?:[?#]|$)/i)?.[1] ||
+          'jpeg';
+        const size = image.startsWith('data:image/')
+          ? Math.round(((image.split(',')[1] || '').length * 3) / 4)
+          : 0;
+
+        return [{
+          id: `pwa-photo-${id}-${record.id ?? index}`,
+          name: `${label} - ${personName}.${extension}`,
+          path: `${label} / ${personName}`,
+          type: `image/${extension === 'jpg' ? 'jpeg' : extension}`,
+          size,
+          addedAt,
+          monthKey,
+          recordDate: dateValue,
+          url: image,
+          source: 'PWA',
+          category: id,
+          categoryLabel: label,
+          recordId: record.id,
+        }];
+      })
+    );
+  }, [
+    households,
+    environmentalSanitationData,
+    infantFeedingData,
+    lactatingWomenData,
+    pregnantWomenData,
+    natalityData,
+  ]);
 
   const refreshData = () => setAdminData(reloadAllAdminData(currentUserId));
 
@@ -557,16 +652,30 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const stats = useMemo(() => {
     const synced = households.filter((h) => h.status === 'Synced').length;
     const pending = households.filter((h) => h.status === 'Pending').length;
+    const totalRecords =
+      households.length +
+      environmentalSanitationData.length +
+      infantFeedingData.length +
+      lactatingWomenData.length +
+      pregnantWomenData.length +
+      natalityData.length;
     return {
       totalHouseholds: households.length,
       pregnantWomen: pregnantWomenData.length,
       childrenUnderFive: infantFeedingData.length,
-      reportsPending: countPendingAcrossCategories(),
+      totalRecords,
       lactatingWomen: lactatingWomenData.length,
       synced,
       pending,
     };
-  }, [households, pregnantWomenData, infantFeedingData, lactatingWomenData]);
+  }, [
+    households,
+    environmentalSanitationData,
+    infantFeedingData,
+    lactatingWomenData,
+    pregnantWomenData,
+    natalityData,
+  ]);
 
   // Top puroks, counted from saved household records.
   const purokData = useMemo(() => {
@@ -582,88 +691,154 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const maxPurokHouseholdCount = Math.max(1, ...purokData.map(({ value }) => value));
 
   const monthlyTrendData = useMemo(() => {
-    const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
-    const reportMonthIndex = reportMonthMatch
-      ? new Date(`${reportMonthMatch[1]} 1, ${reportMonthMatch[2]}`).getMonth()
-      : new Date().getMonth();
-    const reportYear = reportMonthMatch ? Number(reportMonthMatch[2]) : new Date().getFullYear();
-    const reportMonth = new Date(reportYear, reportMonthIndex, 1);
+    const [reportYear, reportMonthIndex] = monthlyTrendEndMonth.split('-').map(Number);
+    const reportMonth = new Date(reportYear, reportMonthIndex - 1, 1);
+    const parseDate = (value) => {
+      if (!value) return null;
+      const dateString = String(value);
+      const dateOnly = dateString.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      const date = dateOnly
+        ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+        : new Date(value);
+      return Number.isNaN(date.getTime()) ? null : date;
+    };
+    const monthKeyFor = (date) =>
+      `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
     const months = Array.from({ length: 6 }, (_, index) => {
       const date = new Date(reportMonth.getFullYear(), reportMonth.getMonth() - 5 + index, 1);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       return {
         key,
         month: date.toLocaleDateString('en', { month: 'short' }),
-        malnutrition: 0,
-        births: 0,
-        fullyImmunized: null,
+        startDate: date,
+        endDate: new Date(date.getFullYear(), date.getMonth() + 1, 0),
+        newCases: 0,
+        repeatCases: 0,
+        vulnerableCases: 0,
+        pregnantAndLactating: 0,
+        infants: 0,
       };
     });
-    const byMonth = new Map(months.map((month) => [month.key, month]));
-    const birthsByMonth = new Map(months.map((month) => [month.key, new Set()]));
     const malnutritionByMonth = new Map(months.map((month) => [month.key, new Set()]));
-
+    const firstMalnutritionMonthByChild = new Map();
     natalityData.forEach((record) => {
-      const visitMonth = String(record.dow || '').slice(0, 7);
-      const birthMonth = String(record.dob || '').slice(0, 7);
-      const visitSummary = byMonth.get(visitMonth);
-      const birthSummary = byMonth.get(birthMonth);
-      const childKey = `${record.dob || ''}:${String(record.childName || record.motherName || record.id)}`;
-      if (birthSummary) birthsByMonth.get(birthMonth).add(childKey);
-
-      if (visitSummary) {
-        const statuses = [record.wA, record.hA, record.wLH]
-          .map((status) => String(status || '').toLowerCase());
-        if (statuses.some((status) =>
-          status.includes('underweight') ||
-          status.includes('stunted') ||
-          status.includes('wasted')
-        )) {
-          malnutritionByMonth.get(visitMonth).add(childKey);
-        }
+      const raw = record._raw || record;
+      const weighingDate = parseDate(raw.dow || record.dow);
+      const weighingMonth = weighingDate ? monthKeyFor(weighingDate) : '';
+      const childKey = `${raw.dob || record.dob || ''}:${String(
+        raw.child_name || raw.name_of_child || record.childName || record.id
+      ).trim().toLowerCase()}`;
+      const statuses = [
+        raw.w_a || record.wA,
+        raw.h_a || record.hA,
+        raw.w_l_h || record.wLH,
+      ].map((status) => String(status || '').toLowerCase());
+      const isMalnourished = statuses.some((status) =>
+        status.includes('underweight') ||
+        status.includes('stunted') ||
+        status.includes('wasted')
+      );
+      if (!isMalnourished || !weighingDate) return;
+      const firstMonth = firstMalnutritionMonthByChild.get(childKey);
+      if (!firstMonth || weighingMonth < firstMonth) {
+        firstMalnutritionMonthByChild.set(childKey, weighingMonth);
+      }
+      if (malnutritionByMonth.has(weighingMonth)) {
+        malnutritionByMonth.get(weighingMonth).add(childKey);
       }
     });
 
     months.forEach((month) => {
-      month.births = birthsByMonth.get(month.key).size;
-      month.malnutrition = malnutritionByMonth.get(month.key).size;
+      const malnourishedChildren = malnutritionByMonth.get(month.key);
+      month.vulnerableCases = malnourishedChildren.size;
+      month.newCases = Array.from(malnourishedChildren)
+        .filter((childKey) => firstMalnutritionMonthByChild.get(childKey) === month.key).length;
+      month.repeatCases = month.vulnerableCases - month.newCases;
     });
 
-    const immunizationReport = monthlyReportData.find((row) =>
-      String(row.slug || '').toLowerCase() === 'fic-9-12' ||
-      String(row.indicator || '').toLowerCase().includes('fully immunized children')
-    );
-    if (immunizationReport) {
-      const hasReportedImmunizationCounts = [1, 2, 3].some((period) =>
-        Number(immunizationReport[`m${period}M`] || 0) > 0 ||
-        Number(immunizationReport[`m${period}F`] || 0) > 0
-      );
-      if (hasReportedImmunizationCounts) {
-        [1, 2, 3].forEach((period) => {
-          const date = new Date(reportMonth.getFullYear(), reportMonth.getMonth() - 3 + period, 1);
-          const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-          const month = byMonth.get(key);
-          if (!month) return;
-          const male = Number(immunizationReport[`m${period}M`]);
-          const female = Number(immunizationReport[`m${period}F`]);
-          if (Number.isFinite(male) && Number.isFinite(female)) {
-            month.fullyImmunized = male + female;
-          }
-        });
-      }
-    }
-
-    return months.map((month) => ({
+    const countActiveRecords = (records, category) => months.map((month) => {
+      const active = new Set();
+      records.forEach((record) => {
+        const raw = record._raw || record;
+        const identity = String(raw.id ?? record.id ?? [
+          raw.first_name || '',
+          raw.last_name || '',
+          raw.birthday || '',
+        ].join(':'));
+        if (category === 'pregnant') {
+          const registered = parseDate(raw.date_of_registration || raw.created_at);
+          const deliveryDue = parseDate(raw.expected_date_of_delivery);
+          if (
+            registered &&
+            registered <= month.endDate &&
+            (!deliveryDue || deliveryDue >= month.startDate)
+          ) active.add(identity);
+          return;
+        }
+        const delivered = parseDate(raw.date_delivered);
+        if (!delivered || delivered > month.endDate) return;
+        const postpartumCutoff = new Date(
+          month.endDate.getFullYear() - 2,
+          month.endDate.getMonth(),
+          month.endDate.getDate()
+        );
+        if (delivered >= postpartumCutoff) active.add(identity);
+      });
+      return active.size;
+    });
+    const pregnantCounts = countActiveRecords(pregnantWomenData, 'pregnant');
+    const lactatingCounts = countActiveRecords(lactatingWomenData, 'lactating');
+    const infantsByMonth = new Map(months.map((month) => [month.key, new Set()]));
+    natalityData.forEach((record) => {
+      const raw = record._raw || record;
+      const dob = parseDate(raw.dob || record.dob);
+      if (!dob) return;
+      const childKey = `${raw.dob || record.dob || ''}:${String(
+        raw.child_name || raw.name_of_child || record.childName || record.id
+      ).trim().toLowerCase()}`;
+      months.forEach((month) => {
+        const infantCutoff = new Date(month.endDate.getFullYear() - 1, month.endDate.getMonth(), month.endDate.getDate());
+        if (dob <= month.endDate && dob > infantCutoff) {
+          infantsByMonth.get(month.key).add(childKey);
+        }
+      });
+    });
+    return months.map((month, index) => ({
       ...month,
-      immunizationRate:
-        month.fullyImmunized !== null && month.births > 0
-          ? (month.fullyImmunized / month.births) * 100
-          : null,
+      pregnantAndLactating: pregnantCounts[index] + lactatingCounts[index],
+      infants: infantsByMonth.get(month.key).size,
     }));
-  }, [natalityData, monthlyReportData]);
-  const hasMonthlyTrendData = monthlyTrendData.some(
-    (month) => month.malnutrition > 0 || month.births > 0 || month.immunizationRate !== null
-  );
+  }, [monthlyTrendEndMonth, natalityData, pregnantWomenData, lactatingWomenData]);
+  const monthlyTrendMonthOptions = useMemo(() => {
+    const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
+    const reportMonth = reportMonthMatch
+      ? new Date(`${reportMonthMatch[1]} 1, ${reportMonthMatch[2]}`)
+      : new Date();
+    const now = new Date();
+    const latestMonth = new Date(
+      Math.max(reportMonth.getFullYear(), now.getFullYear()),
+      reportMonth.getFullYear() > now.getFullYear()
+        ? reportMonth.getMonth()
+        : reportMonth.getFullYear() < now.getFullYear()
+          ? now.getMonth()
+          : Math.max(reportMonth.getMonth(), now.getMonth()),
+      1
+    );
+    return Array.from({ length: 24 }, (_, index) => {
+      const date = new Date(latestMonth.getFullYear(), latestMonth.getMonth() - 23 + index, 1);
+      return {
+        value: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
+        label: date.toLocaleDateString('en', { month: 'long', year: 'numeric' }),
+      };
+    });
+  }, []);
+  const activeMonthlyTrend = monthlyTrendView === 'new-repeat'
+    ? monthlyTrendData.some((month) => month.newCases > 0 || month.repeatCases > 0)
+    : monthlyTrendData.some((month) =>
+      month.vulnerableCases > 0 ||
+      month.pregnantAndLactating > 0 ||
+      month.infants > 0
+    );
 
   const syncedPct = stats.synced + stats.pending
     ? Math.round((stats.synced / (stats.synced + stats.pending)) * 100)
@@ -677,6 +852,63 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const requestAdminConfirmation = (message, action, options = {}) => {
     setAdminConfirmation({ message, action, ...options });
+  };
+
+  const requestPwaPhotoDeletion = (photo) => {
+    const categoryStorageKeys = {
+      residents: STORAGE_KEYS.residents,
+      environmental: STORAGE_KEYS.environmental,
+      infantfeeding: STORAGE_KEYS.infantfeeding,
+      lactatingwoman: STORAGE_KEYS.lactatingwoman,
+      pregnantwoman: STORAGE_KEYS.pregnantwoman,
+      monthlynatal: STORAGE_KEYS.monthlynatal,
+    };
+    const storageKey = categoryStorageKeys[photo.category];
+    const record = storageKey && getRecords(storageKey).find(
+      (item) => String(item.id) === String(photo.recordId)
+    );
+    if (!record) {
+      alert('Could not find the record for this photo. Refresh the dashboard and try again.');
+      return;
+    }
+
+    requestAdminConfirmation(
+      `Remove the photo from "${photo.name}"? The rest of the record will be kept.`,
+      async () => {
+        const updatedRecord = {
+          ...record,
+          photo_url: null,
+          residents_photo: null,
+          environmental_sanitation_photo: null,
+          synced: false,
+          status: 'pending',
+        };
+        upsertRecord(storageKey, updatedRecord);
+        refreshData();
+
+        if (!navigator.onLine) {
+          alert('Photo removed on this device. The change will sync to Supabase when you are back online.');
+          return;
+        }
+
+        try {
+          const syncError = await syncSingleRecord(photo.category, updatedRecord, {
+            includeShared: true,
+          });
+          if (syncError) {
+            console.error('Photo removal is saved locally and waiting to sync:', syncError);
+            alert(`Photo removed on this device, but could not sync to Supabase: ${syncError}`);
+            return;
+          }
+          upsertRecord(storageKey, { ...updatedRecord, synced: true, status: 'Synced' });
+          refreshData();
+        } catch (syncError) {
+          console.error('Photo removal is saved locally and waiting to sync:', syncError);
+          alert('Photo removed on this device, but could not sync to Supabase. Check the connection and try again.');
+        }
+      },
+      { title: 'Delete photo', confirmLabel: 'Delete photo', destructive: true }
+    );
   };
 
   const confirmAdminAction = async () => {
@@ -892,7 +1124,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const getColumnKey = (col) =>
     col.charAt(0).toLowerCase() + col.slice(1).replace(/\s+(.)/g, (_, char) => char.toUpperCase());
 
-  const exportPdfFile = async ({ fileName, title, headers, rows, preamble = [], headRows, signatureDataUrl }) => {
+  const exportPdfFile = async ({
+    fileName,
+    title,
+    headers,
+    rows,
+    preamble = [],
+    headRows,
+    signatures = [],
+    preview = false,
+  }) => {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
       import('jspdf'),
       import('jspdf-autotable'),
@@ -927,53 +1168,67 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       theme: 'grid',
       margin: { top: 24, right: 18, bottom: 100, left: 18 },
       styles: { font: 'helvetica', fontSize: headers.length > 18 ? 5 : headers.length > 10 ? 6 : 8, cellPadding: 3, overflow: 'linebreak', halign: 'center' },
-      bodyStyles: { halign: 'center' },
+      bodyStyles: { halign: 'center', fontStyle: 'bold' },
       headStyles: { fillColor: [238, 234, 246], textColor: [35, 35, 45], fontStyle: 'bold', halign: 'center' },
       horizontalPageBreak: headers.length > 18,
       horizontalPageBreakRepeat: 1,
     });
 
     const pageHeight = document.internal.pageSize.getHeight();
-    const approvalHeight = 76;
+    const approvalHeight = 124;
     let approvalY = document.lastAutoTable.finalY + 24;
     if (approvalY + approvalHeight > pageHeight - 18) {
       document.addPage();
       approvalY = 36;
     }
 
-    if (signatureDataUrl) {
+    await Promise.all(signatures.map(async (signature) => {
       const signatureDimensions = await new Promise((resolve, reject) => {
         const image = new Image();
         image.onload = () => resolve({ width: image.naturalWidth, height: image.naturalHeight });
-        image.onerror = () => reject(new Error('Could not decode the selected signature image.'));
-        image.src = signatureDataUrl;
+        image.onerror = () => reject(new Error(`Could not decode ${signature.signer?.label || ''} signature image.`));
+        image.src = signature.dataUrl;
       });
-      const scale = Math.min(120 / signatureDimensions.width, 30 / signatureDimensions.height);
+      const signatureColumnWidth = (pageWidth * 0.8 / 3) - 12;
+      const scale = Math.min(signatureColumnWidth / signatureDimensions.width, 46 / signatureDimensions.height);
       const signatureWidth = signatureDimensions.width * scale;
       const signatureHeight = signatureDimensions.height * scale;
-      const preparedCenter = pageWidth / 6;
-      document.addImage(signatureDataUrl, signatureDataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG',
-        preparedCenter - signatureWidth / 2, approvalY, signatureWidth, signatureHeight);
-    }
+      const approvalColumn = signature.signer?.id === 'rhm' ? 1 : 0;
+      const approvalGroupLeft = pageWidth * 0.1;
+      const approvalColumnWidth = pageWidth * 0.8 / 3;
+      const approvalColumnCenter = approvalGroupLeft + approvalColumnWidth * (approvalColumn + 0.5);
+      document.addImage(signature.dataUrl, signature.dataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG',
+        approvalColumnCenter - signatureWidth / 2, approvalY + 50, signatureWidth, signatureHeight);
+    }));
 
     const approvalColumns = [
-      { center: pageWidth / 6, name: 'LAARNI B. POMADA', role: 'Barangay Nutrition Scholar' },
-      { center: pageWidth / 2, name: 'EVANGELINE S. CANIT, RM', role: 'Rural Health Midwife' },
-      { center: (pageWidth * 5) / 6, name: 'ANITA P. AURO, RN, RM', role: 'Municipal Nutrition Action Officer II' },
+      { name: 'LAARNI B. POMADA', role: 'Barangay Nutrition Scholar' },
+      {
+        name: 'EVANGELINE S. CANIT, RM',
+        role: signatures.find((signature) => signature.signer?.id === 'rhm')?.signer?.role || 'Rural Health Midwife',
+      },
+      { name: 'ANITA P. AURO, RN, RM', role: 'Municipal Nutrition Action Officer II' },
     ];
-    approvalColumns.forEach(({ center, name, role }, index) => {
+    approvalColumns.forEach(({ name, role }, index) => {
       const label = ['PREPARED BY:', 'CHECKED:', 'NOTED:'][index];
+      const approvalGroupLeft = pageWidth * 0.1;
+      const approvalColumnWidth = pageWidth * 0.8 / 3;
+      const columnLeft = approvalGroupLeft + approvalColumnWidth * index + 5;
+      const columnCenter = approvalGroupLeft + approvalColumnWidth * (index + 0.5);
       document.setFont('helvetica', 'normal');
       document.setFontSize(8);
-      document.text(label, center, approvalY + 38, { align: 'center' });
+      document.text(label, columnLeft, approvalY + 14);
       document.setFont('helvetica', 'bold');
       document.setFontSize(8);
-      document.text(name, center, approvalY + 50, { align: 'center' });
+      document.text(name, columnCenter, approvalY + 101, { align: 'center' });
       document.setFont('helvetica', 'normal');
       document.setFontSize(7);
-      document.text(role, center, approvalY + 62, { align: 'center', maxWidth: pageWidth / 3 - 24 });
+      document.text(role, columnCenter, approvalY + 112, { align: 'center', maxWidth: approvalColumnWidth - 12 });
     });
 
+    if (preview) {
+      return document.output('blob');
+    }
     document.save(`${fileName}.pdf`);
   };
 
@@ -1025,7 +1280,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                   {columns.map((col) => (
                     <td
                       key={col}
-                      className="px-3 py-2.5 text-center text-sm text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600"
+                      className="px-3 py-2.5 text-center text-sm font-semibold text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600"
                     >
                       {col === 'Status' ? (
                         <span
@@ -1163,18 +1418,18 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       };
 
   const OverviewCard = ({ icon: Icon, label, value }) => (
-    <div className="flex items-center gap-4 px-5 py-5 rounded-[1.35rem]" style={overviewStatStyle}>
+    <div className="relative grid min-h-[76px] place-items-center rounded-[1.35rem] px-16 py-2.5" style={overviewStatStyle}>
       <div
-        className="w-14 h-14 shrink-0 rounded-2xl flex items-center justify-center shadow-sm"
+        className="absolute left-3 top-1/2 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-xl shadow-sm"
         style={{ background: THEME.accentGradient }}
       >
-        <Icon size={26} strokeWidth={2} className="text-white" />
+        <Icon size={25} strokeWidth={2} className="text-white" />
       </div>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-bold" style={{ color: darkMode ? THEME.dark.muted : THEME.light.muted }}>
+      <div className="min-w-0 text-center">
+        <p className="text-center text-sm font-bold" style={{ color: darkMode ? THEME.dark.muted : THEME.light.muted }}>
           {label}
         </p>
-        <p className="mt-0.5 text-left text-3xl font-extrabold leading-tight" style={{ color: darkMode ? THEME.dark.text : THEME.light.text }}>
+        <p className="mt-0.5 text-center text-3xl font-extrabold leading-tight" style={{ color: darkMode ? THEME.dark.text : THEME.light.text }}>
           {value}
         </p>
       </div>
@@ -1208,44 +1463,25 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           <OverviewCard icon={Home} label="Total Households" value={stats.totalHouseholds} />
           <OverviewCard icon={Heart} label="Pregnant Women" value={stats.pregnantWomen} />
           <OverviewCard icon={Baby} label="Children (0-5)" value={stats.childrenUnderFive} />
-          <OverviewCard icon={ClipboardList} label="Reports Pending" value={stats.reportsPending} />
+          <OverviewCard icon={FileText} label="Total Records" value={stats.totalRecords} />
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
-        <div className={`lg:col-span-3 ${dashCardClass}`} style={dashCardStyle}>
-          <p className="text-base font-bold mb-4" style={{ color: titleColor }}>
-            No of Beneficiaries
-          </p>
-          <div className="flex items-center gap-4">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center" style={{ background: THEME.accentGradient }}>
-              <UserCircle size={32} className="text-white" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-left text-4xl font-extrabold" style={{ color: titleColor }}>
-                {stats.totalHouseholds + stats.childrenUnderFive}
-              </p>
-              <p className="text-sm font-medium mt-1" style={{ color: mutedColor }}>
-                Total Registered
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className={`lg:col-span-4 ${dashCardClass}`} style={dashCardStyle}>
+        <div className="lg:col-span-6 min-h-[250px] rounded-3xl p-4" style={dashCardStyle}>
           <p className="text-base font-bold mb-2" style={{ color: titleColor }}>
             Household Status
           </p>
-          <div className="flex items-center gap-4">
-            <div className="w-[160px] h-[160px]">
+          <div className="flex min-h-[195px] items-center justify-center gap-6">
+            <div className="h-[190px] w-[190px] shrink-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
                     data={householdStatusData.filter((d) => d.value > 0)}
                     cx="50%"
                     cy="50%"
-                    innerRadius={45}
-                    outerRadius={70}
+                    innerRadius={58}
+                    outerRadius={88}
                     paddingAngle={3}
                     dataKey="value"
                     strokeWidth={0}
@@ -1258,25 +1494,26 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                 </PieChart>
               </ResponsiveContainer>
             </div>
-            <div className="flex-1 space-y-3">
+            <div className="flex min-w-[130px] flex-1 flex-col justify-center gap-4">
               {householdStatusData.map((item) => (
-                <div key={item.name}>
+                <div key={item.name} className="border-b pb-3 last:border-b-0 last:pb-0" style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}>
                   <div className="flex items-center gap-2">
-                    <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: item.color }} />
-                    <span className="text-xs" style={{ color: mutedColor }}>
+                    <div className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: item.color }} />
+                    <span className="text-sm font-semibold" style={{ color: mutedColor }}>
                       {item.name}
                     </span>
+                    <span className="ml-auto text-sm font-bold" style={{ color: titleColor }}>
+                      {item.value}
+                    </span>
                   </div>
-                  <p className="text-lg font-bold ml-5" style={{ color: titleColor }}>
-                    {item.pct}%
-                  </p>
+                  <p className="ml-5 mt-1 text-xs font-medium" style={{ color: mutedColor }}>{item.pct}% of households</p>
                 </div>
               ))}
             </div>
           </div>
         </div>
 
-        <div className={`lg:col-span-5 ${dashCardClass}`} style={dashCardStyle}>
+        <div className={`lg:col-span-6 ${dashCardClass}`} style={dashCardStyle}>
           <p className="text-base font-bold mb-3" style={{ color: titleColor }}>
             Top 10 Puroks by Households
           </p>
@@ -1309,10 +1546,32 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       </div>
 
       <div className={`${dashCardClass} p-6`} style={dashCardStyle}>
-        <div className="flex items-center justify-between mb-4">
-          <p className="text-base font-bold" style={{ color: titleColor }}>
-            Malnutrition Cases vs Immunization Rate
-          </p>
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <label className="relative block">
+            <span className="sr-only">Choose monthly trend chart</span>
+            <select
+              value={monthlyTrendView}
+              onChange={(event) => setMonthlyTrendView(event.target.value)}
+              className="max-w-[min(60vw,28rem)] appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-9 text-sm font-bold text-gray-800 shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+            >
+              <option value="new-repeat">New vs. Repeat Malnutrition Cases</option>
+              <option value="vulnerable">Total Vulnerable Demographics Trend</option>
+            </select>
+            <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500" aria-hidden="true" />
+          </label>
+          <label className="relative ml-auto block">
+            <span className="sr-only">Choose the last month in the trend window</span>
+            <select
+              value={monthlyTrendEndMonth}
+              onChange={(event) => setMonthlyTrendEndMonth(event.target.value)}
+              className="appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-9 text-sm font-semibold text-gray-800 shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+            >
+              {monthlyTrendMonthOptions.map((month) => (
+                <option key={month.value} value={month.value}>{month.label}</option>
+              ))}
+            </select>
+            <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500" aria-hidden="true" />
+          </label>
           <span
             className="text-xs px-3 py-1 rounded-full"
             style={{
@@ -1320,33 +1579,41 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               backgroundColor: darkMode ? 'rgba(255,255,255,0.06)' : THEME.light.surface,
             }}
           >
-            {REPORT_META.monthYear} · last 6 months
+            {monthlyTrendMonthOptions.find((month) => month.value === monthlyTrendEndMonth)?.label || monthlyTrendEndMonth} · 6-month window
           </span>
         </div>
         <p className="mb-3 text-xs" style={{ color: mutedColor }}>
-          Malnutrition cases use recorded WHO classifications. Estimated immunization rate = fully immunized children ÷ live births × 100; a rate is shown only when both counts are available for that month.
+          {monthlyTrendView === 'new-repeat'
+            ? 'New cases are children first flagged as underweight, stunted, or wasted in available weighing records. Repeat cases were flagged in an earlier month and remain flagged.'
+            : 'Barangay-wide counts: children with recorded underweight, stunted, or wasted status; pregnancy registrations not past any recorded due date; lactating women within 24 months after delivery; and infants aged 0–11 months based on date of birth.'}
         </p>
         <div className="h-[280px]">
-          {!hasMonthlyTrendData ? (
-            <EmptyState message="No monthly natality records or immunization counts are available for this reporting period yet." />
+          {!activeMonthlyTrend ? (
+            <EmptyState message="No dated records are available for the selected monthly trend." />
           ) : (
             <ResponsiveContainer width="100%" height="100%">
-              <ComposedChart data={monthlyTrendData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+              <LineChart data={monthlyTrendData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                 <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="cases" allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                <YAxis yAxisId="rate" orientation="right" domain={[0, 'auto']} tickFormatter={(value) => `${value}%`} tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
                 <Tooltip
-                  formatter={(value, name) => [
-                    value == null ? 'Not available' : name === 'Estimated Immunization Rate' ? `${Number(value).toFixed(1)}%` : value,
-                    name,
-                  ]}
+                  formatter={(value, name) => [value, name]}
                   contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                 />
                 <Legend />
-                <Area yAxisId="cases" type="monotone" dataKey="malnutrition" fill={THEME.accentPink} fillOpacity={0.16} stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4, fill: THEME.accentPink, strokeWidth: 0 }} name="Malnutrition Cases" />
-                <Line yAxisId="rate" type="monotone" dataKey="immunizationRate" stroke={THEME.accentPurple} strokeWidth={2.5} dot={{ r: 4, fill: THEME.accentPurple, strokeWidth: 0 }} name="Estimated Immunization Rate" connectNulls={false} />
-              </ComposedChart>
+                {monthlyTrendView === 'new-repeat' ? (
+                  <>
+                    <Line type="monotone" dataKey="newCases" stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4 }} name="New Cases" />
+                    <Line type="monotone" dataKey="repeatCases" stroke={THEME.accentPurple} strokeWidth={2.5} dot={{ r: 4 }} name="Ongoing / Repeat Cases" />
+                  </>
+                ) : (
+                  <>
+                    <Line type="monotone" dataKey="vulnerableCases" stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4 }} name="Total Underweight / Stunted / Wasted Cases" />
+                    <Line type="monotone" dataKey="pregnantAndLactating" stroke={THEME.accentPurple} strokeWidth={2.5} dot={{ r: 4 }} name="Pregnant & Lactating Women" />
+                    <Line type="monotone" dataKey="infants" stroke="#2B9A8F" strokeWidth={2.5} dot={{ r: 4 }} name="Infants (0–11 months)" />
+                  </>
+                )}
+              </LineChart>
             </ResponsiveContainer>
           )}
         </div>
@@ -1367,32 +1634,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         />
       </div>
 
-      <AdminReportTable
-        darkMode={darkMode}
-        data={filteredHouseholds}
-        columnKeys={['purok', 'head', 'members', 'lastVisit']}
-        singleRowHeaders={['Purok', 'Household Head', 'Members', 'Last Visit']}
-        reportHeader={
-          <ReportHeader
-            title="Residents Masterlist"
-            subtitle={`Barangay ${REPORT_META.barangay}`}
-            fields={[
-              { label: 'Barangay', value: REPORT_META.barangay },
-              { label: 'Municipality', value: REPORT_META.municipality },
-              { label: 'Province', value: REPORT_META.province },
-            ]}
-          />
-        }
-        onExport={() =>
-          exportPdfFile({
-            fileName: 'alawihao-residents',
-            title: 'Residents',
-            headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
-            rows: filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
-          })
-        }
-        {...residentActions}
-      />
     </div>
   );
 
@@ -1579,11 +1820,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             fileName="alawihao-residents"
             headers={['Purok', 'Household Head', 'Members', 'Last Visit']}
             rows={filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit])}
-            onExportPdf={() => exportPdfFile({
+            signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
+            onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-residents',
             title: 'Residents Masterlist',
             headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
             rows: filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
+            signatures,
+            preview: options.preview,
             })}
           />
         }
@@ -1594,25 +1838,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const EnvironmentalSanitation = () => {
     const tableData = filteredEnvironmental.map((record) => ({ ...record }));
-    const exportReport = () =>
-      exportPdfFile({
-        fileName: 'alawihao-environmental-sanitation-2026',
-        title: 'BNS Environmental Sanitation Report',
-        headers: environmentalExportHeaders,
-        rows: tableData.map((record) =>
-          environmentalColumnKeys.map((key) =>
-            ['garbageCompostPit', 'garbageCollect', 'garbageOthers', 'waterLevelI', 'waterLevelII', 'waterLevelIII', 'withoutPotableWater', 'toiletWithSanitary', 'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery', 'estBakery', 'estCarenderia', 'estRestaurant'].includes(key)
-              ? markCheck(record[key])
-              : record[key] ?? ''
-          )
-        ),
-        preamble: [
-          'BNS Environmental Sanitation Report',
-          `Barangay: ${REPORT_META.barangay}`,
-          `Report Year: ${REPORT_META.reportYear}`,
-        ],
-      });
-
     return (
       <AdminReportTable
         darkMode={darkMode}
@@ -1671,7 +1896,28 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               `Barangay: ${REPORT_META.barangay}`,
               `Report Year: ${REPORT_META.reportYear}`,
             ]}
-            onExportPdf={exportReport}
+            signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
+            onExportPdf={(signatures, options = {}) => exportPdfFile({
+              fileName: 'alawihao-environmental-sanitation-2026',
+              title: 'BNS Environmental Sanitation Report',
+              headers: environmentalExportHeaders,
+              rows: tableData.map((record) =>
+                environmentalColumnKeys.map((key) =>
+                  [
+                    'garbageCompostPit', 'garbageCollect', 'garbageOthers', 'waterLevelI',
+                    'waterLevelII', 'waterLevelIII', 'withoutPotableWater', 'toiletWithSanitary',
+                    'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery',
+                    'estBakery', 'estCarenderia', 'estRestaurant',
+                  ].includes(key) ? markCheck(record[key]) : record[key] ?? ''
+                )
+              ),
+              preamble: [
+                `Barangay: ${REPORT_META.barangay}`,
+                `Report Year: ${REPORT_META.reportYear}`,
+              ],
+              signatures,
+              preview: options.preview,
+            })}
           />
         }
         {...environmentalActions}
@@ -1824,12 +2070,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           fileName="alawihao-lactating-women"
           headers={lactatingExportHeaders}
           rows={lactatingExportRows}
-          onExportPdf={(signatureDataUrl) => exportPdfFile({
+          signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
+          onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-lactating-women',
             title: 'Masterlist Lactating Women',
             headers: lactatingExportHeaders,
             rows: lactatingExportRows,
-            signatureDataUrl,
+            signatures,
+            preview: options.preview,
           })}
         />
       }
@@ -1879,6 +2127,49 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         />
       }
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
+      exportActions={
+        <ReportExportActions
+          title="Masterlist of Pregnant Women"
+          fileName="alawihao-pregnant-women"
+          headers={['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC']}
+          rows={filteredPregnant.map((row) => [
+            row.no,
+            row.purok,
+            row.dateRegistration,
+            row.familySerial,
+            row.lastName,
+            row.firstName,
+            row.middleName,
+            row.spouseName,
+            row.contactNumber,
+            row.birthday,
+            row.age,
+            row.civilStatus,
+            row.lmp,
+            row.expectedDelivery,
+            row.philhealth,
+            row.fourPs,
+            row.wt,
+            row.ht,
+            row.bmi,
+            row.muac,
+          ])}
+          signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
+          onExportPdf={(signatures, options = {}) => exportPdfFile({
+            fileName: 'alawihao-pregnant-women',
+            title: 'Masterlist of Pregnant Women',
+            headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC'],
+            rows: filteredPregnant.map((row) => [
+              row.no, row.purok, row.dateRegistration, row.familySerial, row.lastName,
+              row.firstName, row.middleName, row.spouseName, row.contactNumber,
+              row.birthday, row.age, row.civilStatus, row.lmp, row.expectedDelivery,
+              row.philhealth, row.fourPs, row.wt, row.ht, row.bmi, row.muac,
+            ]),
+            signatures,
+            preview: options.preview,
+          })}
+        />
+      }
       onExport={() =>
         exportPdfFile({
           fileName: 'alawihao-pregnant-women',
@@ -1952,12 +2243,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           fileName="alawihao-monthly-natality"
           headers={natalityExportHeaders}
           rows={natalityExportRows}
-          onExportPdf={(signatureDataUrl) => exportPdfFile({
+          signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
+          onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-monthly-natality',
             title: 'Monthly Natality',
             headers: natalityExportHeaders,
             rows: natalityExportRows,
-            signatureDataUrl,
+            signatures,
+            preview: options.preview,
           })}
         />
       }
@@ -1976,57 +2269,56 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       row.indicator || row.subcategory, row.m1M, row.m1F, row.m2M, row.m2F,
       row.m3M, row.m3F, row.tM, row.tF,
     ]);
+  const monthlyReportMonth = new Date().toLocaleString('en-US', { month: 'long' });
+  const monthlyReportFileName = `ALAWIHAO- Monthly Report- ${monthlyReportMonth} ${REPORT_META.reportYear}`;
   const MonthlyReport = () => (
     <MonthlyReportTable
       darkMode={darkMode}
       data={monthlyReportData}
       onSaveLine={(line) => requestAdminConfirmation(
         'Are you sure you want to save these indicator changes?',
-        () => {
-          upsertRecord(STORAGE_KEYS.monthlyReport, line);
-          refreshData();
+        async () => {
+          try {
+            const savedLine = await saveMonthlyReportLine(line);
+            upsertRecord(STORAGE_KEYS.monthlyReport, savedLine);
+            refreshData();
+          } catch (error) {
+            console.error('Could not save monthly report line:', error);
+            alert(error.message);
+          }
         }
       )}
-      onDeleteLine={(id) => requestAdminConfirmation(
+      onDeleteLine={(line) => requestAdminConfirmation(
         'Are you sure you want to delete this indicator?',
-        () => {
-          deleteRecordById(STORAGE_KEYS.monthlyReport, id);
-          refreshData();
+        async () => {
+          try {
+            await deleteMonthlyReportLine(line);
+            deleteRecordById(STORAGE_KEYS.monthlyReport, line.id);
+            refreshData();
+          } catch (error) {
+            console.error('Could not delete monthly report line:', error);
+            alert(error.message);
+          }
         },
         { title: 'Delete indicator', confirmLabel: 'Delete', destructive: true }
       )}
-      onAddLine={() => {
-        const label = prompt('New indicator label');
-        if (!label?.trim()) return;
-        const newIndicator = {
-          id: nextRecordId(),
-          slug: `custom-${Date.now()}`,
-          indicator: label.trim(),
-          category: label.trim(),
-          subcategory: label.trim(),
-          isHeader: false,
-          sortOrder: monthlyReportData.length + 1,
-          barangay: REPORT_META.barangay,
-          reportYear: Number(REPORT_META.reportYear) || new Date().getFullYear(),
-          m1M: 0,
-          m1F: 0,
-          m2M: 0,
-          m2F: 0,
-          m3M: 0,
-          m3F: 0,
-          tM: 0,
-          tF: 0,
-        };
+      onAddLine={(line) => {
         requestAdminConfirmation(
-          `Are you sure you want to save the indicator "${label.trim()}"?`,
-          () => {
-            upsertRecord(STORAGE_KEYS.monthlyReport, newIndicator);
-            refreshData();
+          `Save monthly data for "${line.indicator}"?`,
+          async () => {
+            try {
+              const savedLine = await saveMonthlyReportLine(line);
+              upsertRecord(STORAGE_KEYS.monthlyReport, savedLine);
+              refreshData();
+            } catch (error) {
+              console.error('Could not save monthly report data:', error);
+              alert(error.message);
+            }
           }
         );
       }}
       onGenerateReport={() => exportPdfFile({
-        fileName: 'alawihao-essential-health-services-2026',
+        fileName: monthlyReportFileName,
         title: 'Essential Health Services Monthly Report',
         headers: monthlyReportExportHeaders,
         rows: monthlyReportExportRows,
@@ -2038,24 +2330,43 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       exportActions={
         <ReportExportActions
           title="Essential Health Services Monthly Report"
-          fileName="alawihao-essential-health-services-2026"
+          fileName={monthlyReportFileName}
           headers={monthlyReportExportHeaders}
           rows={monthlyReportExportRows}
           preamble={[
             'SUB-TASK GROUP SOCIAL RECOVERY & SUB-TASK UNIT ESSENTIAL HEALTH SERVICES',
             `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
           ]}
-          onExportPdf={(signatureDataUrl) => exportPdfFile({
+          signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
+          enableEmail
+          onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-essential-health-services-2026',
             title: 'Essential Health Services Monthly Report',
             headers: monthlyReportExportHeaders,
             rows: monthlyReportExportRows,
-            signatureDataUrl,
+            signatures,
+            preview: options.preview,
             preamble: [
               'SUB-TASK GROUP SOCIAL RECOVERY & SUB-TASK UNIT ESSENTIAL HEALTH SERVICES',
               `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
             ],
           })}
+          onSendEmail={async (emailDetails) => {
+            if (!supabase.functions?.invoke) {
+              throw new Error('Supabase email sending is not configured in this environment.');
+            }
+            const { data, error } = await supabase.functions.invoke('send-monthly-report-email', {
+              body: emailDetails,
+            });
+            if (error) {
+              const details = error.context instanceof Response
+                ? (await error.context.clone().json().catch(() => null))?.error
+                : null;
+              throw new Error(`Could not send monthly report email: ${details || error.message}`);
+            }
+            if (data?.error) throw new Error(data.error);
+            if (!data?.sent) throw new Error('The email service did not confirm delivery.');
+          }}
         />
       }
     />
@@ -2155,6 +2466,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                 darkMode={darkMode}
                 searchQuery={searchTerm}
                 onSearchResultsChange={handleSearchResultsChange}
+                pwaPhotos={pwaPhotoDocuments}
+                onDeletePwaPhoto={requestPwaPhotoDeletion}
               />
             )}
             {activeTab === 'tasks' && (

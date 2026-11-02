@@ -2,7 +2,18 @@ import React, { useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Polygon, Popup, Tooltip, ZoomControl, useMapEvents } from 'react-leaflet';
 import { divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { AlertTriangle } from 'lucide-react';
+import {
+  AlertTriangle,
+  Baby,
+  Droplets,
+  Heart,
+  Home,
+  Info,
+  MapPin,
+  Utensils,
+  Users,
+  X,
+} from 'lucide-react';
 import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
 import { normalizePurokName, PUROK_OPTIONS } from '../utils/purok';
 
@@ -20,6 +31,29 @@ const COLORS = {
   black: '#000000',
   gray: '#6b7280',
 };
+
+const POPUP_CATEGORY_ICONS = {
+  green: Baby,
+  yellow: AlertTriangle,
+  red: AlertTriangle,
+  orange: AlertTriangle,
+  pink: Heart,
+  violet: Heart,
+  maroon: Baby,
+  purple: Utensils,
+  brown: Baby,
+  blue: Home,
+  black: Droplets,
+  gray: Home,
+};
+
+function tintColor(color, opacity = 0.12) {
+  const value = Number.parseInt(color.slice(1), 16);
+  const red = (value >> 16) & 255;
+  const green = (value >> 8) & 255;
+  const blue = value & 255;
+  return `rgba(${red}, ${green}, ${blue}, ${opacity})`;
+}
 
 const ALAWIHAO_CENTERS = [
   [14.1093473, 122.9291014],
@@ -485,6 +519,7 @@ const InteractiveMapComponent = ({
 }) => {
   const [mapMode, setMapMode] = useState('nutritional');
   const [mapZoom, setMapZoom] = useState(15);
+  const [selectedPurokId, setSelectedPurokId] = useState(null);
   const panelClass = darkMode ? 'bg-[#26263B] border-[#333348]' : 'bg-white border-gray-200';
   const primaryTextClass = darkMode ? 'text-white' : 'text-gray-900';
   const secondaryTextClass = darkMode ? 'text-slate-300' : 'text-gray-600';
@@ -542,23 +577,21 @@ const InteractiveMapComponent = ({
     { records: 0, households: 0, noPotableWater: 0, noSanitaryToilets: 0 }
   );
   const markerSize = Math.min(46, Math.max(34, 34 + (mapZoom - 15) * 3));
+  const selectedPurok = puroks.find(({ id }) => id === selectedPurokId);
+  const selectedWashMarkers = selectedPurok
+    ? [
+        { key: 'black', label: 'Without potable water source', color: COLORS.black, count: selectedPurok.stats.noPotableWater },
+        { key: 'gray', label: 'Without sanitary toilet', color: COLORS.gray, count: selectedPurok.stats.noSanitaryToilets },
+      ].filter((marker) => marker.count > 0)
+    : [];
+  const selectedVisibleMarkers = selectedPurok
+    ? mapMode === 'nutritional' ? selectedPurok.stats.categoryMarkers : selectedWashMarkers
+    : [];
 
   return (
     <div className="space-y-6">
       <style>{`
         .nutrigrid-map-summary, .nutrigrid-map-landmark { background: transparent; border: 0; }
-        .nutrigrid-purok-popup .leaflet-popup-content-wrapper {
-          border-radius: 16px;
-          padding: 8px 12px;
-          background: #fff;
-          color: #1f2937;
-          box-shadow: 0 8px 24px rgba(15, 23, 42, 0.2);
-        }
-        .nutrigrid-purok-popup .leaflet-popup-content {
-          margin: 8px 10px;
-          line-height: 1.5;
-          font-size: 14px;
-        }
         .nutrigrid-purok-label {
           padding: 2px 6px;
           border: 1px solid rgba(120, 100, 145, .35);
@@ -584,7 +617,10 @@ const InteractiveMapComponent = ({
                 key={mode}
                 type="button"
                 aria-pressed={mapMode === mode}
-                onClick={() => setMapMode(mode)}
+                onClick={() => {
+                  setMapMode(mode);
+                  setSelectedPurokId(null);
+                }}
                 className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
                   mapMode === mode
                     ? 'bg-blue-600 text-white'
@@ -620,7 +656,7 @@ const InteractiveMapComponent = ({
               touchZoom
               doubleClickZoom
               zoomControl={false}
-              style={{ height: '500px', width: '100%' }}
+              style={{ height: 'min(72vh, 760px)', minHeight: '560px', width: '100%' }}
               className="rounded-lg"
             >
               <MapZoomTracker onZoomChange={setMapZoom} />
@@ -676,46 +712,74 @@ const InteractiveMapComponent = ({
                     key={purok.id}
                     position={[purok.lat, purok.lng]}
                     icon={createPurokSummaryIcon(visibleMarkers, markerSize)}
-                  >
-                    <Popup
-                      className="nutrigrid-purok-popup"
-                      minWidth={Math.round(200 + markerSize)}
-                      maxWidth={360}
-                    >
-                      <div className="text-base font-bold">{purok.name}</div>
-                      <div className="mt-2 space-y-1">
-                        {visibleMarkers.map((marker) => (
-                          <div key={marker.key} className="flex items-center justify-between gap-4 text-sm">
-                            <span className="flex items-center gap-2">
-                              <span className="h-3 w-3 rounded-full" style={{ backgroundColor: marker.color }} />
-                              {marker.label}
-                            </span>
-                            <strong>{marker.count}</strong>
-                          </div>
-                        ))}
-                      </div>
-                      {mapMode === 'nutritional' && visibleMarkers.some((marker) => marker.key === 'orange' || marker.key === 'yellow') && (
-                        <div
-                          role="alert"
-                          className={`mt-3 flex items-start gap-2 rounded-lg border p-3 text-sm font-bold ${
-                            visibleMarkers.some((marker) => marker.key === 'orange')
-                              ? 'border-red-300 bg-red-50 text-red-800'
-                              : 'border-amber-300 bg-amber-50 text-amber-900'
-                          }`}
-                        >
-                          <AlertTriangle size={20} className="shrink-0" aria-hidden="true" />
-                          <span>
-                            {visibleMarkers.some((marker) => marker.key === 'orange')
-                              ? 'NEED OF FEEDING PROGRAM'
-                              : 'NEED OF PARENTS GUIDE'}
-                          </span>
-                        </div>
-                      )}
-                    </Popup>
-                  </Marker>
+                    eventHandlers={{ click: () => setSelectedPurokId(purok.id) }}
+                  />
                 );
               })}
             </MapContainer>
+            {selectedPurok && selectedVisibleMarkers.length > 0 && (
+              <section
+                aria-label={`${selectedPurok.name} information`}
+                className="pointer-events-none absolute inset-x-3 top-1/2 z-[1000] flex -translate-y-1/2 justify-center"
+              >
+                <div className="pointer-events-auto relative w-full max-w-[360px] overflow-hidden rounded-[18px] bg-white text-slate-800 shadow-2xl">
+                <header className="flex items-center gap-3 bg-gradient-to-r from-[#0B58B5] to-[#123B83] px-4 py-3 pr-12 text-white">
+                  <MapPin size={26} className="shrink-0" aria-hidden="true" />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-100">Barangay Alawihao</p>
+                    <h3 className="truncate text-xl font-extrabold leading-tight">{selectedPurok.name}</h3>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedPurokId(null)}
+                    aria-label="Close purok details"
+                    className="absolute right-2 top-2 grid h-8 w-8 place-items-center rounded-full text-white hover:bg-white/15"
+                  >
+                    <X size={20} />
+                  </button>
+                </header>
+                <div className="px-3 py-1.5">
+                  {selectedVisibleMarkers.map((marker) => (
+                    <div key={marker.key} className="flex items-center gap-2.5 border-b border-slate-100 py-1.5 last:border-0">
+                      <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full" style={{ backgroundColor: tintColor(marker.color), color: marker.color }}>
+                        <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: marker.color }} />
+                      </span>
+                      <span className="grid h-7 w-7 shrink-0 place-items-center" style={{ color: marker.color }}>
+                        {React.createElement(POPUP_CATEGORY_ICONS[marker.key] || Info, {
+                          size: 20,
+                          strokeWidth: 2.2,
+                          'aria-hidden': true,
+                        })}
+                      </span>
+                      <span className="min-w-0 flex-1 text-[13px] font-medium leading-snug">{marker.label}</span>
+                      <span className="min-w-10 rounded-full px-3 py-1 text-center text-sm font-extrabold" style={{ backgroundColor: tintColor(marker.color, 0.16), color: marker.color }}>
+                        {marker.count}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                {mapMode === 'nutritional' && selectedVisibleMarkers.some((marker) => marker.key === 'orange' || marker.key === 'yellow') && (
+                  <div
+                    role="alert"
+                    className={`mx-3 mb-3 flex items-center gap-2 rounded-xl border p-2.5 text-[12px] font-extrabold ${
+                      selectedVisibleMarkers.some((marker) => marker.key === 'orange')
+                        ? 'border-red-200 bg-red-50 text-red-800'
+                        : 'border-amber-200 bg-amber-50 text-amber-900'
+                    }`}
+                  >
+                    {selectedVisibleMarkers.some((marker) => marker.key === 'orange')
+                      ? <Utensils size={19} className="shrink-0" aria-hidden="true" />
+                      : <Users size={19} className="shrink-0" aria-hidden="true" />}
+                    <span className="flex-1">
+                      {selectedVisibleMarkers.some((marker) => marker.key === 'orange')
+                        ? 'TARGETED FEEDING INTERVENTION REQUIRED'
+                        : 'PARENTING GUIDANCE REQUIRED'}
+                    </span>
+                  </div>
+                )}
+                </div>
+              </section>
+            )}
           </div>
           <p className={`mt-2 text-xs ${secondaryTextClass}`}>
             Use the map zoom buttons or pinch to reveal mapped roads and landmarks. Color-coded people icons show the categories recorded in each purok.

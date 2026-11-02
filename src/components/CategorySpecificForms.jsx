@@ -24,6 +24,10 @@ const ResidentNotes = () => (
   <FormNotes title="Residents" entries={[['HH', 'Household']]} />
 );
 
+const EnvironmentalNotes = () => (
+  <FormNotes title="Environmental Sanitation" entries={[['HH', 'Household']]} />
+);
+
 const WomenNotes = () => (
   <FormNotes
     title="Pregnant / Lactating Women"
@@ -48,8 +52,124 @@ const NatalityNotes = () => (
   />
 );
 
+const InfantFeedingNotes = () => (
+  <FormNotes
+    title="Infant Feeding"
+    entries={[
+      ['E', 'Exclusive breastfeeding'],
+      ['M', 'Mixed feeding'],
+      ['N', 'Not breastfeeding'],
+      ['N/A', 'Not yet applicable'],
+    ]}
+  />
+);
+
+function compressPhoto(file) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    image.onload = () => {
+      try {
+        const maxDimension = 1280;
+        const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(image.width * scale));
+        canvas.height = Math.max(1, Math.round(image.height * scale));
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Photo processing is not supported on this device.');
+        context.fillStyle = '#fff';
+        context.fillRect(0, 0, canvas.width, canvas.height);
+        context.drawImage(image, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.72));
+      } catch (error) {
+        reject(error);
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    };
+
+    image.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('The selected photo could not be opened.'));
+    };
+    image.src = objectUrl;
+  });
+}
+
+const OptionalPhotoField = ({ value, onChange, color }) => {
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState('');
+  const inputRef = React.useRef(null);
+  const colors = {
+    pink: 'border-pink-300 text-pink-700 hover:bg-pink-50',
+    red: 'border-red-300 text-red-700 hover:bg-red-50',
+    purple: 'border-purple-300 text-purple-700 hover:bg-purple-50',
+    amber: 'border-amber-300 text-amber-700 hover:bg-amber-50',
+  };
+  const colorClass = colors[color] || colors.pink;
+
+  const handlePhotoChange = async (event) => {
+    const file = event.currentTarget.files?.[0];
+    if (!file) return;
+    event.currentTarget.value = '';
+    setError('');
+    setIsProcessing(true);
+    try {
+      if (file.size > 20 * 1024 * 1024) {
+        throw new Error('Choose a photo smaller than 20 MB.');
+      }
+      onChange(await compressPhoto(file));
+    } catch (photoError) {
+      console.error('Could not process documentation photo:', photoError);
+      setError(photoError.message || 'Could not process this photo.');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-semibold text-gray-700">Photo</label>
+      <p className="mb-2 text-xs text-gray-500">Optional only; for documentation purposes.</p>
+      {value && (
+        <div className="relative mb-3 overflow-hidden rounded-lg">
+          <img src={value} alt="Documentation preview" className="h-40 w-full rounded-lg border object-cover" />
+          <button
+            type="button"
+            onClick={() => onChange(null)}
+            aria-label="Remove documentation photo"
+            className="absolute right-2 top-2 rounded-full bg-red-600 p-2 text-white"
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        onChange={handlePhotoChange}
+        className="hidden"
+        aria-label="Choose optional documentation photo"
+      />
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={isProcessing}
+        className={`flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed px-4 py-3 disabled:opacity-50 ${colorClass}`}
+      >
+        <Camera size={20} />
+        <span>{isProcessing ? 'Preparing photo…' : value ? 'Retake Photo' : 'Capture Photo'}</span>
+      </button>
+      {error && <p role="alert" className="mt-2 text-sm text-red-700">{error}</p>}
+    </div>
+  );
+};
+
 // Environmental Sanitation Form
-export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
+export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
   const [formData, setFormData] = useState({
     purok: '',
     total_hh: '',
@@ -83,6 +203,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
   });
 
   const [photoPreview, setPhotoPreview] = useState(initialData?.photo_url || null);
+  const [photoError, setPhotoError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   React.useEffect(() => {
@@ -97,15 +218,19 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
     input.type = 'file';
     input.accept = 'image/*';
     input.capture = 'environment';
-    input.onchange = (e) => {
-      const file = e.target.files[0];
+    input.onchange = async (e) => {
+      const file = e.target.files?.[0];
       if (file) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-          setPhotoPreview(event.target.result);
-          setFormData({...formData, photo_url: event.target.result});
-        };
-        reader.readAsDataURL(file);
+        try {
+          if (file.size > 20 * 1024 * 1024) throw new Error('Choose a photo smaller than 20 MB.');
+          const photo = await compressPhoto(file);
+          setPhotoPreview(photo);
+          setFormData((prev) => ({ ...prev, photo_url: photo }));
+          setPhotoError('');
+        } catch (error) {
+          console.error('Could not process environmental photo:', error);
+          setPhotoError(error.message || 'Could not process this photo.');
+        }
       }
     };
     input.click();
@@ -419,31 +544,6 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
         </div>
       </div>
 
-      {/* Photo */}
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Photo</label>
-        {photoPreview && (
-          <div className="relative mb-4 rounded-lg overflow-hidden">
-            <img src={photoPreview} alt="Preview" className="w-full h-32 object-cover rounded-lg border-2 border-green-500" />
-            <button
-              type="button"
-              onClick={() => {setPhotoPreview(null); setFormData({...formData, photo_url: null});}}
-              className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full"
-            >
-              ×
-            </button>
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={handlePhotoCapture}
-          className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 border-dashed border-blue-400 rounded-lg hover:bg-blue-50"
-        >
-          <Camera size={20} className="text-blue-600" />
-          <span className="font-semibold text-blue-600">Capture Photo</span>
-        </button>
-      </div>
-
       {/* GPS */}
       {currentLocation && (
         <div className="bg-green-50 p-3 rounded-lg border-2 border-green-300">
@@ -466,6 +566,33 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
           placeholder="Any observations..."
         />
       </div>
+
+      {showPhotoCapture && <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Photo</label>
+        <p className="mb-2 text-xs text-gray-500">Optional only; for documentation purposes.</p>
+        {photoPreview && (
+          <div className="relative mb-4 rounded-lg overflow-hidden">
+            <img src={photoPreview} alt="Preview" className="w-full h-32 object-cover rounded-lg border-2 border-green-500" />
+            <button
+              type="button"
+              onClick={() => {setPhotoPreview(null); setFormData((prev) => ({...prev, photo_url: null}));}}
+              className="absolute top-2 right-2 bg-red-500 text-white p-2 rounded-full"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={handlePhotoCapture}
+          className="w-full flex items-center justify-center gap-3 px-4 py-3 border-2 border-dashed border-blue-400 rounded-lg hover:bg-blue-50"
+        >
+          <Camera size={20} className="text-blue-600" />
+          <span className="font-semibold text-blue-600">Capture Photo</span>
+        </button>
+        {photoError && <p role="alert" className="mt-2 text-sm text-red-700">{photoError}</p>}
+      </div>}
+      <EnvironmentalNotes />
 
       {/* Buttons */}
       <div className="flex gap-3">
@@ -499,7 +626,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
 };
 
 // Simple Residents Form (columns: Purok, Head, Members, Status, Last Visit)
-export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
+export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
   const buildDefaults = () => ({
     purok: '',
     household_head: '',
@@ -514,6 +641,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
     initialData ? { ...buildDefaults(), ...initialData } : buildDefaults()
   );
   const [photoPreview, setPhotoPreview] = useState(initialData?.photo_url || null);
+  const [photoError, setPhotoError] = useState('');
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -522,15 +650,19 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
     input.type = 'file';
     input.accept = 'image/*';
     input.capture = 'environment';
-    input.onchange = (e) => {
+    input.onchange = async (e) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        setPhotoPreview(event.target.result);
-        setFormData((prev) => ({ ...prev, photo_url: event.target.result }));
-      };
-      reader.readAsDataURL(file);
+      try {
+        if (file.size > 20 * 1024 * 1024) throw new Error('Choose a photo smaller than 20 MB.');
+        const photo = await compressPhoto(file);
+        setPhotoPreview(photo);
+        setFormData((prev) => ({ ...prev, photo_url: photo }));
+        setPhotoError('');
+      } catch (error) {
+        console.error('Could not process resident photo:', error);
+        setPhotoError(error.message || 'Could not process this photo.');
+      }
     };
     input.click();
   };
@@ -605,6 +737,10 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
         Status is set automatically as <span className="font-semibold">Pending</span> until the record is synced.
       </p>
       <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
+        <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg" rows="3" />
+      </div>
+      {showPhotoCapture && <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Household Photo (optional)</label>
         {photoPreview && (
           <div className="relative mb-3 rounded-lg overflow-hidden">
@@ -629,11 +765,8 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
           <Camera size={20} />
           Capture Photo
         </button>
-      </div>
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg" rows="3" />
-      </div>
+        {photoError && <p role="alert" className="mt-2 text-sm text-red-700">{photoError}</p>}
+      </div>}
       <ResidentNotes />
       <div className="flex gap-3">
         <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-bold disabled:opacity-50">
@@ -648,7 +781,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
 };
 
 // Pregnant Woman registration form (BNS template)
-export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
+export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
   const fieldClass = 'w-full px-4 py-2 border-2 border-purple-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
@@ -671,6 +804,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
     height: '',
     bmi: '',
     muac: '',
+    notes: '',
     visited_by: userName,
     ...initialData,
   }));
@@ -843,6 +977,17 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
         </div>
       </div>
 
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
+        <textarea rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+      </div>
+      {showPhotoCapture && (
+        <OptionalPhotoField
+          value={formData.photo_url}
+          onChange={(photo) => updateField('photo_url', photo)}
+          color="purple"
+        />
+      )}
       <WomenNotes />
 
       <div className="flex gap-3 pt-2">
@@ -858,7 +1003,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
 };
 
 // Lactating Woman registration form (BNS template)
-export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
+export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
   const fieldClass = 'w-full px-4 py-2 border-2 border-red-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
@@ -880,6 +1025,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
     bmi: '',
     muac: '',
     date_delivered: '',
+    notes: '',
     visited_by: userName,
     ...initialData,
   }));
@@ -1042,6 +1188,17 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
         <input type="date" required value={formData.date_delivered} onChange={(e) => updateField('date_delivered', e.target.value)} className={fieldClass} />
       </div>
 
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
+        <textarea rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+      </div>
+      {showPhotoCapture && (
+        <OptionalPhotoField
+          value={formData.photo_url}
+          onChange={(photo) => updateField('photo_url', photo)}
+          color="red"
+        />
+      )}
       <WomenNotes />
 
       <div className="flex gap-3 pt-2">
@@ -1057,7 +1214,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
 };
 
 // Monthly Natality with weight, length, and height (BNS template)
-export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
+export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
   const fieldClass = 'w-full px-4 py-2 border-2 border-amber-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => {
@@ -1080,6 +1237,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
       w_l_h: '',
       iron_status: '',
       remarks: '',
+      notes: '',
       visited_by: userName,
       ...initialData,
     };
@@ -1257,6 +1415,17 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         </div>
       </div>
 
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
+        <textarea rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+      </div>
+      {showPhotoCapture && (
+        <OptionalPhotoField
+          value={formData.photo_url}
+          onChange={(photo) => updateField('photo_url', photo)}
+          color="amber"
+        />
+      )}
       <NatalityNotes />
 
       <div className="flex gap-3 pt-2">
@@ -1289,7 +1458,7 @@ function normalizeFeedingMethod(value) {
 }
 
 // Infant Feeding — Edad ng Sanggol sa Pagbisita (BNS template)
-export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null }) => {
+export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
   const fieldClass = 'w-full px-4 py-2 border-2 border-pink-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => {
@@ -1303,6 +1472,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
       feeding_3_month: '',
       feeding_4_month: '',
       feeding_5_month: '',
+      notes: '',
       visited_by: userName,
       ...initialData,
     };
@@ -1390,6 +1560,19 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
           </div>
         ))}
       </div>
+
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
+        <textarea rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+      </div>
+      {showPhotoCapture && (
+        <OptionalPhotoField
+          value={formData.photo_url}
+          onChange={(photo) => updateField('photo_url', photo)}
+          color="pink"
+        />
+      )}
+      <InfantFeedingNotes />
 
       <div className="flex gap-3 pt-2">
         <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-pink-600 to-pink-700 text-white py-3 rounded-lg font-bold disabled:opacity-50">

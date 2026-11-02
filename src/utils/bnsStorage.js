@@ -16,6 +16,24 @@ export const STORAGE_KEYS = {
   pendingRecordDeletions: 'nutrigrid_pending_record_deletions',
 };
 
+const MONTHLY_REPORT_DELETED_SLUGS_KEY = 'bns_admin_monthly_report_deleted_slugs';
+
+export function getDeletedMonthlyReportSlugs() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(MONTHLY_REPORT_DELETED_SLUGS_KEY) || '[]'));
+  } catch (error) {
+    console.error('Could not read deleted monthly report indicators:', error);
+    return new Set();
+  }
+}
+
+function updateDeletedMonthlyReportSlug(slug, deleted) {
+  const slugs = getDeletedMonthlyReportSlugs();
+  if (deleted) slugs.add(String(slug));
+  else slugs.delete(String(slug));
+  localStorage.setItem(MONTHLY_REPORT_DELETED_SLUGS_KEY, JSON.stringify([...slugs]));
+}
+
 const CATEGORY_TABLES = {
   [STORAGE_KEYS.residents]: 'residents',
   [STORAGE_KEYS.environmental]: 'environmental',
@@ -216,9 +234,14 @@ export function setRecords(key, records, change = null) {
 }
 
 export function deleteRecordById(key, id) {
+  const records = getRecords(key);
+  const recordToDelete = records.find((record) => String(record.id) === String(id));
+  if (categoryIdForStorageKey(key) === 'monthlyreport' && recordToDelete?.slug) {
+    updateDeletedMonthlyReportSlug(recordToDelete.slug, true);
+  }
   setRecords(
     key,
-    getRecords(key).filter((r) => String(r.id) !== String(id)),
+    records.filter((r) => String(r.id) !== String(id)),
     { operation: 'delete', recordId: String(id) }
   );
 }
@@ -226,8 +249,13 @@ export function deleteRecordById(key, id) {
 export function upsertRecord(key, record) {
   const category = categoryIdForStorageKey(key);
   if (category) removePendingRecordDeletion(category, record.id);
+  if (category === 'monthlyreport' && record.slug) {
+    updateDeletedMonthlyReportSlug(record.slug, false);
+  }
   const list = getRecords(key);
-  const idx = list.findIndex((r) => String(r.id) === String(record.id));
+  const idx = category === 'monthlyreport' && record.slug
+    ? list.findIndex((r) => String(r.slug) === String(record.slug))
+    : list.findIndex((r) => String(r.id) === String(record.id));
   if (idx >= 0) list[idx] = { ...list[idx], ...record };
   else list.push(record);
   setRecords(key, list, { operation: 'upsert', record });
@@ -496,8 +524,26 @@ export function countPendingAcrossCategories() {
 
 // --- Admin table mappers (read from field-worker shape) ---
 
+export function sortRecordsNewestFirst(records) {
+  const timestamp = (record) => {
+    const date = [
+      record.created_at,
+      record.updated_at,
+      record.visit_date,
+      record.date_of_registration,
+      record.dow,
+      record.month,
+    ].find((value) => value && !Number.isNaN(Date.parse(value)));
+    return date ? Date.parse(date) : 0;
+  };
+  return [...records].sort((left, right) =>
+    timestamp(right) - timestamp(left) ||
+    String(right.id ?? '').localeCompare(String(left.id ?? ''), undefined, { numeric: true })
+  );
+}
+
 export function toAdminResidents(records) {
-  return records.map((r, i) => ({
+  return sortRecordsNewestFirst(records).map((r, i) => ({
     id: r.id ?? i + 1,
     purok: r.purok || '—',
     head: r.household_head || '—',
@@ -525,7 +571,7 @@ export function fromAdminResident(row) {
 }
 
 export function toAdminInfantFeeding(records) {
-  return records.map((r, i) => ({
+  return sortRecordsNewestFirst(records).map((r, i) => ({
     id: r.id ?? i + 1,
     no: String(i + 1).padStart(2, '0'),
     purok: r.purok || '—',
@@ -564,7 +610,7 @@ export function fromAdminInfantFeeding(row) {
 }
 
 export function toAdminLactating(records) {
-  return records.map((r, i) => ({
+  return sortRecordsNewestFirst(records).map((r, i) => ({
     id: r.id ?? i + 1,
     no: i + 1,
     purok: r.purok || '—',
@@ -621,7 +667,7 @@ export function fromAdminLactating(row) {
 }
 
 export function toAdminPregnant(records) {
-  return records.map((r, i) => ({
+  return sortRecordsNewestFirst(records).map((r, i) => ({
     id: r.id ?? i + 1,
     no: i + 1,
     purok: r.purok || '—',
@@ -680,7 +726,7 @@ export function fromAdminPregnant(row) {
 }
 
 export function toAdminNatality(records) {
-  return records.map((r, i) => ({
+  return sortRecordsNewestFirst(records).map((r, i) => ({
     id: r.id ?? i + 1,
     no: i + 1,
     purok: r.purok || '—',
@@ -767,7 +813,7 @@ export function fromAdminEnvironmental(row) {
 }
 
 export function toAdminEnvironmental(records) {
-  return records.map((r, i) => ({
+  return sortRecordsNewestFirst(records).map((r, i) => ({
     id: r.id ?? i + 1,
     purok: r.purok || '—',
     totalHH: r.total_hh ?? '—',
@@ -811,6 +857,8 @@ export function reloadAllAdminData(userId) {
   } else {
     monthlyReportData = mergeMonthlyReportLines(monthlyReportData);
   }
+  const deletedMonthlyReportSlugs = getDeletedMonthlyReportSlugs();
+  monthlyReportData = monthlyReportData.filter((record) => !deletedMonthlyReportSlugs.has(String(record.slug)));
 
   const getOwnedRecords = (key) => {
     const records = getRecords(key);

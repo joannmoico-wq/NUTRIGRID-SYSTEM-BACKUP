@@ -3,6 +3,7 @@ import {
   getPendingRecordDeletions,
   getRecords,
   removePendingRecordDeletion,
+  setRecords,
   upsertRecord,
   storageKeyForCategory,
 } from './bnsStorage';
@@ -14,11 +15,45 @@ const TABLE_BY_CATEGORY = {
   lactatingwoman: 'lactating_women',
   pregnantwoman: 'pregnant_women',
   monthlynatal: 'monthly_natality',
-  monthlyreport: 'monthly_report_lines',
 };
 
+const RECORD_TABLES = {
+  residents: {
+    table: 'residents',
+    idColumn: 'resident_id',
+    fields: { residents_photo: 'photo_url' },
+  },
+  environmental: {
+    table: 'environmental_sanitation',
+    idColumn: 'env_san_id',
+    fields: { environmental_sanitation_photo: 'photo_url' },
+  },
+  infantfeeding: { table: 'infant_feeding', idColumn: 'infant_id', fields: {} },
+  lactatingwoman: {
+    table: 'lactating_women',
+    idColumn: 'lactating_id',
+    fields: { wt: 'weight', ht: 'height' },
+  },
+  pregnantwoman: {
+    table: 'pregnant_women',
+    idColumn: 'pregnant_id',
+    fields: { wt: 'weight', ht: 'height' },
+  },
+  monthlynatal: {
+    table: 'monthly_natality',
+    idColumn: 'natality_id',
+    fields: {
+      name_of_mother: 'mother_name',
+      name_of_child: 'child_name',
+      wt_kg: 'weight_kg',
+      ht_cm: 'height_cm',
+    },
+  },
+};
+
+const REMOTE_PAGE_SIZE = 1000;
+
 function localIdForRecord(category, record) {
-  if (category === 'monthlyreport' && record.slug) return String(record.slug);
   return String(record.id);
 }
 const FIELD_MAPPING_VERSION_KEY = 'bns_supabase_field_mapping_version';
@@ -45,6 +80,120 @@ function isMissingOwnerColumnError(error) {
       (message.includes('column') || message.includes('schema cache'))
     )
   );
+}
+
+async function readUserRows(table, idColumn, ownerColumn, userId) {
+  const rows = [];
+  let offset = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select('*')
+      .eq(ownerColumn, userId)
+      .order(idColumn, { ascending: true })
+      .range(offset, offset + REMOTE_PAGE_SIZE - 1);
+
+    if (error) return { rows: null, error };
+    rows.push(...(data || []));
+    if (!data || data.length < REMOTE_PAGE_SIZE) break;
+    offset += REMOTE_PAGE_SIZE;
+  }
+
+  return { rows, error: null };
+}
+
+function normalizeRemoteRecord(category, row, userId) {
+  const { idColumn, fields } = RECORD_TABLES[category];
+  const payload = row.data && typeof row.data === 'object' && !Array.isArray(row.data)
+    ? row.data
+    : {};
+  const record = { ...payload };
+
+  Object.entries(fields).forEach(([column, field]) => {
+    if (row[column] !== null && row[column] !== undefined) record[field] = row[column];
+  });
+
+  record.id = payload.id ?? row.local_id ?? row[idColumn];
+  record.category = payload.category || category;
+  record.purok = row.purok ?? record.purok ?? '';
+  record.created_at = row.created_at || payload.created_at;
+  record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || userId;
+  record.status = 'Synced';
+  record.synced = true;
+  return record;
+}
+
+async function pullCategoryRecords(category, userId) {
+  const { table, idColumn } = RECORD_TABLES[category];
+  let result = await readUserRows(table, idColumn, 'created_by_user_id', userId);
+  if (result.error && isMissingOwnerColumnError(result.error)) {
+    result = await readUserRows(table, idColumn, 'data->>created_by_user_id', userId);
+  }
+  if (result.error) throw new Error(`${table}: ${result.error.message}`);
+
+  const deletedIds = new Set(
+    getPendingRecordDeletions()
+      .filter((deletion) =>
+        deletion.category === category &&
+        String(deletion.created_by_user_id || '') === String(userId)
+      )
+      .map((deletion) => String(deletion.recordId))
+  );
+  const remoteRecords = result.rows
+    .map((row) => normalizeRemoteRecord(category, row, userId))
+    .filter((record) => record.id !== null && record.id !== undefined);
+  const remoteById = new Map(
+    remoteRecords
+      .filter((record) => !deletedIds.has(String(record.id)))
+      .map((record) => [String(record.id), record])
+  );
+  const storageKey = storageKeyForCategory(category);
+  const localRecords = getRecords(storageKey);
+  let changed = false;
+  const mergedRecords = localRecords.map((record) => {
+    if (String(record.created_by_user_id || '') !== String(userId)) return record;
+    const remoteRecord = remoteById.get(String(record.id));
+    if (!remoteRecord) return record;
+    remoteById.delete(String(record.id));
+    if (isUnsynced(record)) return record;
+    if (Object.entries(remoteRecord).some(([field, value]) => record[field] !== value)) {
+      changed = true;
+    }
+    return { ...record, ...remoteRecord };
+  });
+
+  if (remoteById.size) {
+    mergedRecords.push(...remoteById.values());
+    changed = true;
+  }
+  if (changed) setRecords(storageKey, mergedRecords);
+  return remoteRecords.length;
+}
+
+export async function pullUserRecordsFromSupabase(userId) {
+  if (!navigator.onLine) return { records: 0, skipped: 'offline', errors: [] };
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { records: 0, skipped: 'not-signed-in', errors: [] };
+
+  const activeUserId = userId || session.user.id;
+  if (String(activeUserId) !== String(session.user.id)) {
+    return { records: 0, errors: ['Refusing to fetch records for a different signed-in user.'] };
+  }
+
+  const results = await Promise.allSettled(
+    Object.keys(RECORD_TABLES).map((category) => pullCategoryRecords(category, activeUserId))
+  );
+  const summary = { records: 0, errors: [] };
+  results.forEach((result, index) => {
+    const category = Object.keys(RECORD_TABLES)[index];
+    if (result.status === 'fulfilled') {
+      summary.records += result.value;
+    } else {
+      summary.errors.push(`${category}: ${result.reason.message}`);
+    }
+  });
+  return summary;
 }
 
 function removeLegacyRecord(category, recordId) {
@@ -196,23 +345,6 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       iron_status: record.iron_status || record.iron_given || null,
       remarks: record.remarks || record.notes || null,
     },
-    monthlyreport: {
-      category_label: record.groupLabel || record.category_label || null,
-      subcategory: record.subcategory || null,
-      is_header: record.isHeader ?? false,
-      m1_m: asNumberOrNull(record.m1M),
-      m1_f: asNumberOrNull(record.m1F),
-      m2_m: asNumberOrNull(record.m2M),
-      m2_f: asNumberOrNull(record.m2F),
-      m3_m: asNumberOrNull(record.m3M),
-      m3_f: asNumberOrNull(record.m3F),
-      t_m: asNumberOrNull(record.tM),
-      t_f: asNumberOrNull(record.tF),
-      barangay: record.barangay || null,
-      report_year: asNumberOrNull(record.reportYear ?? record.report_year),
-      sort_order: asNumberOrNull(record.sortOrder ?? record.sort_order),
-      line_slug: record.slug || null,
-    },
   };
 
   return { ...shared, ...(fieldsByCategory[category] || {}) };
@@ -326,8 +458,6 @@ export async function syncPendingRecords({ includeShared = false } = {}) {
 
   // 1. Category storage (current app format)
   for (const [category, table] of Object.entries(TABLE_BY_CATEGORY)) {
-    // Monthly report UI is local-only until the Supabase table exists.
-    if (category === 'monthlyreport') continue;
     const storageKey = storageKeyForCategory(category);
     const records = getRecords(storageKey) || [];
 
