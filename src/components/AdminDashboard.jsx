@@ -1198,7 +1198,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       const approvalColumnWidth = pageWidth * 0.8 / 3;
       const approvalColumnCenter = approvalGroupLeft + approvalColumnWidth * (approvalColumn + 0.5);
       document.addImage(signature.dataUrl, signature.dataUrl.startsWith('data:image/png') ? 'PNG' : 'JPEG',
-        approvalColumnCenter - signatureWidth / 2, approvalY + 50, signatureWidth, signatureHeight);
+        approvalColumnCenter - signatureWidth / 2,
+        approvalY + 55, signatureWidth, signatureHeight);
     }));
 
     const approvalColumns = [
@@ -1213,11 +1214,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       const label = ['PREPARED BY:', 'CHECKED:', 'NOTED:'][index];
       const approvalGroupLeft = pageWidth * 0.1;
       const approvalColumnWidth = pageWidth * 0.8 / 3;
-      const columnLeft = approvalGroupLeft + approvalColumnWidth * index + 5;
+      const columnLeft = approvalGroupLeft + approvalColumnWidth * index;
       const columnCenter = approvalGroupLeft + approvalColumnWidth * (index + 0.5);
       document.setFont('helvetica', 'normal');
       document.setFontSize(8);
-      document.text(label, columnLeft, approvalY + 14);
+      document.text(label, columnLeft + 5, approvalY + 52);
       document.setFont('helvetica', 'bold');
       document.setFontSize(8);
       document.text(name, columnCenter, approvalY + 101, { align: 'center' });
@@ -2362,7 +2363,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               const details = error.context instanceof Response
                 ? (await error.context.clone().json().catch(() => null))?.error
                 : null;
-              throw new Error(`Could not send monthly report email: ${details || error.message}`);
+              const reason = details || (
+                error.name === 'FunctionsFetchError'
+                  ? 'Could not reach the email Edge Function. Deploy send-monthly-report-email to the Supabase project configured in this app.'
+                  : error.message
+              );
+              throw new Error(`Could not send monthly report email: ${reason}`);
             }
             if (data?.error) throw new Error(data.error);
             if (!data?.sent) throw new Error('The email service did not confirm delivery.');

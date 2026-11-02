@@ -1,4 +1,10 @@
+// @ts-ignore Deno resolves npm: specifiers when the Edge Function is deployed.
 import { createClient } from 'npm:@supabase/supabase-js@2';
+
+declare const Deno: {
+  env: { get(name: string): string | undefined };
+  serve(handler: (request: Request) => Response | Promise<Response>): void;
+};
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -13,7 +19,7 @@ function jsonResponse(body: Record<string, unknown>, status = 200) {
   });
 }
 
-Deno.serve(async (request) => {
+Deno.serve(async (request: Request): Promise<Response> => {
   if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders });
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed.' }, 405);
 
