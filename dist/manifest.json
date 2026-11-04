@@ -1,7 +1,7 @@
 {
   "name": "NutriGrid: A BNS MMADS System",
   "short_name": "NutriGrid",
-  "description": "Mobile-first health data collection system for Barangay Nutrition Scholars in Barangay Alawihao.",
+  "description": "Mobile-first Nutrition data collection system for Barangay Health Workers in Barangay Alawihao.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
