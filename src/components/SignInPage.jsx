@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import ForgotPassword from "./ForgotPassword";
+import { CalendarDays, Lock, Mail, User } from "lucide-react";
 
 const svgProps = {
   width: 24,
@@ -86,7 +87,10 @@ const ACCOUNT_STYLES = `
 .account-form { display: flex; flex-direction: column; gap: 17px; }
 .account-field label { display: block; font-size: 14px; font-weight: 600; margin: 0 0 8px 3px; }
 .account-input-wrap { position: relative; }
+.account-icon-wrap { position: relative; }
+.account-field-icon { position: absolute; left: 17px; top: 50%; width: 18px; height: 18px; transform: translateY(-50%); color: var(--muted-foreground); pointer-events: none; }
 .account-input { width: 100%; height: 50px; border: 1px solid transparent; background: var(--secondary); border-radius: 25px; padding: 0 19px; color: var(--foreground); font-family: inherit; font-size: 15px; outline: none; transition: border-color 150ms; }
+.account-input.account-input-with-icon { padding-left: 46px; }
 .account-input::placeholder { color: var(--muted-foreground); }
 .account-input:focus { border-color: var(--ring); }
 .account-input[aria-invalid="true"] { border-color: var(--destructive); }
@@ -95,6 +99,14 @@ const ACCOUNT_STYLES = `
 .account-reveal:hover { color: var(--foreground); background: var(--accent); }
 .account-submit { border-radius: 26px; min-height: 52px; width: 100%; background: var(--primary); color: var(--primary-foreground); font-size: 16px; font-weight: 600; }
 .account-submit:hover { background: var(--foreground); }
+.account-social-divider { display: flex; align-items: center; gap: 12px; margin: 22px 0 0; color: var(--muted-foreground); font-size: 12px; }
+.account-social-divider::before, .account-social-divider::after { content: ""; height: 1px; flex: 1; background: var(--border); }
+.account-social-buttons { display: flex; justify-content: center; gap: 14px; margin-top: 12px; }
+.account-social-button { width: 48px; height: 48px; border: 1px solid var(--border) !important; border-radius: 50%; background: var(--card); color: var(--foreground); }
+.account-social-button:hover { background: var(--secondary); }
+.account-social-button:disabled { cursor: wait; opacity: .6; }
+.account-google-mark { display: block; width: 24px; height: 24px; }
+.account-facebook-mark { width: 24px; height: 24px; border-radius: 50%; background: #1877F2; color: #FFFFFF; font: 700 21px/27px Arial, sans-serif; text-align: center; }
 .account-switch { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 4px; margin: 22px 0 0; font-size: 14px; color: var(--muted-foreground); }
 .account-text-button { color: var(--brand); background: transparent; height: auto; padding: 4px 2px; font-size: inherit; font-weight: 700; }
 .account-text-button:hover { text-decoration: underline; }
@@ -192,7 +204,7 @@ function Button({ variant = "account", className = "", children, ...props }) {
   );
 }
 
-function SignInPage({ onSignIn, onRegister }) {
+function SignInPage({ onSignIn, onRegister, onSocialSignIn }) {
   const [mode, setMode] = useState("login");
   const [showForgotPassword, setShowForgotPassword] = useState(false);
   const [fields, setFields] = useState({
@@ -205,6 +217,7 @@ function SignInPage({ onSignIn, onRegister }) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeProvider, setActiveProvider] = useState("");
   const registering = mode === "register";
   if (showForgotPassword) {
     return (
@@ -263,6 +276,24 @@ function SignInPage({ onSignIn, onRegister }) {
       setIsSubmitting(false);
     }
   }
+  async function submitSocialSignIn(provider) {
+    if (typeof onSocialSignIn !== "function") {
+      setError("Social sign-in is unavailable. Please use email and password.");
+      return;
+    }
+
+    setError("");
+    setActiveProvider(provider);
+    setIsSubmitting(true);
+    try {
+      await onSocialSignIn(provider);
+    } catch (authError) {
+      setError(authError.message || `Could not sign in with ${provider}.`);
+    } finally {
+      setActiveProvider("");
+      setIsSubmitting(false);
+    }
+  }
   function switchMode() {
     setMode(registering ? "login" : "register");
     setError("");
@@ -281,7 +312,7 @@ function SignInPage({ onSignIn, onRegister }) {
           <h1>{registering ? "Create Account" : "Welcome Back"}</h1>
           <img
             className="account-logo"
-            src={LOGO}
+            src="/icon-192.png"
             alt="NutriGrid"
             width="104"
             height="104"
@@ -297,55 +328,65 @@ function SignInPage({ onSignIn, onRegister }) {
             <>
               <div className="account-field">
                 <label htmlFor="fullName">Full name</label>
-                <input
-                  className="account-input"
-                  id="fullName"
-                  autoComplete="name"
-                  placeholder="Your full name"
-                  maxLength={100}
-                  value={fields.fullName}
-                  onChange={(e) => update("fullName", e.target.value)}
-                  aria-required="true"
-                  aria-invalid={!!error && !fields.fullName.trim()}
-                />
+                <div className="account-icon-wrap">
+                  <User className="account-field-icon" aria-hidden="true" />
+                  <input
+                    className="account-input account-input-with-icon"
+                    id="fullName"
+                    autoComplete="name"
+                    placeholder="Your full name"
+                    maxLength={100}
+                    value={fields.fullName}
+                    onChange={(e) => update("fullName", e.target.value)}
+                    aria-required="true"
+                    aria-invalid={!!error && !fields.fullName.trim()}
+                  />
+                </div>
               </div>
               <div className="account-field">
                 <label htmlFor="age">Age</label>
-                <input
-                  className="account-input"
-                  id="age"
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="Your age"
-                  maxLength={3}
-                  value={fields.age}
-                  onChange={(e) => update("age", e.target.value)}
-                  aria-required="true"
-                  aria-invalid={!!error && !fields.age.trim()}
-                />
+                <div className="account-icon-wrap">
+                  <CalendarDays className="account-field-icon" aria-hidden="true" />
+                  <input
+                    className="account-input account-input-with-icon"
+                    id="age"
+                    type="text"
+                    inputMode="numeric"
+                    placeholder="Your age"
+                    maxLength={3}
+                    value={fields.age}
+                    onChange={(e) => update("age", e.target.value)}
+                    aria-required="true"
+                    aria-invalid={!!error && !fields.age.trim()}
+                  />
+                </div>
               </div>
             </>
           )}
           <div className="account-field">
             <label htmlFor="contact">Email address</label>
-            <input
-              className="account-input"
-              id="contact"
-              type="email"
-              autoComplete="username"
-              placeholder="Email address"
-              maxLength={255}
-              value={fields.contact}
-              onChange={(e) => update("contact", e.target.value)}
-              aria-required="true"
-              aria-invalid={!!error && !fields.contact.trim()}
-            />
+            <div className="account-icon-wrap">
+              <Mail className="account-field-icon" aria-hidden="true" />
+              <input
+                className="account-input account-input-with-icon"
+                id="contact"
+                type="email"
+                autoComplete="username"
+                placeholder="Email address"
+                maxLength={255}
+                value={fields.contact}
+                onChange={(e) => update("contact", e.target.value)}
+                aria-required="true"
+                aria-invalid={!!error && !fields.contact.trim()}
+              />
+            </div>
           </div>
           <div className="account-field">
             <label htmlFor="password">Password</label>
             <div className="account-input-wrap">
+              <Lock className="account-field-icon" aria-hidden="true" />
               <input
-                className="account-input account-password"
+                className="account-input account-password account-input-with-icon"
                 id="password"
                 type={showPassword ? "text" : "password"}
                 autoComplete={registering ? "new-password" : "current-password"}
@@ -389,6 +430,49 @@ function SignInPage({ onSignIn, onRegister }) {
                 : "Log in"}
           </Button>
         </form>
+        <div className="account-social-divider" aria-hidden="true">or continue with</div>
+        <div className="account-social-buttons" aria-label="Social sign-in options">
+          <Button
+            variant="social"
+            className="account-social-button"
+            type="button"
+            title="Continue with Google"
+            aria-label="Continue with Google"
+            disabled={isSubmitting}
+            onClick={() => submitSocialSignIn("google")}
+          >
+            {activeProvider === "google" ? (
+              <span className="animate-spin" aria-hidden="true">◌</span>
+            ) : (
+              <svg
+                className="account-google-mark"
+                viewBox="0 0 24 24"
+                role="img"
+                aria-label="Google"
+              >
+                <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.15v2.84A11 11 0 0 0 12 23z" />
+                <path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.15a11 11 0 0 0 0 9.88l3.69-2.84z" />
+                <path fill="#EA4335" d="M12 4.5c1.62 0 3.06.56 4.21 1.66l3.15-3.15C17.45 1.14 14.97 0 12 0 7.73 0 4.04 2.45 2.15 7.06l3.69 2.84C6.71 6.43 9.14 4.5 12 4.5z" />
+              </svg>
+            )}
+          </Button>
+          <Button
+            variant="social"
+            className="account-social-button"
+            type="button"
+            title="Continue with Facebook"
+            aria-label="Continue with Facebook"
+            disabled={isSubmitting}
+            onClick={() => submitSocialSignIn("facebook")}
+          >
+            {activeProvider === "facebook" ? (
+              <span className="animate-spin" aria-hidden="true">◌</span>
+            ) : (
+              <span className="account-facebook-mark" aria-hidden="true">f</span>
+            )}
+          </Button>
+        </div>
         <p className="account-switch">
           {registering ? "Already have an account?" : "Don't have an account?"}
           <Button variant="text" type="button" onClick={switchMode}>

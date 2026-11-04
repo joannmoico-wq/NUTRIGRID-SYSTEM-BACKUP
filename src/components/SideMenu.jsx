@@ -353,7 +353,7 @@ export default function SideMenu({ open, onClose, onLogout, taskNavigationDate }
               onClose();
               await onLogout?.();
             }}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-rose-200 bg-white/80 px-4 py-3 text-sm font-semibold text-rose-600 shadow-sm transition hover:bg-rose-50"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-sm transition hover:bg-red-100"
           >
             <LogOut size={17} />
             Logout

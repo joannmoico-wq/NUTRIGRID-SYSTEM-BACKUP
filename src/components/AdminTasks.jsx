@@ -48,6 +48,7 @@ function localDateInputValue(date = new Date()) {
 }
 
 export default function AdminTasks({
+  darkMode = false,
   initialPurok = '',
   onInitialTaskHandled,
   searchQuery = '',
@@ -67,6 +68,7 @@ export default function AdminTasks({
   const [bhwLoadError, setBhwLoadError] = useState('');
   const [confirmation, setConfirmation] = useState(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
+  const [, setOverdueClock] = useState(0);
 
   const runConfirmedAction = async () => {
     if (!confirmation) return;
@@ -129,10 +131,15 @@ export default function AdminTasks({
       } else if (result.migrationPending) {
         setMessage('Saved on this device. Apply the latest task migration in Supabase to sync overdue details.');
       }
-      refresh();
+      if (result.synced > 0) refresh();
+    };
+    const refreshFromLocalCache = () => {
+      if (active) setTasks(deduplicateTasks(getLocalTasks()));
     };
     const handleStorage = (event) => {
-      if (event.key === 'nutrigrid_tasks' || event.key === 'nutrigrid_pending_task_changes') refresh();
+      if (event.key === 'nutrigrid_tasks' || event.key === 'nutrigrid_pending_task_changes') {
+        refreshFromLocalCache();
+      }
     };
     refresh();
     if (navigator.onLine) void sync();
@@ -143,14 +150,16 @@ export default function AdminTasks({
     const interval = window.setInterval(() => {
       if (navigator.onLine) void sync();
     }, 60000);
+    const overdueInterval = window.setInterval(() => setOverdueClock(Date.now()), 60000);
     window.addEventListener('online', sync);
-    window.addEventListener('bns-tasks-changed', refresh);
+    window.addEventListener('bns-tasks-changed', refreshFromLocalCache);
     window.addEventListener('storage', handleStorage);
     return () => {
       active = false;
       window.clearInterval(interval);
+      window.clearInterval(overdueInterval);
       window.removeEventListener('online', sync);
-      window.removeEventListener('bns-tasks-changed', refresh);
+      window.removeEventListener('bns-tasks-changed', refreshFromLocalCache);
       window.removeEventListener('storage', handleStorage);
       supabase.removeChannel(channel);
     };
@@ -264,30 +273,33 @@ export default function AdminTasks({
       confirmLabel: editingTask ? 'Save changes' : 'Save',
       action: async () => {
         setBusy(true);
-    saveTaskLocally(task);
-    setTasks(deduplicateTasks(getLocalTasks()));
-    setForm(emptyForm);
-    setShowForm(false);
-    setEditingTask(null);
+        const actionLabel = editingTask ? 'Task updated' : 'Task assigned';
+        saveTaskLocally(task);
+        setTasks(deduplicateTasks(getLocalTasks()));
+        setForm(emptyForm);
+        setShowForm(false);
+        setEditingTask(null);
+        setMessage(`${actionLabel} locally. Syncing to Supabase…`);
+        setBusy(false);
 
-    try {
-      const result = await syncPendingTasks();
-      if (result.errors?.length || result.skipped) {
-        setMessage('Saved on this device. The task will sync when this device is online and signed in.');
-      } else if (result.migrationPending) {
-        setMessage('Saved on this device. Apply the latest task migration in Supabase to sync overdue details.');
-      } else if (result.notificationErrors?.length) {
-        setMessage(`Task saved, but push notification was not sent: ${result.notificationErrors[0]}`);
-      } else {
-        setMessage(`${editingTask ? 'Task updated' : 'Task assigned'} to ${bhwName(task.assigned_to_user_id)}.`);
-        await load();
-      }
-    } catch (error) {
-      console.error('Could not sync task:', error);
-      setMessage('Saved on this device. The task will sync when Supabase is available.');
-    } finally {
-      setBusy(false);
-    }
+        void (async () => {
+          try {
+            const result = await syncPendingTasks();
+            if (result.errors?.length || result.skipped) {
+              setMessage('Saved on this device. The task will sync when this device is online and signed in.');
+            } else if (result.migrationPending) {
+              setMessage('Saved on this device. Apply the latest task migration in Supabase to sync overdue details.');
+            } else if (result.notificationErrors?.length) {
+              setMessage(`Task saved, but push notification was not sent: ${result.notificationErrors[0]}`);
+            } else {
+              setMessage(`${actionLabel} to ${bhwName(task.assigned_to_user_id)}.`);
+              await load();
+            }
+          } catch (error) {
+            console.error('Could not sync task:', error);
+            setMessage('Saved on this device. The task will sync when Supabase is available.');
+          }
+        })();
       },
     });
   };
@@ -359,11 +371,18 @@ export default function AdminTasks({
     setShowForm(true);
   };
 
-  const inputClass =
-    'w-full rounded-xl border border-[#E8DCEF] bg-white px-3.5 py-2.5 text-sm text-gray-800 focus:outline-none focus:ring-2 focus:ring-[#8F65FF]/30';
+  const inputClass = `box-border w-full min-w-0 rounded-xl border px-3.5 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#8F65FF]/30 ${
+    darkMode
+      ? 'border-[#67445F] bg-[#302338] text-white placeholder:text-slate-400'
+      : 'border-[#E8DCEF] bg-white text-gray-800'
+  }`;
+  const mutedTextClass = darkMode ? 'text-slate-300' : 'text-gray-600';
+  const modalClass = darkMode
+    ? 'border border-[#67445F] bg-[#2B2038] text-white'
+    : 'bg-white text-gray-900';
 
   return (
-    <div className="space-y-5">
+    <div className={`space-y-5 ${darkMode ? 'text-slate-100' : 'text-gray-900'}`}>
       {/* Header row */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex gap-2 overflow-x-auto">
@@ -375,9 +394,11 @@ export default function AdminTasks({
               className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold transition ${
                 filter === f
                   ? 'text-white shadow-md'
-                  : 'bg-white text-gray-600 border border-[#E8DCEF] hover:bg-purple-50'
+                  : darkMode
+                    ? 'border border-[#67445F] bg-[#302338] text-slate-200 hover:bg-[#392A45]'
+                    : 'border border-[#E8DCEF] bg-white text-gray-600 hover:bg-purple-50'
               }`}
-              style={filter === f ? { background: 'linear-gradient(90deg,#8F65FF,#FF75C3)' } : {}}
+              style={filter === f ? { background: darkMode ? 'linear-gradient(90deg,#A66AD1,#D94E9F)' : 'linear-gradient(90deg,#8F65FF,#FF75C3)' } : {}}
             >
               {f} <span className="opacity-75">· {counts[f]}</span>
             </button>
@@ -387,14 +408,14 @@ export default function AdminTasks({
           type="button"
           onClick={() => { setShowForm(true); void load(); }}
           className="flex items-center gap-2 rounded-full px-5 py-2.5 text-sm font-bold text-white shadow-md"
-          style={{ background: 'linear-gradient(90deg,#8F65FF,#FF75C3)' }}
+          style={{ background: 'linear-gradient(100deg,#F0A0D4 0%,#D94E9F 100%)' }}
         >
           <Plus size={18} /> New task
         </button>
       </div>
 
       {message && (
-        <div className="rounded-xl bg-violet-50 px-4 py-3 text-sm text-violet-800 flex justify-between">
+        <div className={`flex justify-between rounded-xl px-4 py-3 text-sm ${darkMode ? 'bg-[#392A45] text-pink-100' : 'bg-violet-50 text-violet-800'}`}>
           {message}
           <button type="button" onClick={() => setMessage('')} aria-label="Dismiss">
             <X size={16} />
@@ -404,10 +425,12 @@ export default function AdminTasks({
 
       {/* Task grid */}
       {visible.length === 0 ? (
-        <div className="rounded-3xl border-2 border-dashed border-[#E8C4F0] bg-white/60 p-12 text-center">
+        <div className={`rounded-3xl border-2 border-dashed p-12 text-center ${
+          darkMode ? 'border-[#67445F] bg-[#2B2038]' : 'border-[#E8C4F0] bg-white/60'
+        }`}>
           <TaskIcon size={48} className="mx-auto text-[#8F65FF]/70" />
-          <p className="mt-3 font-semibold text-gray-700">No tasks here yet</p>
-          <p className="text-sm text-gray-500">Create a task and assign it to a BHW.</p>
+          <p className={`mt-3 font-semibold ${darkMode ? 'text-white' : 'text-gray-700'}`}>No tasks here yet</p>
+          <p className={`text-sm ${darkMode ? 'text-slate-300' : 'text-gray-500'}`}>Create a task and assign it to a BHW.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -417,7 +440,11 @@ export default function AdminTasks({
             return (
               <article
                 key={t.task_id}
-                className="group relative rounded-3xl border border-[#E8C4F0] bg-gradient-to-br from-white to-[#FAF5FF] p-5 shadow-sm transition hover:shadow-lg"
+                className={`group relative rounded-3xl border p-5 shadow-sm transition hover:shadow-lg ${
+                  darkMode
+                    ? 'border-[#67445F] bg-gradient-to-br from-[#2B2038] to-[#35263D] hover:shadow-black/30'
+                    : 'border-[#E8C4F0] bg-gradient-to-br from-white to-[#FAF5FF]'
+                }`}
               >
               <div className="mb-3 flex items-start justify-between gap-2">
                 <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold uppercase ${PRIORITY_STYLE[t.priority]}`}>
@@ -431,12 +458,12 @@ export default function AdminTasks({
                 </span>
               </div>
 
-              <h3 className="text-base font-bold text-gray-900 leading-snug">{t.title}</h3>
+              <h3 className={`text-base font-bold leading-snug ${darkMode ? 'text-white' : 'text-gray-900'}`}>{t.title}</h3>
               {t.description && (
-                <p className="mt-1 line-clamp-2 text-sm text-gray-600">{t.description}</p>
+                <p className={`mt-1 line-clamp-2 text-sm ${mutedTextClass}`}>{t.description}</p>
               )}
 
-              <div className="mt-4 space-y-1.5 text-xs text-gray-600">
+              <div className={`mt-4 space-y-1.5 text-xs ${mutedTextClass}`}>
                 <p className="flex items-center gap-1.5">
                   <span className="grid h-5 w-5 place-items-center rounded-full bg-gradient-to-br from-[#8F65FF] to-[#FF75C3] text-[10px] font-bold text-white">
                     {(bhwName(t.assigned_to_user_id) || '?').charAt(0).toUpperCase()}
@@ -447,7 +474,7 @@ export default function AdminTasks({
                   <p className="flex items-center gap-1.5"><MapPin size={13} /> {t.purok}</p>
                 )}
                 {t.due_date && (
-                  <p className={`flex items-center gap-1.5 ${isTaskOverdue(t) ? 'font-bold text-gray-400' : ''}`}>
+                  <p className={`flex items-center gap-1.5 ${isTaskOverdue(t) ? 'font-bold text-rose-300' : ''}`}>
                     <Calendar size={13} /> Due {t.due_date} {isTaskOverdue(t) && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px]">Overdue</span>}
                   </p>
                 )}
@@ -457,7 +484,7 @@ export default function AdminTasks({
                 <button
                   type="button"
                   onClick={() => editTask(t)}
-                  className="rounded-full p-2 text-gray-400 transition hover:bg-violet-50 hover:text-violet-600"
+                  className={`rounded-full p-2 transition hover:bg-violet-50 hover:text-violet-600 ${darkMode ? 'text-slate-300' : 'text-gray-400'}`}
                   aria-label="Edit task"
                 >
                   <Edit size={15} />
@@ -475,7 +502,7 @@ export default function AdminTasks({
                 <button
                   type="button"
                   onClick={() => deleteTask(t.task_id)}
-                  className="rounded-full p-2 text-gray-400 transition hover:bg-rose-50 hover:text-rose-600"
+                  className={`rounded-full p-2 transition hover:bg-rose-50 hover:text-rose-600 ${darkMode ? 'text-slate-300' : 'text-gray-400'}`}
                   aria-label="Delete task"
                 >
                   <Trash2 size={15} />
@@ -491,10 +518,10 @@ export default function AdminTasks({
         <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 p-4">
           <form
             onSubmit={saveReschedule}
-            className="w-full max-w-sm space-y-4 rounded-3xl bg-white p-6 shadow-2xl"
+            className={`w-full max-w-sm space-y-4 rounded-3xl p-6 shadow-2xl ${modalClass}`}
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-gray-900">Re-schedule task</h2>
+              <h2 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Re-schedule task</h2>
               <button
                 type="button"
                 onClick={() => setReschedulingTask(null)}
@@ -503,8 +530,8 @@ export default function AdminTasks({
                 <X size={20} />
               </button>
             </div>
-            <p className="text-sm text-gray-600">{reschedulingTask.title}</p>
-            <label className="block text-xs font-semibold text-gray-600">
+            <p className={`text-sm ${mutedTextClass}`}>{reschedulingTask.title}</p>
+            <label className={`block text-xs font-semibold ${mutedTextClass}`}>
               New due date
               <input
                 type="date"
@@ -519,7 +546,9 @@ export default function AdminTasks({
               <button
                 type="button"
                 onClick={() => setReschedulingTask(null)}
-                className="rounded-full border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-600"
+                className={`rounded-full border px-4 py-2 text-sm font-semibold ${
+                  darkMode ? 'border-slate-600 text-slate-200 hover:bg-white/10' : 'border-gray-200 text-gray-600'
+                }`}
               >
                 Cancel
               </button>
@@ -540,16 +569,16 @@ export default function AdminTasks({
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <form
             onSubmit={saveTask}
-            className="w-full max-w-lg space-y-4 rounded-3xl bg-white p-6 shadow-2xl"
+            className={`w-full max-w-lg space-y-4 rounded-3xl p-6 shadow-2xl ${modalClass}`}
           >
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-bold text-gray-900">{editingTask ? 'Edit task' : 'New task'}</h2>
+              <h2 className={`text-lg font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>{editingTask ? 'Edit task' : 'New task'}</h2>
               <button type="button" onClick={() => { setShowForm(false); setEditingTask(null); setForm(emptyForm); }} aria-label="Close">
                 <X size={20} />
               </button>
             </div>
 
-            <label className="block text-xs font-semibold text-gray-600">
+            <label className={`block text-xs font-semibold ${mutedTextClass}`}>
               Task title
               <input
                 className={`${inputClass} mt-1`}
@@ -559,7 +588,7 @@ export default function AdminTasks({
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
               />
             </label>
-            <label className="block text-xs font-semibold text-gray-600">
+            <label className={`block text-xs font-semibold ${mutedTextClass}`}>
               Task details (optional)
               <textarea
                 className={`${inputClass} mt-1`}
@@ -570,8 +599,8 @@ export default function AdminTasks({
               />
             </label>
 
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block text-xs font-semibold text-gray-600">
+            <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+              <label className={`block text-xs font-semibold ${mutedTextClass}`}>
                 Assign to approved BHW
                 <select
                   className={`${inputClass} mt-1`}
@@ -585,20 +614,27 @@ export default function AdminTasks({
                   ))}
                 </select>
               </label>
-              <input
-                className={inputClass}
-                placeholder="Purok"
-                value={form.purok}
-                onChange={(e) => setForm({ ...form, purok: e.target.value })}
-              />
-              <select
-                className={inputClass}
-                value={form.priority}
-                onChange={(e) => setForm({ ...form, priority: e.target.value })}
-              >
-                {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-              </select>
-              <label className="block text-xs font-semibold text-gray-600">
+              <label className={`block min-w-0 text-xs font-semibold ${mutedTextClass}`}>
+                Purok
+                <input
+                  type="text"
+                  className={`${inputClass} mt-1`}
+                  placeholder="Purok"
+                  value={form.purok}
+                  onChange={(e) => setForm({ ...form, purok: e.target.value })}
+                />
+              </label>
+              <label className={`block min-w-0 text-xs font-semibold ${mutedTextClass}`}>
+                Priority
+                <select
+                  className={`${inputClass} mt-1`}
+                  value={form.priority}
+                  onChange={(e) => setForm({ ...form, priority: e.target.value })}
+                >
+                  {PRIORITIES.map((p) => <option key={p}>{p}</option>)}
+                </select>
+              </label>
+              <label className={`block text-xs font-semibold ${mutedTextClass}`}>
                 Due date
                 <input
                   type="date"
@@ -611,7 +647,7 @@ export default function AdminTasks({
 
             {bhwLoadError && <p className="text-xs text-amber-700">{bhwLoadError}</p>}
             {!bhwLoadError && bhws.length === 0 && (
-              <p className="text-xs text-gray-500">No approved BHW accounts found in Supabase.</p>
+              <p className={`text-xs ${darkMode ? 'text-slate-300' : 'text-gray-500'}`}>No approved BHW accounts found in Supabase.</p>
             )}
 
             <button

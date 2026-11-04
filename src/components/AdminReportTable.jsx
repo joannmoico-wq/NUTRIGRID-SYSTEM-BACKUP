@@ -62,6 +62,18 @@ export default function AdminReportTable({
 }) {
   const showActions = Boolean(onEdit || onDelete);
   const totalColumns = columnKeys.length + (showActions ? 1 : 0);
+  const nameColumnNames = new Set([
+    'head',
+    'householdhead',
+    'mothername',
+    'childname',
+    'firstname',
+    'lastname',
+    'name',
+  ]);
+  const updatedColumn = columnKeys.find((key) =>
+    nameColumnNames.has(key.toLowerCase().replace(/[_\s-]/g, ''))
+  ) || columnKeys[0];
 
   const cellValue =
     getCellValue ||
@@ -125,8 +137,7 @@ export default function AdminReportTable({
             <button
               type="button"
               onClick={onAdd}
-              className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm transition"
-              style={{ background: 'linear-gradient(90deg, #2D3A8C 0%, #3D4FA8 100%)' }}
+              className="flex items-center gap-2 rounded-lg bg-[#FCE7F3] px-4 py-2 text-sm font-semibold text-[#9D174D] shadow-sm transition hover:bg-[#FBCFE8]"
             >
               <Plus size={16} />
               Add New
@@ -189,7 +200,14 @@ export default function AdminReportTable({
                       key={key}
                       className={`${tdClass} text-center`}
                     >
-                      {cellValue(row, key)}
+                      <span className="inline-flex max-w-full items-center justify-center gap-1">
+                        <span className="truncate">{cellValue(row, key)}</span>
+                        {key === updatedColumn && (row._raw?.updated_at || row.updated_at) && (
+                          <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-semibold text-pink-700">
+                            Updated
+                          </span>
+                        )}
+                      </span>
                     </td>
                   ))}
                   {showActions && (

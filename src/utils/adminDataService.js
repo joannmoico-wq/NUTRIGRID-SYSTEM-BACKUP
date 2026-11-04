@@ -46,6 +46,7 @@ const COLUMN_MAPS = {
     toilet_sanitary: 'toilet_sanitary',
     toilet_not_sanitary: 'toilet_not_sanitary',
     visit_date: 'visit_date',
+    notes: 'notes',
     environmental_sanitation_photo: 'photo_url',
   },
   infantfeeding: {
@@ -57,14 +58,17 @@ const COLUMN_MAPS = {
     feeding_3_month: 'feeding_3_month',
     feeding_4_month: 'feeding_4_month',
     feeding_5_month: 'feeding_5_month',
+    notes: 'notes',
   },
   lactatingwoman: {
     wt: 'weight',
     ht: 'height',
+    notes: 'notes',
   },
   pregnantwoman: {
     wt: 'weight',
     ht: 'height',
+    notes: 'notes',
   },
   monthlynatal: {
     name_of_mother: 'mother_name',
@@ -109,6 +113,17 @@ function cacheSharedRecords(category, remoteRecords, userId) {
       .filter((record) => !deletedIds.has(String(record.id)))
       .map((record) => [String(record.id), record])
   );
+  localRecords.forEach((localRecord) => {
+    const remoteRecord = remoteById.get(String(localRecord.id));
+    if (!remoteRecord) return;
+    const photo = remoteRecord.photo_url ||
+      remoteRecord.residents_photo ||
+      remoteRecord.environmental_sanitation_photo ||
+      localRecord.photo_url ||
+      localRecord.residents_photo ||
+      localRecord.environmental_sanitation_photo;
+    if (photo) remoteById.set(String(localRecord.id), { ...remoteRecord, photo_url: photo });
+  });
 
   const pendingForAdmin = localRecords.filter(
     (record) =>
@@ -154,10 +169,17 @@ async function readAllRows(category, { table, idColumn }) {
         record[field] = row[column];
       }
     });
+    record.photo_url = record.photo_url ||
+      row.residents_photo ||
+      row.environmental_sanitation_photo ||
+      record.residents_photo ||
+      record.environmental_sanitation_photo ||
+      null;
 
     record.purok = row.purok ?? record.purok ?? '';
     record.id = payload.id ?? row.local_id ?? row[idColumn];
     record.created_at = row.created_at || payload.created_at;
+    record.updated_at = payload.updated_at;
     record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || '';
     record.status = row.status || payload.status || 'Synced';
     record.synced = String(row.status || '').toLowerCase() === 'synced';
@@ -240,19 +262,24 @@ async function readMonthlyReportLines() {
   return (data || []).map(monthlyReportFromRow);
 }
 
-export async function loadAdminDataFromSupabase(userId) {
-  const { data: { session } } = await supabase.auth.getSession();
-  const activeUserId = userId || session?.user?.id || '';
-  const results = await Promise.allSettled([
-    // Keep Residents independent so another report table failure cannot hide the database household data.
+export async function loadAdminDataFromSupabase(userId, { onRecordsLoaded } = {}) {
+  let sessionUserId = '';
+  if (!userId) {
+    const { data: { session } } = await supabase.auth.getSession();
+    sessionUserId = session?.user?.id || '';
+  }
+  const activeUserId = userId || sessionUserId;
+  const categoryResultsPromise = Promise.allSettled([
     readAllRows('residents', ADMIN_TABLES.residents),
     readAllRows('environmental', ADMIN_TABLES.environmental),
     readAllRows('infantfeeding', ADMIN_TABLES.infantfeeding),
     readAllRows('lactatingwoman', ADMIN_TABLES.lactatingwoman),
     readAllRows('pregnantwoman', ADMIN_TABLES.pregnantwoman),
     readAllRows('monthlynatal', ADMIN_TABLES.monthlynatal),
-    readMonthlyReportLines(),
   ]);
+  const monthlyReportPromise = readMonthlyReportLines()
+    .then((data) => ({ data }), (error) => ({ error }));
+  const results = await categoryResultsPromise;
 
   const localFallbacks = [
     'residents',
@@ -284,7 +311,6 @@ export async function loadAdminDataFromSupabase(userId) {
     lactatingWomenData,
     pregnantWomenData,
     natalityData,
-    remoteMonthlyReportData,
   ] = [
     rowsFor(0, 'residents'),
     rowsFor(1, 'environmental'),
@@ -292,13 +318,24 @@ export async function loadAdminDataFromSupabase(userId) {
     rowsFor(3, 'lactatingwoman'),
     rowsFor(4, 'pregnantwoman'),
     rowsFor(5, 'monthlynatal'),
-    results[6].status === 'fulfilled'
-      ? results[6].value
-      : (() => {
-          console.error('Could not load monthly report lines from Supabase:', results[6].reason);
-          return [];
-        })(),
   ];
+  const coreData = {
+    households: toAdminResidents(cacheSharedRecords('residents', households, activeUserId)),
+    environmentalSanitationData: toAdminEnvironmental(cacheSharedRecords('environmental', environmentalSanitationData, activeUserId)),
+    infantFeedingData: toAdminInfantFeeding(cacheSharedRecords('infantfeeding', infantFeedingData, activeUserId)),
+    lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData, activeUserId)),
+    pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData, activeUserId)),
+    natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData, activeUserId)),
+  };
+  onRecordsLoaded?.(coreData);
+
+  const monthlyReportResult = await monthlyReportPromise;
+  const remoteMonthlyReportData = 'error' in monthlyReportResult
+    ? (() => {
+        console.error('Could not load monthly report lines from Supabase:', monthlyReportResult.error);
+        return [];
+      })()
+    : monthlyReportResult.data;
   const localMonthlyReportData = getRecords(STORAGE_KEYS.monthlyReport);
   const deletedMonthlyReportSlugs = getDeletedMonthlyReportSlugs();
   const monthlyReportData = mergeMonthlyReportLines([
@@ -308,12 +345,7 @@ export async function loadAdminDataFromSupabase(userId) {
   setRecords(STORAGE_KEYS.monthlyReport, monthlyReportData);
 
   return {
-    households: toAdminResidents(cacheSharedRecords('residents', households, activeUserId)),
-    environmentalSanitationData: toAdminEnvironmental(cacheSharedRecords('environmental', environmentalSanitationData, activeUserId)),
-    infantFeedingData: toAdminInfantFeeding(cacheSharedRecords('infantfeeding', infantFeedingData, activeUserId)),
-    lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData, activeUserId)),
-    pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData, activeUserId)),
-    natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData, activeUserId)),
+    ...coreData,
     monthlyReportData,
   };
 }

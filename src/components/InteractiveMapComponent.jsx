@@ -1,15 +1,19 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Polygon, Popup, Tooltip, ZoomControl, useMapEvents } from 'react-leaflet';
 import { divIcon } from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {
   AlertTriangle,
   Baby,
+  CheckCircle2,
   Droplets,
   Heart,
+  HeartPulse,
   Home,
   Info,
   MapPin,
+  ShieldAlert,
+  ShieldCheck,
   Utensils,
   Users,
   X,
@@ -516,13 +520,21 @@ const InteractiveMapComponent = ({
   environmentalSanitationData = [],
   natalityData = [],
   dataStatus = 'loading',
+  highlightedPuroks = [],
 }) => {
   const [mapMode, setMapMode] = useState('nutritional');
   const [mapZoom, setMapZoom] = useState(15);
   const [selectedPurokId, setSelectedPurokId] = useState(null);
+  const highlightedPurokNames = useMemo(
+    () => new Set(highlightedPuroks.map(normalizePurokName).filter(Boolean)),
+    [highlightedPuroks]
+  );
   const panelClass = darkMode ? 'bg-[#26263B] border-[#333348]' : 'bg-white border-gray-200';
   const primaryTextClass = darkMode ? 'text-white' : 'text-gray-900';
   const secondaryTextClass = darkMode ? 'text-slate-300' : 'text-gray-600';
+  const mapCardClass = darkMode ? 'bg-[#302338] border-[#67445F]' : 'bg-white border-[#E8C4F0]';
+  const mapCardTextClass = darkMode ? 'text-[#FCE7F3]' : 'text-gray-900';
+  const mapCardMutedTextClass = darkMode ? 'text-pink-200' : 'text-gray-600';
 
   const datasets = useMemo(() => ({
     households,
@@ -578,6 +590,16 @@ const InteractiveMapComponent = ({
   );
   const markerSize = Math.min(46, Math.max(34, 34 + (mapZoom - 15) * 3));
   const selectedPurok = puroks.find(({ id }) => id === selectedPurokId);
+  const selectedPurokBoundary = selectedPurok
+    ? PUROK_BOUNDARY_COLORS[selectedPurok.id - 1]
+    : null;
+
+  useEffect(() => {
+    if (!highlightedPurokNames.size) return;
+    setMapMode('nutritional');
+    const [highlightedPurok] = puroks.filter(({ name }) => highlightedPurokNames.has(name));
+    setSelectedPurokId(highlightedPurok?.id ?? null);
+  }, [highlightedPurokNames, puroks]);
   const selectedWashMarkers = selectedPurok
     ? [
         { key: 'black', label: 'Without potable water source', color: COLORS.black, count: selectedPurok.stats.noPotableWater },
@@ -602,11 +624,11 @@ const InteractiveMapComponent = ({
           box-shadow: 0 1px 3px rgba(15, 23, 42, .16);
         }
       `}</style>
-      <div className={`rounded-lg border p-6 ${darkMode ? 'border-slate-700 bg-gradient-to-r from-slate-900 via-[#252242] to-[#351b4b]' : 'border-blue-200 bg-gradient-to-r from-blue-50 to-purple-50'}`}>
+      <div className={`rounded-lg border p-6 ${mapCardClass}`}>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
-            <h2 className={`text-2xl font-bold ${primaryTextClass}`}>Barangay Alawihao, Daet, Camarines Norte</h2>
-            <p className={`${secondaryTextClass} mt-1`}>{dataStatus === 'loaded' ? 'Shared Supabase data loaded' : dataStatus === 'offline' ? 'Showing saved Admin data offline' : 'Loading shared records'}</p>
+            <h2 className={`text-2xl font-bold ${mapCardTextClass}`}>Barangay Alawihao, Daet, Camarines Norte</h2>
+            <p className={`${mapCardMutedTextClass} mt-1`}>{dataStatus === 'loaded' ? 'Shared Supabase data loaded' : dataStatus === 'offline' ? 'Showing saved Admin data offline' : 'Loading shared records'}</p>
           </div>
           <div className="flex shrink-0 gap-2" role="group" aria-label="Map view">
             {[
@@ -621,23 +643,24 @@ const InteractiveMapComponent = ({
                   setMapMode(mode);
                   setSelectedPurokId(null);
                 }}
-                className={`rounded-lg px-4 py-2 text-sm font-semibold transition ${
-                  mapMode === mode
-                    ? 'bg-blue-600 text-white'
-                    : darkMode
-                      ? 'bg-slate-700 text-slate-200 hover:bg-slate-600'
-                      : 'bg-white text-gray-700 hover:bg-gray-100'
+                className={`rounded-lg border px-4 py-2 text-sm font-semibold transition ${
+                  darkMode
+                    ? 'border-[#E9C9E1] bg-gradient-to-r from-[#F5DDF2] to-[#F3D5E9] text-[#713D65] hover:from-[#F1D2EA] hover:to-[#EFCBE0]'
+                    : mapMode === mode
+                      ? 'border-[#D94E9F] bg-gradient-to-r from-[#F0A0D4] to-[#D94E9F] text-white'
+                      : 'border-[#E8C4F0] bg-white text-gray-700 hover:bg-[#FFF5FB]'
                 }`}
+                aria-current={mapMode === mode ? 'true' : undefined}
               >
                 {label}
               </button>
             ))}
           </div>
         </div>
-        <dl className={`grid grid-cols-3 gap-3 border-t pt-4 text-center ${darkMode ? 'border-slate-700' : 'border-blue-200'}`}>
-          <div><dd className={`text-xl font-bold ${primaryTextClass}`}>13,302</dd><dt className={`text-xs ${secondaryTextClass}`}>Population</dt></div>
-          <div><dd className={`text-xl font-bold ${primaryTextClass}`}>3,099</dd><dt className={`text-xs ${secondaryTextClass}`}>Households</dt></div>
-          <div><dd className={`text-xl font-bold ${primaryTextClass}`}>3,639</dd><dt className={`text-xs ${secondaryTextClass}`}>Families</dt></div>
+        <dl className={`grid grid-cols-3 gap-3 border-t pt-4 text-center ${darkMode ? 'border-[#67445F]' : 'border-gray-200'}`}>
+          <div><dd className={`text-xl font-bold ${mapCardTextClass}`}>13,302</dd><dt className={`text-xs ${mapCardMutedTextClass}`}>Population</dt></div>
+          <div><dd className={`text-xl font-bold ${mapCardTextClass}`}>3,099</dd><dt className={`text-xs ${mapCardMutedTextClass}`}>Households</dt></div>
+          <div><dd className={`text-xl font-bold ${mapCardTextClass}`}>3,639</dd><dt className={`text-xs ${mapCardMutedTextClass}`}>Families</dt></div>
         </dl>
       </div>
 
@@ -674,7 +697,7 @@ const InteractiveMapComponent = ({
                   pathOptions={{
                     color: PUROK_BOUNDARY_COLORS[index].border,
                     weight: 2,
-                    opacity: 0.9,
+                    opacity: 0.95,
                     fillColor: PUROK_BOUNDARY_COLORS[index].fill,
                     fillOpacity: 0.52,
                   }}
@@ -723,10 +746,13 @@ const InteractiveMapComponent = ({
                 className="pointer-events-none absolute inset-x-3 top-1/2 z-[1000] flex -translate-y-1/2 justify-center"
               >
                 <div className="pointer-events-auto relative w-full max-w-[360px] overflow-hidden rounded-[18px] bg-white text-slate-800 shadow-2xl">
-                <header className="flex items-center gap-3 bg-gradient-to-r from-[#0B58B5] to-[#123B83] px-4 py-3 pr-12 text-white">
+                <header
+                  className="flex items-center gap-3 px-4 py-3 pr-12 text-white"
+                  style={{ backgroundColor: selectedPurokBoundary?.border || '#607DAF' }}
+                >
                   <MapPin size={26} className="shrink-0" aria-hidden="true" />
                   <div className="min-w-0 flex-1">
-                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-blue-100">Barangay Alawihao</p>
+                    <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/80">Barangay Alawihao</p>
                     <h3 className="truncate text-xl font-extrabold leading-tight">{selectedPurok.name}</h3>
                   </div>
                   <button
@@ -777,6 +803,37 @@ const InteractiveMapComponent = ({
                     </span>
                   </div>
                 )}
+                {mapMode === 'nutritional' && selectedPurok.stats.normal > 0 && (
+                  <div
+                    role="status"
+                    className="mx-3 mb-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-[#e6f4ea] p-2.5 text-[12px] font-extrabold text-[#137333]"
+                  >
+                    <ShieldCheck size={19} className="shrink-0" aria-hidden="true" />
+                    <span className="flex-1">✓ NORMAL GROWTH — MAINTAIN CARE</span>
+                    <span className="flex shrink-0 items-center gap-1" aria-hidden="true">
+                      <CheckCircle2 size={16} />
+                      <HeartPulse size={16} />
+                    </span>
+                  </div>
+                )}
+                {mapMode === 'wash' && selectedPurok.stats.noSanitaryToilets > 0 && (
+                  <div
+                    role="status"
+                    className="mx-3 mb-3 flex items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 p-2.5 text-[12px] font-extrabold text-amber-800"
+                  >
+                    <ShieldAlert size={19} className="shrink-0" aria-hidden="true" />
+                    <span className="flex-1">UNSANITARY TOILET FACILITY</span>
+                  </div>
+                )}
+                {mapMode === 'wash' && selectedPurok.stats.noPotableWater > 0 && (
+                  <div
+                    role="status"
+                    className="mx-3 mb-3 flex items-center gap-2 rounded-xl border border-blue-200 bg-blue-50 p-2.5 text-[12px] font-extrabold text-blue-900"
+                  >
+                    <Droplets size={19} className="shrink-0" aria-hidden="true" />
+                    <span className="flex-1">NO SAFE WATER SOURCE</span>
+                  </div>
+                )}
                 </div>
               </section>
             )}
@@ -785,13 +842,13 @@ const InteractiveMapComponent = ({
             Use the map zoom buttons or pinch to reveal mapped roads and landmarks. Color-coded people icons show the categories recorded in each purok.
           </p>
           <div className={`mt-4 rounded-lg border p-4 ${panelClass}`}>
-            <h3 className={`mb-1 font-bold ${primaryTextClass}`}>Color legend</h3>
-            <p className={`mb-4 text-xs ${secondaryTextClass}`}>
+            <h3 className={`mb-1 text-center font-bold ${primaryTextClass}`}>Color legend</h3>
+            <p className={`mb-4 text-center text-xs ${secondaryTextClass}`}>
               {mapMode === 'nutritional'
                 ? 'Share of children with normal nutritional status'
                 : 'Environmental records from Supabase: water source and toilet sanitation'}
             </p>
-            <div className={`grid grid-cols-2 gap-3 ${mapMode === 'nutritional' ? 'sm:grid-cols-4' : 'sm:grid-cols-2'}`}>
+            <div className={`grid grid-cols-2 justify-items-center gap-3 ${mapMode === 'nutritional' ? 'sm:grid-cols-4' : 'sm:grid-cols-2'}`}>
               {(mapMode === 'nutritional'
                 ? [
                   { color: COLORS.green, label: '≥95%' },
@@ -804,7 +861,7 @@ const InteractiveMapComponent = ({
                   { color: COLORS.gray, label: 'Without sanitary toilet' },
                 ]
               ).map(({ color, label }) => (
-                <div className={`flex items-center gap-2 text-sm ${secondaryTextClass}`} key={label}>
+                <div className={`flex items-center justify-center gap-2 text-center text-sm ${secondaryTextClass}`} key={label}>
                   <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: color }} />
                   {label}
                 </div>
@@ -815,8 +872,8 @@ const InteractiveMapComponent = ({
 
       </div>
 
-      <section className={`rounded-lg border p-5 sm:p-6 ${darkMode ? 'border-emerald-900/60 bg-gradient-to-r from-emerald-950/40 to-blue-950/40' : 'border-emerald-200 bg-gradient-to-r from-emerald-50 to-blue-50'}`}>
-        <h3 className={`mb-4 text-center font-bold ${primaryTextClass}`}>
+      <section className={`rounded-lg border p-5 sm:p-6 ${mapCardClass}`}>
+        <h3 className={`mb-4 text-center font-bold ${mapCardTextClass}`}>
           Barangay Summary (2026) · {mapMode === 'nutritional' ? 'Nutrition' : 'Environmental'}
         </h3>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -825,10 +882,10 @@ const InteractiveMapComponent = ({
             {
               label: 'Children with normal nutritional status',
               value: totals.normal,
-              color: COLORS.green,
-              border: 'border-emerald-200',
+              color: COLORS.yellow,
+              border: 'border-amber-200',
             },
-            { label: 'At-Risk Children', value: totals.atRisk, color: COLORS.yellow, border: 'border-amber-200' },
+            { label: 'At-Risk Children', value: totals.atRisk, color: COLORS.orange, border: 'border-orange-200' },
             {
               label: 'Critically Malnourished',
               value: totals.criticallyMalnourished,
@@ -841,8 +898,11 @@ const InteractiveMapComponent = ({
             { label: 'Without potable water', value: washTotals.noPotableWater, color: COLORS.black, border: 'border-slate-300' },
             { label: 'Without sanitary toilet', value: washTotals.noSanitaryToilets, color: COLORS.gray, border: 'border-gray-300' },
           ]).map(({ label, value, color, border }) => (
-            <div key={label} className={`rounded-lg border ${border} p-4 text-center ${darkMode ? 'bg-[#202031]' : 'bg-white'}`}>
-              <p className={`text-sm ${secondaryTextClass}`}>{label}</p>
+            <div
+              key={label}
+              className={`rounded-lg border ${darkMode ? 'border-[#76536C] bg-[#39293A]' : `${border} bg-white`} p-4 text-center`}
+            >
+              <p className={`text-sm ${mapCardMutedTextClass}`}>{label}</p>
               <p className="text-2xl font-bold" style={{ color }}>{value}</p>
             </div>
           ))}

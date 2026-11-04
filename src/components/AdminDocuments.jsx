@@ -153,6 +153,10 @@ export default function AdminDocuments({
   const [previewDocument, setPreviewDocument] = useState(null);
   const fileInput = useRef(null);
   const cardClass = darkMode ? 'border-slate-700 bg-[#26263B] text-white' : 'border-[#E8C4F0] bg-white text-gray-900';
+  const mutedTextClass = darkMode ? 'text-slate-300' : 'text-gray-500';
+  const documentCardClass = darkMode
+    ? 'border-slate-600 bg-[#302338] text-slate-100'
+    : 'border-gray-200 bg-white text-gray-800';
   const allDocuments = useMemo(() => [...pwaPhotos, ...documents], [pwaPhotos, documents]);
   const documentUrls = useMemo(() => allDocuments.map((document) => {
     if (document.url) return { id: document.id, url: document.url, revoke: false };
@@ -344,8 +348,8 @@ export default function AdminDocuments({
 
       <div className="mb-7">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-semibold">
-            Uploaded files <span className="text-sm font-normal text-gray-500">({filteredDocuments.length})</span>
+          <h2 className={darkMode ? 'font-semibold text-white' : 'font-semibold text-gray-900'}>
+            Uploaded files <span className={`text-sm font-normal ${mutedTextClass}`}>({filteredDocuments.length})</span>
           </h2>
           <label className="relative flex items-center">
             <span className="sr-only">Filter documents by month</span>
@@ -355,18 +359,22 @@ export default function AdminDocuments({
                 setSelectedMonth(event.target.value);
                 setOpenedFolder(null);
               }}
-              className="appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-9 text-sm text-gray-700 shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+              className={`appearance-none rounded-lg border py-2 pl-3 pr-9 text-sm shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 ${
+                darkMode
+                  ? 'border-slate-600 bg-[#302338] text-white'
+                  : 'border-gray-300 bg-white text-gray-700'
+              }`}
             >
               <option value="all">All months</option>
               {monthOptions.map((month) => (
                 <option key={month} value={month}>{formatMonth(month)}</option>
               ))}
             </select>
-            <ChevronDown size={16} className="pointer-events-none absolute right-3 text-gray-500" aria-hidden="true" />
+            <ChevronDown size={16} className={`pointer-events-none absolute right-3 ${mutedTextClass}`} aria-hidden="true" />
           </label>
         </div>
         {filteredDocuments.length === 0 && (searchQuery || selectedMonth !== 'all') ? (
-          <p className="mt-3 rounded-xl bg-gray-50 p-4 text-sm text-gray-500">
+          <p className={`mt-3 rounded-xl p-4 text-sm ${darkMode ? 'bg-[#302338] text-slate-300' : 'bg-gray-50 text-gray-500'}`}>
             {searchQuery || selectedMonth !== 'all'
               ? 'No files match the selected filters.'
               : 'Your uploaded pictures and documents will appear here.'}
@@ -377,14 +385,16 @@ export default function AdminDocuments({
               <button
                 type="button"
                 onClick={() => setOpenedFolder(null)}
-                className="mb-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium text-violet-700 hover:bg-violet-50"
+                className={`mb-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium ${
+                  darkMode ? 'text-pink-200 hover:bg-white/10' : 'text-violet-700 hover:bg-violet-50'
+                }`}
               >
                 <ChevronLeft size={17} aria-hidden="true" />
                 All folders
               </button>
-              <h3 className="mb-3 text-sm font-semibold text-gray-700">{openedFolder}</h3>
+              <h3 className={`mb-3 text-sm font-semibold ${darkMode ? 'text-slate-100' : 'text-gray-700'}`}>{openedFolder}</h3>
               {(documentFolders.find(([name]) => name === openedFolder)?.[1] || []).length === 0 ? (
-                <p className="rounded-xl bg-gray-50 p-4 text-sm text-gray-500">
+                <p className={`rounded-xl p-4 text-sm ${darkMode ? 'bg-[#302338] text-slate-300' : 'bg-gray-50 text-gray-500'}`}>
                   No files in this category yet.
                 </p>
               ) : <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -392,7 +402,7 @@ export default function AdminDocuments({
               const fileUrl = documentUrls.find((entry) => entry.id === document.id)?.url;
               const imageUrl = (document.type || '').startsWith('image/') ? fileUrl : null;
               return (
-                <li key={document.id} className="overflow-hidden rounded-xl border border-gray-200 bg-white text-gray-800 shadow-sm">
+                <li key={document.id} className={`overflow-hidden rounded-xl border shadow-sm ${documentCardClass}`}>
                   {imageUrl ? (
                     <button
                       type="button"
@@ -400,13 +410,13 @@ export default function AdminDocuments({
                       className="block w-full cursor-zoom-in"
                       aria-label={`View ${document.name}`}
                     >
-                      <img src={imageUrl} alt={document.name} className="h-36 w-full bg-gray-100 object-cover" />
+                      <img src={imageUrl} alt={document.name} className={`h-36 w-full object-cover ${darkMode ? 'bg-slate-800' : 'bg-gray-100'}`} />
                     </button>
                   ) : (
                     <a
                       href={fileUrl}
                       download={document.name}
-                      className="grid h-36 place-items-center bg-violet-50"
+                      className={`grid h-36 place-items-center ${darkMode ? 'bg-[#392A45]' : 'bg-violet-50'}`}
                       aria-label={`Download ${document.name}`}
                     >
                       <FileText size={42} className="text-violet-400" aria-hidden="true" />
@@ -415,12 +425,12 @@ export default function AdminDocuments({
                   )}
                   <div className="p-3">
                     <p className="truncate text-sm font-medium" title={document.path}>{document.name}</p>
-                    <p className="mt-0.5 text-xs text-gray-500">
+                    <p className={`mt-0.5 text-xs ${mutedTextClass}`}>
                       {formatDocumentDate(document.recordDate || document.addedAt) || 'Date unavailable'}
                     </p>
-                    <p className="mt-0.5 text-xs text-gray-500">{formatFileSize(document.size)}</p>
+                    <p className={`mt-0.5 text-xs ${mutedTextClass}`}>{formatFileSize(document.size)}</p>
                     {document.source === 'PWA' && (
-                      <p className="mt-1 text-[11px] font-medium text-violet-700">PWA record photo</p>
+                      <p className={`mt-1 text-[11px] font-medium ${darkMode ? 'text-pink-200' : 'text-violet-700'}`}>PWA record photo</p>
                     )}
                     <div className="mt-2 flex justify-end gap-1">
                       <button
@@ -433,7 +443,7 @@ export default function AdminDocuments({
                           }
                           void remove(document.id);
                         }}
-                        className="rounded-lg p-2 text-gray-500 hover:bg-rose-50 hover:text-rose-700"
+                        className={`rounded-lg p-2 hover:bg-rose-50 hover:text-rose-700 ${darkMode ? 'text-slate-300' : 'text-gray-500'}`}
                         aria-label={`Delete ${document.name}`}
                       >
                         <Trash2 size={16} />
@@ -452,12 +462,16 @@ export default function AdminDocuments({
                   <button
                     type="button"
                     onClick={() => setOpenedFolder(folderName)}
-                    className="flex min-h-36 w-full flex-col items-center justify-center rounded-xl border border-amber-200 bg-amber-50/60 p-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:border-amber-300 hover:bg-amber-50 hover:shadow-md"
+                    className={`flex min-h-36 w-full flex-col items-center justify-center rounded-xl border p-4 text-center shadow-sm transition hover:-translate-y-0.5 hover:shadow-md ${
+                      darkMode
+                        ? 'border-[#67445F] bg-[#302338] hover:border-pink-300 hover:bg-[#392A45]'
+                        : 'border-amber-200 bg-amber-50/60 hover:border-amber-300 hover:bg-amber-50'
+                    }`}
                     aria-label={`Open ${folderName} folder`}
                   >
                     <Folder size={62} strokeWidth={1.6} className="fill-amber-300 text-amber-500" aria-hidden="true" />
-                    <span className="mt-2 line-clamp-2 text-sm font-medium text-gray-800">{folderName}</span>
-                    <span className="mt-0.5 text-xs text-gray-500">
+                    <span className={`mt-2 line-clamp-2 text-sm font-medium ${darkMode ? 'text-slate-100' : 'text-gray-800'}`}>{folderName}</span>
+                    <span className={`mt-0.5 text-xs ${mutedTextClass}`}>
                       {folderDocuments.length} {folderDocuments.length === 1 ? 'file' : 'files'}
                     </span>
                   </button>
@@ -468,7 +482,7 @@ export default function AdminDocuments({
         )}
       </div>
 
-      {error && <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">{error}</p>}
+      {error && <p role="alert" className={`mb-4 rounded-xl p-3 text-sm ${darkMode ? 'bg-rose-950/50 text-rose-200' : 'bg-rose-50 text-rose-700'}`}>{error}</p>}
 
       {previewDocument && (
         <div
@@ -501,7 +515,9 @@ export default function AdminDocuments({
 
       <div
         className={`rounded-2xl border-2 border-dashed px-4 py-10 text-center transition sm:py-14 ${
-          dragging ? 'border-violet-500 bg-violet-50' : 'border-violet-200 bg-violet-50/40'
+          dragging
+            ? darkMode ? 'border-pink-300 bg-[#392A45]' : 'border-violet-500 bg-violet-50'
+            : darkMode ? 'border-[#67445F] bg-[#302338]' : 'border-violet-200 bg-violet-50/40'
         }`}
       >
         {dragging ? (
@@ -509,21 +525,21 @@ export default function AdminDocuments({
         ) : (
           <UploadCloud size={38} className="mx-auto text-violet-500" aria-hidden="true" />
         )}
-        <h2 className="mt-3 text-lg font-semibold">Drag and drop your documents file instantly</h2>
-        <p className="mt-1 text-sm text-gray-500">Or choose files to upload.</p>
+        <h2 className={`mt-3 text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Drag and drop your documents file instantly</h2>
+        <p className={`mt-1 text-sm ${mutedTextClass}`}>Or choose files to upload.</p>
         <div className="mt-5 flex flex-wrap justify-center gap-3">
           <button
             type="button"
             disabled={busy}
             onClick={() => fileInput.current?.click()}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#FCE7F3] px-4 py-2.5 text-sm font-semibold text-[#9D174D] hover:bg-[#FBCFE8] disabled:cursor-not-allowed disabled:opacity-60"
           >
             <FileText size={16} /> Browse files
           </button>
         </div>
-        {busy && <p role="status" className="mt-4 text-sm text-violet-700">Saving files…</p>}
+        {busy && <p role="status" className={`mt-4 text-sm ${darkMode ? 'text-pink-200' : 'text-violet-700'}`}>Saving files…</p>}
       </div>
-      <p className="mt-3 text-xs text-gray-500">Files are saved on this browser and remain available offline on this device.</p>
+      <p className={`mt-3 text-xs ${mutedTextClass}`}>Files are saved on this browser and remain available offline on this device.</p>
     </section>
   );
 }

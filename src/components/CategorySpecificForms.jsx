@@ -64,14 +64,14 @@ const InfantFeedingNotes = () => (
   />
 );
 
-function compressPhoto(file) {
+export function compressPhoto(file) {
   return new Promise((resolve, reject) => {
     const image = new Image();
     const objectUrl = URL.createObjectURL(file);
 
     image.onload = () => {
       try {
-        const maxDimension = 1280;
+        const maxDimension = 640;
         const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
         const canvas = document.createElement('canvas');
         canvas.width = Math.max(1, Math.round(image.width * scale));
@@ -81,7 +81,7 @@ function compressPhoto(file) {
         context.fillStyle = '#fff';
         context.fillRect(0, 0, canvas.width, canvas.height);
         context.drawImage(image, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.72));
+        resolve(canvas.toDataURL('image/jpeg', 0.48));
       } catch (error) {
         reject(error);
       } finally {
@@ -599,7 +599,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
         <button
           type="submit"
           disabled={isSubmitting}
-          className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-bold hover:from-blue-700 hover:to-blue-800 disabled:opacity-50 flex items-center justify-center gap-2"
+          className="flex-1 bg-gradient-to-r from-emerald-500 to-green-700 text-white py-3 rounded-lg font-bold hover:from-emerald-600 hover:to-green-800 disabled:opacity-50 flex items-center justify-center gap-2"
         >
           {isSubmitting ? (
             <>
@@ -642,8 +642,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
   );
   const [photoPreview, setPhotoPreview] = useState(initialData?.photo_url || null);
   const [photoError, setPhotoError] = useState('');
-
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   const handlePhotoCapture = () => {
     const input = document.createElement('input');
@@ -669,19 +668,22 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    setIsSubmitting(true);
-
-    onSubmit({
-      ...formData,
-      category: 'residents',
-      id: initialData?.id || Date.now(),
-      synced: initialData?.synced ?? false,
-      created_at: initialData?.created_at || new Date().toISOString(),
-      status: initialData?.status || 'pending',
-      gps_lat: currentLocation?.lat || initialData?.gps_lat || '',
-      gps_lng: currentLocation?.lng || initialData?.gps_lng || '',
-    });
-    setIsSubmitting(false);
+    try {
+      onSubmit({
+        ...formData,
+        category: 'residents',
+        id: initialData?.id || Date.now(),
+        synced: initialData?.synced ?? false,
+        created_at: initialData?.created_at || new Date().toISOString(),
+        status: initialData?.status || 'pending',
+        gps_lat: currentLocation?.lat || initialData?.gps_lat || '',
+        gps_lng: currentLocation?.lng || initialData?.gps_lng || '',
+      });
+      setSubmitError('');
+    } catch (error) {
+      console.error('Could not submit resident record:', error);
+      setSubmitError(error.message || 'Could not submit this resident record.');
+    }
   };
 
   return (
@@ -768,9 +770,10 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
         {photoError && <p role="alert" className="mt-2 text-sm text-red-700">{photoError}</p>}
       </div>}
       <ResidentNotes />
+      {submitError && <p role="alert" className="text-sm text-red-700">{submitError}</p>}
       <div className="flex gap-3">
-        <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-bold disabled:opacity-50">
-          {isSubmitting ? 'Saving...' : initialData ? 'Update Resident' : 'Save Resident Data'}
+        <button type="submit" className="flex-1 bg-gradient-to-r from-blue-600 to-blue-700 text-white py-3 rounded-lg font-bold">
+          {initialData ? 'Update Resident' : 'Save Resident Data'}
         </button>
         <button type="button" onClick={onCancel} className="px-6 bg-gray-100 text-gray-700 py-3 rounded-lg font-bold">
           Cancel
@@ -782,7 +785,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
 
 // Pregnant Woman registration form (BNS template)
 export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
-  const fieldClass = 'w-full px-4 py-2 border-2 border-purple-300 rounded-lg text-sm';
+  const fieldClass = 'box-border w-full min-w-0 px-4 py-2 border-2 border-pink-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
     purok: '',
@@ -985,13 +988,13 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
         <OptionalPhotoField
           value={formData.photo_url}
           onChange={(photo) => updateField('photo_url', photo)}
-          color="purple"
+          color="pink"
         />
       )}
       <WomenNotes />
 
       <div className="flex gap-3 pt-2">
-        <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-purple-600 to-purple-700 text-white py-3 rounded-lg font-bold disabled:opacity-50">
+        <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-pink-500 to-rose-600 text-white py-3 rounded-lg font-bold disabled:opacity-50">
           {isSubmitting ? 'Saving...' : 'Save Registration'}
         </button>
         <button type="button" onClick={onCancel} className="px-6 bg-gray-100 text-gray-700 py-3 rounded-lg font-bold">
@@ -1004,7 +1007,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
 
 // Lactating Woman registration form (BNS template)
 export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
-  const fieldClass = 'w-full px-4 py-2 border-2 border-red-300 rounded-lg text-sm';
+  const fieldClass = 'box-border w-full min-w-0 px-4 py-2 border-2 border-red-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
     purok: '',
@@ -1215,7 +1218,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
 
 // Monthly Natality with weight, length, and height (BNS template)
 export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
-  const fieldClass = 'w-full px-4 py-2 border-2 border-amber-300 rounded-lg text-sm';
+  const fieldClass = 'box-border w-full min-w-0 px-4 py-2 border-2 border-amber-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => {
     const initial = {
@@ -1237,11 +1240,15 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
       w_l_h: '',
       iron_status: '',
       remarks: '',
-      notes: '',
       visited_by: userName,
       ...initialData,
     };
-    return { ...initial, aim: getCompletedAgeInMonths(initial.dob, initial.dow) };
+    return {
+      ...initial,
+      aim: getCompletedAgeInMonths(initial.dob, initial.dow),
+      remarks: initialData?.remarks || initialData?.notes || '',
+      notes: undefined,
+    };
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -1411,14 +1418,10 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Remarks</label>
-          <textarea rows="2" value={formData.remarks} onChange={(e) => updateField('remarks', e.target.value)} className={fieldClass} placeholder="Additional notes" />
+          <textarea rows="1" value={formData.remarks} onChange={(e) => updateField('remarks', e.target.value)} className={`${fieldClass} resize-none`} placeholder="Additional notes" />
         </div>
       </div>
 
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
-      </div>
       {showPhotoCapture && (
         <OptionalPhotoField
           value={formData.photo_url}
@@ -1459,7 +1462,7 @@ function normalizeFeedingMethod(value) {
 
 // Infant Feeding — Edad ng Sanggol sa Pagbisita (BNS template)
 export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
-  const fieldClass = 'w-full px-4 py-2 border-2 border-pink-300 rounded-lg text-sm';
+  const fieldClass = 'box-border w-full min-w-0 px-4 py-2 border-2 border-violet-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => {
     const initial = {
@@ -1520,7 +1523,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      <p className="text-xs font-bold text-pink-800 uppercase tracking-wide">
+      <p className="text-xs font-bold text-violet-800 uppercase tracking-wide">
         Edad ng Sanggol sa Pagbisita — Paraan ng Pagpapakain o Pagpapainom
       </p>
 
@@ -1541,9 +1544,9 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
         <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', e.target.value)} className={fieldClass} />
       </div>
 
-      <div className="space-y-3 bg-pink-50 rounded-xl p-4 border border-pink-200">
-        <p className="text-xs font-semibold text-pink-900">Feeding method at each visit age</p>
-        <p className="text-xs text-pink-800">E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding</p>
+      <div className="space-y-3 bg-violet-50 rounded-xl p-4 border border-violet-200">
+        <p className="text-xs font-semibold text-violet-900">Feeding method at each visit age</p>
+        <p className="text-xs text-violet-800">E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding</p>
         {feedingFields.map(({ key, label }) => (
           <div key={key}>
             <label className="block text-sm font-semibold text-gray-700 mb-2">{label} *</label>
@@ -1569,13 +1572,13 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
         <OptionalPhotoField
           value={formData.photo_url}
           onChange={(photo) => updateField('photo_url', photo)}
-          color="pink"
+          color="purple"
         />
       )}
       <InfantFeedingNotes />
 
       <div className="flex gap-3 pt-2">
-        <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-pink-600 to-pink-700 text-white py-3 rounded-lg font-bold disabled:opacity-50">
+        <button type="submit" disabled={isSubmitting} className="flex-1 bg-gradient-to-r from-violet-500 to-purple-600 text-white py-3 rounded-lg font-bold disabled:opacity-50">
           {isSubmitting ? 'Saving...' : 'Save Record'}
         </button>
         <button type="button" onClick={onCancel} className="px-6 bg-gray-100 text-gray-700 py-3 rounded-lg font-bold">

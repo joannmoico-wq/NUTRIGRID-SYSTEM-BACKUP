@@ -60,8 +60,28 @@ export async function signInWithSupabase({ contact, password }) {
   return toUserData(data.user, profile);
 }
 
-export async function restoreSupabaseSession() {
-  const { data: { session } } = await supabase.auth.getSession();
+export async function signInWithSupabaseOAuth(provider) {
+  const { error } = await supabase.auth.signInWithOAuth({
+    provider,
+    options: { redirectTo: window.location.origin },
+  });
+  if (error) {
+    if (/unsupported provider|provider is not enabled/i.test(error.message)) {
+      throw new Error(
+        `${provider} sign-in is not enabled in Supabase Auth. Enable the provider and add its OAuth credentials in the Supabase project settings.`
+      );
+    }
+    throw new Error(`Could not start ${provider} sign-in: ${error.message}`);
+  }
+}
+
+export async function restoreSupabaseSession(existingSession) {
+  let session = existingSession;
+  if (existingSession === undefined) {
+    const { data: sessionData, error } = await supabase.auth.getSession();
+    if (error) throw new Error(`Could not restore sign-in session: ${error.message}`);
+    session = sessionData.session;
+  }
   if (!session) return null;
 
   const profile = await loadProfile(session.user.id);

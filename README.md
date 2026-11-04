@@ -157,3 +157,20 @@ Everything is the same - just edit `src/App.jsx`
 ---
 
 **Use this version if you want the same experience as KaBudget!**
+# Report email setup
+
+The monthly report email uses a server-side Nodemailer/Gmail SMTP endpoint. For local
+development, put `GMAIL_USER` and a newly generated `GMAIL_APP_PASS` in `.env.local`;
+the Vite development server exposes `/api/reports/email`. The SMTP password is never
+sent to the browser. Do not commit `.env.local`.
+
+The endpoint verifies the Supabase access token and requires an approved `admin`
+profile. The authenticated admin's name is used as the sender display name and their
+profile email is set as Reply-To; Gmail's authenticated mailbox remains the sender
+address. The generated signed PDF is attached.
+
+For production, run `npm run email-api` as a separate Node service with
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `GMAIL_USER`, and `GMAIL_APP_PASS`
+configured as server secrets. Set `REPORT_EMAIL_ALLOWED_ORIGINS` to the exact
+frontend origin(s), and set `VITE_REPORT_EMAIL_API_URL` at frontend build time to
+`https://<api-host>/api/reports/email`. Static hosting alone cannot run the SMTP API.

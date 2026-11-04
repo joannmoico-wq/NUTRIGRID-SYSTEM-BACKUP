@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Eye, FileDown, FileUp, Mail, Send, X } from 'lucide-react';
+import { Eye, FileDown, FileUp, Mail, Send, Trash2, X } from 'lucide-react';
 
 function dataUrlToBytes(dataUrl) {
   const base64 = dataUrl.split(',')[1];
@@ -82,7 +82,6 @@ export default function ReportExportActions({
   const signatureInput = useRef(null);
   const [signatureSlots, setSignatureSlots] = useState({});
   const [selectedSigner, setSelectedSigner] = useState(null);
-  const [signatureChoicesOpen, setSignatureChoicesOpen] = useState(false);
   const [signaturePreviewOpen, setSignaturePreviewOpen] = useState(false);
   const [signedPdfUrl, setSignedPdfUrl] = useState('');
   const [signedPdfBlob, setSignedPdfBlob] = useState(null);
@@ -106,6 +105,17 @@ export default function ReportExportActions({
   const allSignaturesAdded = signatureOptions.length
     ? signatureOptions.every((option) => Boolean(signatureSlots[option.id]))
     : signatures.length > 0;
+
+  const removeSignature = (signerId) => {
+    setSignatureSlots((current) => {
+      const next = { ...current };
+      delete next[signerId];
+      return next;
+    });
+    setSignedPdfUrl('');
+    setSignedPdfBlob(null);
+    setError('');
+  };
 
   const handleSignatureFile = (event) => {
     const file = event.target.files?.[0];
@@ -211,8 +221,8 @@ export default function ReportExportActions({
   const exportWord = async () => {
     const {
       AlignmentType,
+      BorderStyle,
       Document,
-      Footer,
       ImageRun,
       PageOrientation,
       Packer,
@@ -220,17 +230,29 @@ export default function ReportExportActions({
       Table,
       TableCell,
       TableRow,
-      TabStopType,
       TextRun,
       WidthType,
     } = await import('docx');
+    const wordTableWidth = 14400;
+    const tableColumnWidths = headers.map((_, index) =>
+      Math.floor(wordTableWidth / headers.length) +
+      (index < wordTableWidth % headers.length ? 1 : 0)
+    );
+    const tableCellMargins = { top: 80, bottom: 80, left: 55, right: 55 };
+    const tableBorders = Object.fromEntries(
+      ['top', 'bottom', 'left', 'right', 'insideHorizontal', 'insideVertical'].map((side) => [
+        side,
+        { style: BorderStyle.SINGLE, size: 2, color: 'D9D9D9' },
+      ])
+    );
     const cellParagraph = (value, bold = false) => new Paragraph({
       alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: String(value ?? ''), bold, size: 16 })],
+      spacing: { before: 0, after: 0 },
+      children: [new TextRun({ text: String(value ?? ''), bold, size: 14 })],
     });
     const signatureRuns = await Promise.all(signatures.map(async (signature) => {
       const { width, height } = signature;
-      const scale = Math.min(240 / width, 68 / height);
+      const scale = Math.min(180 / width, 42 / height);
       return new ImageRun({
         data: dataUrlToBytes(signature.dataUrl),
         transformation: { width: width * scale, height: height * scale },
@@ -241,29 +263,6 @@ export default function ReportExportActions({
       columns[signature.signer?.id === 'rhm' ? 1 : 0] = signatureRuns[index];
       return columns;
     }, []);
-    const approvalTabStops = [
-      { type: TabStopType.LEFT, position: 4500 },
-      { type: TabStopType.LEFT, position: 9000 },
-    ];
-    const approvalLine = (values, bold = false, size = 16) => new Paragraph({
-      tabStops: approvalTabStops,
-      children: [new TextRun({
-        text: `\t${values[0]}\t${values[1]}\t${values[2]}`,
-        bold,
-        size,
-      })],
-    });
-    const signatureLine = new Paragraph({
-      tabStops: approvalTabStops,
-      spacing: { before: 120, after: 120 },
-      children: [
-        new TextRun('\t'),
-        ...(signatureColumnRuns[0] ? [signatureColumnRuns[0]] : []),
-        new TextRun('\t'),
-        ...(signatureColumnRuns[1] ? [signatureColumnRuns[1]] : []),
-      ],
-    });
-
     const approvalColumns = [
       ['PREPARED BY:', 'LAARNI B. POMADA', 'Barangay Nutrition Scholar'],
       [
@@ -273,18 +272,61 @@ export default function ReportExportActions({
       ],
       ['NOTED:', 'ANITA P. AURO, RN, RM', 'Municipal Nutrition Action Officer II'],
     ];
-    const footer = new Footer({
+    const noBorders = Object.fromEntries(
+      ['top', 'bottom', 'left', 'right', 'insideHorizontal', 'insideVertical'].map((side) => [
+        side,
+        { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' },
+      ])
+    );
+    const approvalCell = (content, alignment = AlignmentType.CENTER) => new TableCell({
+      width: { size: 4800, type: WidthType.DXA },
+      margins: tableCellMargins,
+      verticalAlignment: 'center',
+      borders: noBorders,
       children: [
-        approvalLine(approvalColumns.map(([label]) => label), false, 16),
-        signatureLine,
-        approvalLine(approvalColumns.map(([, name]) => name), true, 16),
-        approvalLine(approvalColumns.map(([, , role]) => role), false, 14),
+        new Paragraph({
+          alignment,
+          spacing: { before: 0, after: 0 },
+          children: content,
+        }),
       ],
     });
+    const approvalRows = [
+      approvalColumns.map(([label]) =>
+        approvalCell([new TextRun({ text: label, size: 16 })], AlignmentType.LEFT)
+      ),
+      approvalColumns.map((_, index) =>
+        approvalCell(signatureColumnRuns[index] ? [signatureColumnRuns[index]] : [])
+      ),
+      approvalColumns.map(([, name]) =>
+        approvalCell([new TextRun({ text: name, bold: true, size: 16 })])
+      ),
+      approvalColumns.map(([, , role]) =>
+        approvalCell([new TextRun({ text: role, size: 14 })])
+      ),
+    ];
     const tableRows = [
-      new TableRow({ children: headers.map((header) => new TableCell({ children: [cellParagraph(header, true)] })) }),
+      new TableRow({
+        tableHeader: true,
+        cantSplit: true,
+        children: headers.map((header, index) => new TableCell({
+          width: { size: tableColumnWidths[index], type: WidthType.DXA },
+          margins: tableCellMargins,
+          verticalAlignment: 'center',
+          shading: { fill: 'EEEAF6' },
+          borders: tableBorders,
+          children: [cellParagraph(header, true)],
+        })),
+      }),
       ...rows.map((row) => new TableRow({
-        children: row.map((value) => new TableCell({ children: [cellParagraph(value, true)] })),
+        cantSplit: true,
+        children: headers.map((_, index) => new TableCell({
+          width: { size: tableColumnWidths[index], type: WidthType.DXA },
+          margins: tableCellMargins,
+          verticalAlignment: 'center',
+          borders: tableBorders,
+          children: [cellParagraph(row[index] ?? '')],
+        })),
       })),
     ];
     const children = [
@@ -299,19 +341,30 @@ export default function ReportExportActions({
       })),
       new Table({
         rows: tableRows,
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        columnWidths: headers.map(() => Math.floor(9000 / headers.length)),
+        width: { size: wordTableWidth, type: WidthType.DXA },
+        columnWidths: tableColumnWidths,
         alignment: AlignmentType.CENTER,
+        layout: 'fixed',
+      }),
+      new Paragraph({ spacing: { before: 1080, after: 0 }, children: [] }),
+      new Table({
+        rows: approvalRows.map((cells) => new TableRow({ cantSplit: true, children: cells })),
+        width: { size: wordTableWidth, type: WidthType.DXA },
+        columnWidths: [4800, 4800, 4800],
+        alignment: AlignmentType.CENTER,
+        layout: 'fixed',
       }),
     ];
 
     const document = new Document({
       sections: [{
-        properties: { page: { size: { orientation: PageOrientation.LANDSCAPE } } },
-        children,
-        footers: {
-          default: footer,
+        properties: {
+          page: {
+            size: { orientation: PageOrientation.LANDSCAPE },
+            margin: { top: 720, right: 720, bottom: 720, left: 720 },
+          },
         },
+        children,
       }],
     });
     const blob = await Packer.toBlob(document);
@@ -351,7 +404,7 @@ export default function ReportExportActions({
         type="button"
         onClick={() => setMenuOpen((open) => !open)}
         aria-expanded={menuOpen}
-        className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition dark:border-gray-500 dark:text-gray-100"
+        className="inline-flex items-center gap-2 rounded-lg border border-[#E8DCEF] bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-[#FFF7FB] dark:border-gray-500 dark:bg-white dark:text-gray-700"
       >
         <FileDown size={16} /> Export
       </button>
@@ -361,7 +414,7 @@ export default function ReportExportActions({
           onClick={() => void handleOpenEmail()}
           disabled={busy || !allSignaturesAdded}
           title={!allSignaturesAdded ? 'Add both signatures before emailing the signed report.' : 'Review and email the signed monthly report'}
-          className="ml-2 inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:opacity-50"
+          className="ml-2 inline-flex items-center gap-2 rounded-lg border border-[#E8DCEF] bg-white px-3 py-2 text-sm font-semibold text-gray-700 transition hover:bg-[#FFF7FB] disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Mail size={16} /> E-signed PDF &amp; Email
         </button>
@@ -375,60 +428,59 @@ export default function ReportExportActions({
           className="hidden"
           onChange={handleSignatureFile}
         />
-        <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2">
-          <span aria-hidden="true" />
+        <div className="space-y-2">
           {signatureOptions.length ? (
-            <button
-              type="button"
-              onClick={() => setSignatureChoicesOpen((open) => !open)}
-              aria-expanded={signatureChoicesOpen}
-              className="flex items-center justify-center gap-2 rounded-lg border border-[#E8DCEF] px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-violet-50"
-            >
-              <FileUp size={16} />
-              {signatures.length ? 'Manage E-signatures' : 'Insert E-signatures'}
-            </button>
+            <div className="grid grid-cols-2 gap-2">
+              {signatureOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedSigner(option);
+                    signatureInput.current?.click();
+                  }}
+                  className="inline-flex min-h-12 w-full items-center justify-center gap-1 rounded-lg border border-[#E8DCEF] px-2 py-2 text-center text-xs font-semibold leading-tight text-gray-700 hover:bg-violet-50"
+                >
+                  <FileUp size={15} />
+                  {signatureSlots[option.id] ? `Change ${option.label}` : `Add ${option.label}`}
+                </button>
+              ))}
+            </div>
           ) : (
             <button
               type="button"
               onClick={() => signatureInput.current?.click()}
-              className="flex items-center justify-center gap-2 rounded-lg border border-[#E8DCEF] px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-violet-50"
+              className="flex min-h-12 w-full items-center justify-center gap-2 rounded-lg border border-[#E8DCEF] px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-violet-50"
             >
               <FileUp size={16} />
-              {signatures.length ? 'Change E-signature' : 'Insert E-signature'}
+              {signatures.length ? 'Change signature' : 'Add signature'}
             </button>
           )}
+        </div>
+        <div className="mt-2 flex justify-center">
           <button
             type="button"
             disabled={!allSignaturesAdded || busy}
             onClick={() => void exportFiles('preview')}
-            className="inline-flex items-center justify-self-end gap-1 rounded-lg border border-violet-200 px-2.5 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-40"
+            className="inline-flex items-center justify-center gap-1 rounded-lg border border-violet-200 px-3 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Eye size={16} /> Preview
           </button>
         </div>
-        {signatureChoicesOpen && signatureOptions.length > 0 && (
-          <div className="mt-2 flex flex-wrap justify-center gap-2">
-            {signatureOptions.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => {
-                  setSelectedSigner(option);
-                  setSignatureChoicesOpen(false);
-                  signatureInput.current?.click();
-                }}
-                className="rounded-lg border border-violet-200 px-3 py-2 text-sm font-semibold text-violet-800 hover:bg-violet-50"
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        )}
         {signatures.map((signature) => (
           <div key={signature.signer?.id || 'signature'} className="mt-2 flex items-center gap-2 text-xs text-gray-500">
             <img src={signature.dataUrl} alt={`${signature.signer?.label || 'E'} signature preview`} className="h-16 max-w-40 object-contain" />
             {signature.signer?.label && <span className="font-semibold">{signature.signer.label}</span>}
             <span className="text-emerald-700">Added</span>
+            <button
+              type="button"
+              onClick={() => removeSignature(signature.signer?.id || 'signature')}
+              aria-label={`Delete ${signature.signer?.label || 'e-signature'}`}
+              title="Delete signature"
+              className="ml-auto rounded-md p-1.5 text-red-600 transition hover:bg-red-50"
+            >
+              <Trash2 size={16} />
+            </button>
           </div>
         ))}
         <div className="mt-3 flex flex-col gap-2">
@@ -436,7 +488,7 @@ export default function ReportExportActions({
             type="button"
             disabled={busy}
             onClick={() => void exportFiles('pdf')}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#E8DCEF] px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-violet-50 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#E8DCEF] bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-[#FFF7FB] disabled:opacity-50"
           >
             <FileDown size={16} /> Export PDF only
           </button>
@@ -444,7 +496,7 @@ export default function ReportExportActions({
             type="button"
             disabled={busy || !allSignaturesAdded}
             onClick={() => void exportFiles('signed-pdf')}
-            className="inline-flex items-center justify-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#E8DCEF] bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-[#FFF7FB] disabled:opacity-50"
           >
             <FileDown size={16} /> {busy ? 'Exporting…' : 'E-sign & export PDF'}
           </button>
@@ -452,7 +504,7 @@ export default function ReportExportActions({
             type="button"
             disabled={busy || !allSignaturesAdded}
             onClick={() => void exportFiles('word')}
-            className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#E8DCEF] px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-violet-50 disabled:opacity-50"
+            className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#E8DCEF] bg-white px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-[#FFF7FB] disabled:opacity-50"
           >
             <FileDown size={16} /> {busy ? 'Exporting…' : 'E-sign & export Word'}
           </button>

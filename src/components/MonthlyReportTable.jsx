@@ -102,8 +102,7 @@ export default function MonthlyReportTable({
             <button
               type="button"
               onClick={openAdd}
-              className="flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold text-white shadow-sm"
-              style={{ background: 'linear-gradient(90deg, #2D3A8C 0%, #3D4FA8 100%)' }}
+              className="flex items-center gap-2 rounded-lg bg-[#FCE7F3] px-4 py-2 text-sm font-semibold text-[#9D174D] shadow-sm transition hover:bg-[#FBCFE8]"
             >
               <Plus size={16} />
               Enter Monthly Data

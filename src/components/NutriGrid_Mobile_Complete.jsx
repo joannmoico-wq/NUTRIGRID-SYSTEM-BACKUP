@@ -1,5 +1,5 @@
 import { registerPushToken } from '../utils/pushNotifications';
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Camera, 
   MapPin, 
@@ -18,6 +18,9 @@ import {
   Baby,
   Heart,
   Users,
+  Calendar,
+  TrendingDown,
+  TrendingUp,
   ChevronLeft,
   FileText,
   Edit,
@@ -39,6 +42,7 @@ import {
 import {
   registerWithSupabase,
   signInWithSupabase,
+  signInWithSupabaseOAuth,
   restoreSupabaseSession,
   signOutSupabase,
 } from '../utils/supabaseAuth';
@@ -58,6 +62,7 @@ import {
 import ReportRowActions from './ReportRowActions';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
 import { sortPurokCounts, PUROK_OPTIONS } from '../utils/purok';
+import { calculateMonthlyTrend } from '../utils/recordTrends';
 import BnsSearchBar from './BnsSearchBar';
 import WelcomePage from './WelcomePage';
 import SignInPage from './SignInPage';
@@ -73,6 +78,7 @@ import {
   LactatingWomanForm,
   InfantFeedingForm,
   MonthlyNatalityForm,
+  compressPhoto,
 } from './CategorySpecificForms';
 
 /**
@@ -389,6 +395,17 @@ const RecordsList = ({
     return 'Pending';
   };
 
+  const updatedName = (value, record) => (
+    <span className="inline-flex max-w-full items-center gap-1">
+      <span className="truncate">{value || '—'}</span>
+      {record.updated_at && (
+        <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-semibold text-pink-700">
+          Updated
+        </span>
+      )}
+    </span>
+  );
+
   if (selectedCategory === 'residents') {
     return (
       <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
@@ -408,13 +425,14 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[520px]">
-                <div className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_4.5rem] gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+              <div className="min-w-[620px]">
+                <div className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_1.2fr_4.5rem] gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wide text-center">
                   <span>Purok</span>
                   <span>Head</span>
                   <span>Members</span>
                   <span>Status</span>
                   <span>Last Visit</span>
+                  <span>Notes</span>
                   <span className="text-right">Actions</span>
                 </div>
                 {categoryRecords.length === 0 ? (
@@ -425,10 +443,10 @@ const RecordsList = ({
                   categoryRecords.map((record) => (
                     <div
                       key={record.id}
-                      className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_4.5rem] gap-2 px-4 py-3 border-b border-gray-100 text-sm text-gray-800 items-center text-center"
+                      className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_1.2fr_4.5rem] gap-2 px-4 py-3 border-b border-gray-100 text-sm text-gray-800 items-center text-center"
                     >
                       <span className="font-medium truncate">{record.purok || '—'}</span>
-                      <span className="truncate">{record.household_head || '—'}</span>
+                      {updatedName(record.household_head, record)}
                       <span>{record.total_members ?? '—'}</span>
                       <span
                         className={`text-xs font-semibold ${
@@ -438,6 +456,7 @@ const RecordsList = ({
                         {statusLabel(record)}
                       </span>
                       <span className="text-xs text-gray-600">{formatLastVisit(record)}</span>
+                      <span className="truncate text-xs" title={record.notes || ''}>{record.notes || '—'}</span>
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -527,7 +546,9 @@ const RecordsList = ({
                     >
                       {environmentalColumns.map(([key]) => (
                         <span key={key} className="truncate" title={String(record[key] ?? '')}>
-                          {typeof record[key] === 'boolean'
+                          {key === 'visited_by'
+                            ? updatedName(record.visited_by, record)
+                            : typeof record[key] === 'boolean'
                             ? yesNo(record[key])
                             : key === 'visit_date'
                               ? formatTableDate(record[key])
@@ -576,6 +597,7 @@ const RecordsList = ({
       'Ht',
       'BMI',
       'MUAC',
+      'Notes',
     ];
 
     return (
@@ -597,7 +619,7 @@ const RecordsList = ({
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[1550px]">
-                <div className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                <div className="grid grid-cols-[repeat(21,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
                   {[...pwHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">
                       {label}
@@ -612,12 +634,12 @@ const RecordsList = ({
                   allPwRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(21,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{formatTableDate(record.date_of_registration)}</span>
                       <span className="truncate">{record.family_serial_number || '—'}</span>
                       <span>{record.purok || '—'}</span>
-                      <span className="truncate">{record.last_name || '—'}</span>
+                      {updatedName(record.last_name, record)}
                       <span className="truncate">{record.first_name || '—'}</span>
                       <span className="truncate">{record.middle_name || '—'}</span>
                       <span className="truncate">{record.spouse_name || '—'}</span>
@@ -633,6 +655,7 @@ const RecordsList = ({
                       <span>{record.height ?? '—'}</span>
                       <span>{record.bmi ?? '—'}</span>
                       <span>{record.muac ?? '—'}</span>
+                      <span className="truncate" title={record.notes || ''}>{record.notes || '—'}</span>
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -673,6 +696,7 @@ const RecordsList = ({
       'BMI',
       'MUAC',
       'Date Delivered',
+      'Notes',
     ];
 
     return (
@@ -694,7 +718,7 @@ const RecordsList = ({
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[1550px]">
-                <div className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                <div className="grid grid-cols-[repeat(21,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
                   {[...lwHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">
                       {label}
@@ -709,12 +733,12 @@ const RecordsList = ({
                   allLwRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(21,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{idx + 1}</span>
                       <span>{formatTableDate(record.date_of_registration)}</span>
                       <span className="truncate">{record.family_serial_number || '—'}</span>
-                      <span className="truncate">{record.last_name || '—'}</span>
+                      {updatedName(record.last_name, record)}
                       <span className="truncate">{record.first_name || '—'}</span>
                       <span className="truncate">{record.middle_name || '—'}</span>
                       <span>{record.purok || '—'}</span>
@@ -730,6 +754,7 @@ const RecordsList = ({
                       <span>{record.bmi ?? '—'}</span>
                       <span>{record.muac ?? '—'}</span>
                       <span>{formatTableDate(record.date_delivered)}</span>
+                      <span className="truncate" title={record.notes || ''}>{record.notes || '—'}</span>
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -805,7 +830,7 @@ const RecordsList = ({
                     >
                       <span className="truncate">{formatMonth(record.month)}</span>
                       <span>{record.purok || '—'}</span>
-                      <span className="truncate">{record.mother_name || '—'}</span>
+                      {updatedName(record.mother_name, record)}
                       <span>{record.mother_age ?? '—'}</span>
                       <span className="truncate">{record.child_name || '—'}</span>
                       <span>{record.sex === 'boys' ? 'Male' : record.sex === 'girls' ? 'Female' : '—'}</span>
@@ -852,6 +877,7 @@ const RecordsList = ({
       '3 Buwan',
       '4 Buwan',
       '5 Buwan',
+      'Notes',
     ];
 
     return (
@@ -873,7 +899,7 @@ const RecordsList = ({
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[1030px]">
-                <div className="grid grid-cols-[repeat(11,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
+                <div className="grid grid-cols-[repeat(12,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
                   {[...ifHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
@@ -886,11 +912,11 @@ const RecordsList = ({
                   allIfRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(11,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(12,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{String(idx + 1).padStart(2, '0')}</span>
                       <span>{record.purok || '—'}</span>
-                      <span className="truncate">{record.mother_name || '—'}</span>
+                      {updatedName(record.mother_name, record)}
                       <span className="truncate">{record.child_name || '—'}</span>
                       <span>{record.feeding_1_week || '—'}</span>
                       <span>{record.feeding_1_month || '—'}</span>
@@ -898,6 +924,7 @@ const RecordsList = ({
                       <span>{record.feeding_3_month || '—'}</span>
                       <span>{record.feeding_4_month || '—'}</span>
                       <span>{record.feeding_5_month || '—'}</span>
+                      <span className="truncate" title={record.notes || ''}>{record.notes || '—'}</span>
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -1244,8 +1271,17 @@ const HomeScreen = ({
   );
 
   const residentRecords = getUserRecords(STORAGE_KEYS.residents, currentUserId);
-  const pregnantWomenCount = getUserRecords(STORAGE_KEYS.pregnantwoman, currentUserId).length;
-  const childrenCount = getUserRecords(STORAGE_KEYS.infantfeeding, currentUserId).length;
+  const pregnantWomenRecords = getUserRecords(STORAGE_KEYS.pregnantwoman, currentUserId);
+  const infantFeedingRecords = getUserRecords(STORAGE_KEYS.infantfeeding, currentUserId);
+  const pregnantWomenCount = pregnantWomenRecords.length;
+  const childrenCount = infantFeedingRecords.length;
+  const totalCategoryRecords = userCategoryRecords.flatMap(({ records }) => records);
+  const overviewTrends = {
+    households: calculateMonthlyTrend(residentRecords),
+    pregnant: calculateMonthlyTrend(pregnantWomenRecords),
+    children: calculateMonthlyTrend(infantFeedingRecords),
+    records: calculateMonthlyTrend(totalCategoryRecords),
+  };
   const syncedHouseholds = residentRecords.filter(
     (record) => record.synced || String(record.status || '').toLowerCase() === 'synced'
   ).length;
@@ -1254,6 +1290,14 @@ const HomeScreen = ({
     ? Math.round((syncedHouseholds / residentRecords.length) * 100)
     : 0;
   const maxPurokCount = Math.max(1, ...sharedHouseholdsByPurok.map(({ count }) => count));
+  const selectedCategoryIcon = {
+    residents: Users,
+    environmental: MapPin,
+    infantfeeding: Baby,
+    lactatingwoman: UserCircle,
+    pregnantwoman: Heart,
+    monthlynatal: Calendar,
+  }[selectedCategory] || UserCircle;
 
   const filteredCategories = categoriesWithCounts.filter((cat) => {
     if (!q) return true;
@@ -1466,28 +1510,39 @@ const HomeScreen = ({
           </h2>
           <div className="grid grid-cols-2 gap-2">
             {[
-              { label: 'Total Households', value: residentRecords.length, icon: Users, color: '#5575F7', background: '#EFF6FF' },
-              { label: 'Pregnant Women', value: pregnantWomenCount, icon: Heart, color: '#E854A8', background: '#FDF2F8' },
-              { label: 'Children (0-5)', value: childrenCount, icon: Baby, color: '#16A889', background: '#ECFDF5' },
-              { label: 'Total Records', value: totalCategoryRecordCount, icon: UserCircle, color: '#8F65FF', background: '#F5F3FF' },
-            ].map(({ label, value, subtitle, icon: Icon, color, background }) => (
+              { label: 'Total Households', value: residentRecords.length, icon: Users, color: '#7048E8', background: '#F1EDFF', trend: overviewTrends.households },
+              { label: 'Pregnant Women', value: pregnantWomenCount, icon: Heart, color: '#D94E9F', background: '#FFF0F7', trend: overviewTrends.pregnant },
+              { label: 'Children (0-5)', value: childrenCount, icon: Baby, color: '#35AFC1', background: '#E9FAFC', trend: overviewTrends.children },
+              { label: 'Total Records', value: totalCategoryRecordCount, icon: UserCircle, color: '#E99A45', background: '#FFF5E9', trend: overviewTrends.records },
+            ].map(({ label, value, subtitle, icon: Icon, color, background, trend }) => (
               <div
                 key={label}
-                className="flex min-h-[76px] min-w-0 items-center gap-2.5 rounded-xl border border-black/5 px-2.5 py-2 shadow-sm"
-                style={{ backgroundColor: background }}
+                className="relative flex min-h-[82px] min-w-0 items-center gap-2 overflow-hidden rounded-xl border border-black/5 px-2 py-2 pb-3 shadow-sm"
+                style={{ background: `linear-gradient(135deg, #FFFFFF 0%, ${background} 100%)` }}
               >
                 <span
-                  className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white"
+                  className="absolute -bottom-5 -right-2 h-10 w-14 rotate-[-18deg] rounded-full opacity-20"
                   style={{ backgroundColor: color }}
+                  aria-hidden="true"
+                />
+                <span
+                  className="absolute left-2 top-1/2 z-20 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full text-white shadow-sm"
+                  style={{ background: `linear-gradient(145deg, ${color} 0%, ${color}CC 100%)` }}
                 >
-                  <Icon size={22} aria-hidden="true" />
+                  <Icon size={19} strokeWidth={2.2} aria-hidden="true" />
                 </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[10px] font-semibold leading-tight text-gray-600">{label}</span>
-                  <span className="mt-0.5 block w-full text-left text-xl font-bold leading-none text-gray-900">{value}</span>
+                <span className="relative z-10 w-full min-w-0 text-center">
+                  <span className="block truncate text-[10px] font-semibold leading-tight text-gray-700">{label}</span>
+                  <span className="mt-1 block w-full translate-y-1 text-center text-xl font-bold leading-none text-gray-900">{value}</span>
                   {subtitle && (
                     <span className="mt-0.5 block text-[9px] leading-tight text-gray-500">{subtitle}</span>
                   )}
+                </span>
+                <span title={trend.description} aria-label={trend.description} className={`absolute bottom-1 right-2 z-10 inline-flex items-center gap-0.5 text-[8px] font-bold ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                  {trend.isPositive
+                    ? <TrendingUp size={10} strokeWidth={2.5} aria-hidden="true" />
+                    : <TrendingDown size={10} strokeWidth={2.5} aria-hidden="true" />}
+                  {trend.label}
                 </span>
               </div>
             ))}
@@ -1571,9 +1626,12 @@ const HomeScreen = ({
                 type="button"
                 onClick={() => setSelectedCategory((current) => (current === cat.id ? null : cat.id))}
                 className={`rounded-2xl p-3 flex flex-col items-center text-center min-h-[108px] shadow-sm active:scale-[0.97] transition ring-2 ${
-                  isSelected ? 'ring-blue-600 ring-offset-2' : 'ring-transparent'
+                  isSelected ? 'ring-offset-2' : 'ring-transparent'
                 }`}
-                style={{ backgroundColor: cat.bgColor }}
+                style={{
+                  backgroundColor: cat.bgColor,
+                  ...(isSelected ? { '--tw-ring-color': cat.accentColor } : {}),
+                }}
               >
                 <span className="text-3xl mb-1.5 leading-none">{cat.emoji}</span>
                 <span className="text-[10px] font-semibold text-gray-800 leading-tight line-clamp-2">{cat.name}</span>
@@ -1586,25 +1644,26 @@ const HomeScreen = ({
         {selectedCategoryData && (
           <div className="space-y-3 pt-1">
             <div
-              className={`bg-gradient-to-br ${selectedCategoryData.gradient} rounded-3xl p-5 text-white relative overflow-hidden shadow-md`}
+              className={`relative flex min-h-[220px] flex-col items-center justify-center overflow-hidden rounded-3xl bg-gradient-to-br ${selectedCategoryData.gradient} px-5 py-6 text-center text-white shadow-md`}
             >
-              <div className="absolute -top-6 -right-6 w-24 h-24 rounded-full bg-white/10" />
-              <div className="flex items-center gap-2 relative z-10 mb-4 min-w-0">
-                <span className="text-3xl shrink-0">{selectedCategoryData.emoji}</span>
-                <h3 className="text-lg font-bold leading-tight">{selectedCategoryData.name}</h3>
+              <div className="absolute -top-7 -right-6 h-24 w-24 rounded-full bg-white/10" aria-hidden="true" />
+              <div className="absolute -bottom-10 -left-5 h-28 w-28 rounded-full bg-black/5" aria-hidden="true" />
+              <div className="relative z-10 mb-2 grid h-11 w-11 place-items-center text-white">
+                {React.createElement(selectedCategoryIcon, { size: 34, strokeWidth: 2.2, 'aria-hidden': true })}
               </div>
-              <p className="text-5xl font-bold relative z-10">{liveCount}</p>
-              <p className="text-sm text-white/90 relative z-10 mt-1">Total Records</p>
+              <h3 className="relative z-10 max-w-full text-xl font-semibold leading-tight">{selectedCategoryData.name}</h3>
+              <p className="relative z-10 mt-3 text-6xl font-bold leading-none">{liveCount}</p>
+              <p className="relative z-10 mt-2 text-base text-white/90">Total Records</p>
             </div>
 
             <StatRow
               label="This Month"
               value={`+${categoryRecordsThisMonth}`}
               fillWidth={`${liveCount ? (categoryRecordsThisMonth / liveCount) * 100 : 0}%`}
-              background="#EFF6FF"
-              track="#CFE1FF"
-              fill="#2563EB"
-              textColor="#1D4ED8"
+              background="#FFF0F7"
+              track="#F5B6DA"
+              fill="#D94E9F"
+              textColor="#9D174D"
             />
             <StatRow
               label="Completed"
@@ -1632,8 +1691,7 @@ const HomeScreen = ({
                   setEditingRecord(null);
                   setShowCategoryForm(true);
                 }}
-                className="flex items-center justify-center gap-2 py-3.5 rounded-2xl text-white font-bold text-sm shadow-md active:scale-[0.98] transition"
-                style={{ backgroundColor: MOBILE.navy }}
+                className={`flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r ${selectedCategoryData.gradient} py-3.5 text-sm font-bold text-white shadow-md transition active:scale-[0.98]`}
               >
                 <Plus size={20} />
                 New Visit
@@ -1641,8 +1699,11 @@ const HomeScreen = ({
               <button
                 type="button"
                 onClick={() => setActiveView('records')}
-                className="flex items-center justify-center gap-2 py-3.5 rounded-2xl font-bold text-sm border-2 bg-white active:scale-[0.98] transition"
-                style={{ borderColor: MOBILE.navy, color: MOBILE.navy }}
+                className="flex items-center justify-center gap-2 rounded-2xl border-2 bg-white py-3.5 text-sm font-bold shadow-sm transition active:scale-[0.98]"
+                style={{
+                  borderColor: selectedCategoryData.accentColor,
+                  color: selectedCategoryData.accentColor,
+                }}
               >
                 <FileText size={20} />
                 Records
@@ -1667,8 +1728,7 @@ const HomeScreen = ({
         <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 max-w-md mx-auto">
           <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full max-h-[92vh] overflow-y-auto">
             <div
-              className="sticky top-0 text-white px-5 py-4 flex items-center justify-between rounded-t-3xl sm:rounded-t-2xl"
-              style={{ backgroundColor: MOBILE.navy }}
+              className={`sticky top-0 bg-gradient-to-r ${selectedCategoryData?.gradient} px-5 py-4 flex items-center justify-between rounded-t-3xl text-white sm:rounded-t-2xl`}
             >
               <h2 className="text-lg font-bold pr-2">
                 {selectedCategoryData?.name} — {editingRecord ? 'Edit Record' : 'New Visit'}
@@ -1681,7 +1741,7 @@ const HomeScreen = ({
                 <X size={22} />
               </button>
             </div>
-            <div className="p-4 pb-8">
+            <div className="bg-white p-4 pb-8">
               {selectedCategory === 'environmental' && (
                 <EnvironmentalSanitationForm
                   key={`environmental-${editingRecord?.id || 'new'}`}
@@ -1777,6 +1837,7 @@ const NutriGridMobile = () => {
   const [syncNotification, setSyncNotification] = useState('');
   const [pendingConfirmation, setPendingConfirmation] = useState(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
+  const lastBackgroundSyncError = useRef('');
 
   const requestConfirmation = (message, action, options = {}) => {
     setPendingConfirmation({ message, action, ...options });
@@ -1810,10 +1871,6 @@ const NutriGridMobile = () => {
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
-    const sessionRestoreFallback = window.setTimeout(() => {
-      setAppState((currentState) => (currentState === 'loading' ? 'welcome' : currentState));
-    }, 2500);
-
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
@@ -1831,7 +1888,15 @@ const NutriGridMobile = () => {
       );
     }
 
-    restoreSupabaseSession()
+    supabase.auth.getSession()
+      .then(({ data: { session }, error }) => {
+        if (error) throw new Error(`Could not restore sign-in session: ${error.message}`);
+        if (!session) {
+          setAppState('welcome');
+          return null;
+        }
+        return restoreSupabaseSession(session);
+      })
       .then((userData) => {
         if (userData) {
           completeSignIn(userData);
@@ -1845,7 +1910,6 @@ const NutriGridMobile = () => {
       });
 
     return () => {
-      window.clearTimeout(sessionRestoreFallback);
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
     };
@@ -1882,6 +1946,10 @@ const NutriGridMobile = () => {
 
   const handleSignIn = async (credentials) => {
     completeSignIn(await signInWithSupabase(credentials));
+  };
+
+  const handleSocialSignIn = async (provider) => {
+    await signInWithSupabaseOAuth(provider);
   };
 
   const handleRegister = async (accountData) => {
@@ -1927,6 +1995,7 @@ const NutriGridMobile = () => {
   const syncData = async ({ notify = true } = {}) => {
     try {
       const recordResult = await syncPendingRecords();
+      let pulledRecords = 0;
       const result = {
         synced: recordResult.synced || 0,
         records: recordResult.records || 0,
@@ -1935,7 +2004,8 @@ const NutriGridMobile = () => {
       };
       if (currentUser?.id) {
         const pullResult = await pullUserRecordsFromSupabase(currentUser.id);
-        result.records += pullResult.records || 0;
+        pulledRecords = pullResult.records || 0;
+        result.records += pulledRecords;
         result.errors.push(...(pullResult.errors || []));
       }
       const latestVisits = getRecords(STORAGE_KEYS.pendingVisits).filter((record) =>
@@ -1962,22 +2032,38 @@ const NutriGridMobile = () => {
             `${result.synced} record(s) uploaded; ${result.errors.length} failed.\n\n${firstError}` +
             (remainingErrors ? `\n\n${remainingErrors} more error(s). Check the browser console.` : '')
           );
+        } else if (currentUser?.id && pulledRecords > 0) {
+          showSyncNotification(`Loaded ${pulledRecords} record(s) from Supabase for this account.`);
+        } else if (currentUser?.id && pulledRecords === 0) {
+          showSyncNotification('Supabase returned no records for this signed-in account. Confirm this is the BHW account that owns the records.');
         }
+      } else if (result.errors.length) {
+        const syncError = result.errors[0];
+        if (lastBackgroundSyncError.current !== syncError) {
+          showSyncNotification(`Cloud sync needs attention: ${syncError}`);
+          lastBackgroundSyncError.current = syncError;
+        }
+      } else {
+        lastBackgroundSyncError.current = '';
       }
       return result;
     } catch (error) {
       console.error('Supabase sync failed:', error);
       if (notify) alert(error.message || 'Could not sync records to Supabase.');
-      return { synced: 0, errors: [error.message] };
+      else if (lastBackgroundSyncError.current !== error.message) {
+        showSyncNotification(`Cloud sync needs attention: ${error.message || 'Unknown error'}`);
+        lastBackgroundSyncError.current = error.message || 'Unknown error';
+      }
+      return { synced: 0, errors: [error.message || 'Unknown sync error'] };
     }
   };
 
   useEffect(() => {
     if (!isAuthenticated || currentUser?.role?.toLowerCase() === 'admin') return undefined;
 
-    const syncWhenOnline = () => {
+    const syncWhenOnline = ({ notify = false } = {}) => {
       if (navigator.onLine) {
-        void syncData({ notify: false });
+        void syncData({ notify });
         void syncPendingTasks().then((result) => {
           if (result.errors?.length) {
             console.error('Some tasks are waiting to sync:', result.errors);
@@ -1989,12 +2075,13 @@ const NutriGridMobile = () => {
         }).catch((error) => console.error('Could not sync pending tasks:', error));
       }
     };
-    syncWhenOnline();
-    window.addEventListener('online', syncWhenOnline);
-    const timer = window.setInterval(syncWhenOnline, 60000);
+    const handleOnline = () => syncWhenOnline({ notify: true });
+    syncWhenOnline({ notify: true });
+    window.addEventListener('online', handleOnline);
+    const timer = window.setInterval(() => syncWhenOnline(), 60000);
 
     return () => {
-      window.removeEventListener('online', syncWhenOnline);
+      window.removeEventListener('online', handleOnline);
       window.clearInterval(timer);
     };
   }, [isAuthenticated, currentUser?.id, currentUser?.role]);
@@ -2025,37 +2112,52 @@ const NutriGridMobile = () => {
     const key = storageKeyForCategory(formData.category);
     const pending = {
       ...formData,
+      updated_at: editingRecord ? new Date().toISOString() : formData.updated_at,
       created_by_user_id: currentUser?.id || '',
       synced: false,
       status: 'pending',
     };
     const ownedPending = pending;
-    upsertRecord(key, ownedPending);
+    try {
+      await upsertRecord(key, ownedPending);
+    } catch (error) {
+      console.error('Could not save the record locally:', error);
+      showSyncNotification('Could not save the record on this device. Check device storage and try again.');
+      throw error;
+    }
     removeLegacyRecord(formData.category, ownedPending.id);
     setEditingRecord(null);
     setShowCategoryForm(false);
     setRecordsRefresh((v) => v + 1);
+    showSyncNotification('Record saved on this device. Syncing to Supabase…');
 
-    const syncErr = await syncSingleRecord(formData.category, ownedPending);
-    if (!syncErr) {
-      upsertRecord(key, { ...ownedPending, synced: true, status: 'Synced' });
-      setRecordsRefresh((v) => v + 1);
-      showSyncNotification('Record synced and saved in the Admin Dashboard and database.');
-      return;
-    }
-    if (syncErr === 'offline') {
-      alert('Saved locally.');
-      return;
-    }
-    if (syncErr === 'not-signed-in') {
-      alert('Saved locally. Sign in to sync to Supabase.');
-      return;
-    }
-    alert(`Saved locally, but sync failed: ${syncErr}`);
+    void syncSingleRecord(formData.category, ownedPending)
+      .then((syncErr) => {
+        if (!syncErr) {
+          upsertRecord(key, { ...ownedPending, synced: true, status: 'Synced' });
+          setRecordsRefresh((v) => v + 1);
+          showSyncNotification('Record synced and saved in the Admin Dashboard and database.');
+          return;
+        }
+        if (syncErr === 'offline') {
+          showSyncNotification('Record saved on this device. It will sync when you are back online.');
+          return;
+        }
+        if (syncErr === 'not-signed-in') {
+          showSyncNotification('Record saved on this device. Sign in to sync it to Supabase.');
+          return;
+        }
+        console.error('Record sync failed:', syncErr);
+        showSyncNotification(`Record saved on this device, but cloud sync failed: ${syncErr}`);
+      })
+      .catch((error) => {
+        console.error('Record sync failed:', error);
+        showSyncNotification(`Record saved on this device, but cloud sync failed: ${error.message || 'Unknown error'}`);
+      });
   };
 
   const handleCategoryFormSubmit = (formData) => requestConfirmation(
-    `Are you sure you want to ${editingRecord ? 'edit' : 'save'} this ${selectedCategoryData?.name || 'record'}?`,
+    `Are you sure you want to ${editingRecord ? 'edit' : 'save'} this ${DASHBOARD_CATEGORIES.find(({ id }) => id === formData.category)?.name || 'record'}?`,
     () => saveCategoryForm(formData),
     { confirmLabel: editingRecord ? 'Save changes' : 'Save' }
   );
@@ -2106,12 +2208,12 @@ const NutriGridMobile = () => {
   };
 
   const DASHBOARD_CATEGORIES = [
-    { id: 'residents', name: 'Residents', emoji: '👥', gradient: 'from-blue-500 to-blue-700', bgColor: '#e8f0fe', count: 245 },
-    { id: 'environmental', name: 'Environmental Sanitation', emoji: '🌍', gradient: 'from-emerald-500 to-green-700', bgColor: '#e6f7ed', count: 89 },
-    { id: 'infantfeeding', name: 'Infant Feeding', emoji: '🍼', gradient: 'from-pink-500 to-pink-600', bgColor: '#fce8f0', count: 142 },
-    { id: 'lactatingwoman', name: 'Lactating Woman', emoji: '❤️', gradient: 'from-rose-500 to-red-600', bgColor: '#ffe8e6', count: 35 },
-    { id: 'pregnantwoman', name: 'Pregnant Woman', emoji: '🤰', gradient: 'from-violet-500 to-purple-700', bgColor: '#f0e8ff', count: 28 },
-    { id: 'monthlynatal', name: 'Monthly Natality', emoji: '📅', gradient: 'from-amber-400 to-yellow-600', bgColor: '#fff8e1', count: 12 },
+    { id: 'residents', name: 'Residents', emoji: '👥', gradient: 'from-blue-500 to-blue-700', bgColor: '#eff6ff', accentColor: '#1d4ed8', count: 245 },
+    { id: 'environmental', name: 'Environmental Sanitation', emoji: '🌍', gradient: 'from-emerald-500 to-green-700', bgColor: '#ecfdf5', accentColor: '#047857', count: 89 },
+    { id: 'infantfeeding', name: 'Infant Feeding', emoji: '🍼', gradient: 'from-violet-500 to-purple-700', bgColor: '#f3e8ff', accentColor: '#6d28d9', count: 142 },
+    { id: 'lactatingwoman', name: 'Lactating Woman', emoji: '❤️', gradient: 'from-rose-500 to-red-600', bgColor: '#fff1f2', accentColor: '#be123c', count: 35 },
+    { id: 'pregnantwoman', name: 'Pregnant Woman', emoji: '🤰', gradient: 'from-pink-400 to-rose-500', bgColor: '#fce7f3', accentColor: '#be185d', count: 28 },
+    { id: 'monthlynatal', name: 'Monthly Natality', emoji: '📅', gradient: 'from-amber-400 to-yellow-600', bgColor: '#fef3c7', accentColor: '#b45309', count: 12 },
   ];
 
   const savedRecords = useMemo(
@@ -2162,15 +2264,17 @@ const NutriGridMobile = () => {
         input.accept = 'image/*';
         input.capture = 'environment';
         
-        input.onchange = (e) => {
-          const file = e.target.files[0];
-          if (file) {
-            const reader = new FileReader();
-            reader.onload = (event) => {
-              setPhotoPreview(event.target.result);
-              setFormData({...formData, photo_url: event.target.result});
-            };
-            reader.readAsDataURL(file);
+        input.onchange = async (e) => {
+          const file = e.target.files?.[0];
+          if (!file) return;
+          try {
+            if (file.size > 20 * 1024 * 1024) throw new Error('Choose a photo smaller than 20 MB.');
+            const photo = await compressPhoto(file);
+            setPhotoPreview(photo);
+            setFormData((previous) => ({ ...previous, photo_url: photo }));
+          } catch (error) {
+            console.error('Could not process household photo:', error);
+            alert(error.message || 'Could not process this photo.');
           }
         };
         
@@ -2492,7 +2596,13 @@ const NutriGridMobile = () => {
 
   // Show Sign-In Page
   if (appState === 'signin') {
-    return <SignInPage onSignIn={handleSignIn} onRegister={handleRegister} />;
+    return (
+      <SignInPage
+        onSignIn={handleSignIn}
+        onRegister={handleRegister}
+        onSocialSignIn={handleSocialSignIn}
+      />
+    );
   }
 
   if (appState === 'app' && isAuthenticated && currentUser?.role?.toLowerCase() === 'admin') {

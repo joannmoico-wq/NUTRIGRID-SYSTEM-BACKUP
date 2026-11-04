@@ -1,12 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   STORAGE_KEYS,
+  RECORDS_CHANGED_SIGNAL_KEY,
   deleteRecordById,
   upsertRecord,
   reloadAllAdminData,
   filterRecordsBySearch,
   recordMatchesSearch,
   getRecords,
+  getRecordsWithPhotos,
   buildSavedRecords,
   performRecordSearch,
   getRecordDisplayTitle,
@@ -30,7 +32,6 @@ import InteractiveMapComponent from './InteractiveMapComponent';
 import AdminDocuments from './AdminDocuments';
 import ReportExportActions from './ReportExportActions';
 import ConfirmActionDialog from './ConfirmActionDialog';
-import TaskIcon from './TaskIcon';
 import {
   Home,
   Users,
@@ -47,19 +48,28 @@ import {
   Sun,
   UserCircle,
   KeyRound,
-  Droplets,
-  Milk,
-  Calendar,
-  FileSpreadsheet,
   Download,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   X,
+  LayoutDashboard,
+  Users2,
+  Leaf,
+  PersonStanding,
+  CalendarDays,
+  BarChart3,
+  Folder,
+  ClipboardCheck,
+  TrendingDown,
+  TrendingUp,
 } from 'lucide-react';
 import { getCategoryForm } from './CategorySpecificForms';
 import { normalizePurokName, sortPurokCounts } from '../utils/purok';
 import { isTaskOverdue } from '../utils/taskSyncService';
+import { calculateMonthlyTrend } from '../utils/recordTrends';
+import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
+import nutrigridIcon from '../public/icon-192.png';
 import {
   PieChart,
   Pie,
@@ -101,6 +111,7 @@ const THEME = {
 };
 
 const DARK_MODE_KEY = 'bns_admin_dark_mode';
+const READ_NOTIFICATIONS_KEY = 'nutrigrid_admin_read_notifications';
 
 const ADMIN_FORM_TITLES = {
   residents: 'Residents - New Visit',
@@ -111,9 +122,18 @@ const ADMIN_FORM_TITLES = {
   monthlynatal: 'Monthly Natality - New Record',
 };
 
+const ADMIN_FORM_GRADIENTS = {
+  residents: 'linear-gradient(90deg, #3B82F6 0%, #1D4ED8 100%)',
+  environmental: 'linear-gradient(90deg, #10B981 0%, #15803D 100%)',
+  infantfeeding: 'linear-gradient(90deg, #8B5CF6 0%, #7E22CE 100%)',
+  lactatingwoman: 'linear-gradient(90deg, #F43F5E 0%, #DC2626 100%)',
+  pregnantwoman: 'linear-gradient(90deg, #F472B6 0%, #F43F5E 100%)',
+  monthlynatal: 'linear-gradient(90deg, #FBBF24 0%, #CA8A04 100%)',
+};
+
 const BNS_RHM_SIGNATURE_OPTIONS = [
   { id: 'bns', label: 'BNS', role: 'Barangay Nutrition Scholar' },
-  { id: 'rhm', label: 'RURAL HEALTH MIDWIFE', role: 'Rural Health Midwife' },
+  { id: 'rhm', label: 'RURAL MIDWIFE', role: 'Rural Health Midwife' },
 ];
 
 const BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS = [
@@ -131,6 +151,67 @@ const NOTIF_LABELS = {
   [STORAGE_KEYS.pendingVisits]: 'Pending field visits',
 };
 
+function getNutritionCareNeeds(records) {
+  const latestRecords = new Map();
+  records.forEach((record, index) => {
+    const raw = record._raw || record;
+    const childName = String(raw.child_name || raw.name_of_child || record.childName || '').trim();
+    const birthday = raw.dob || record.dob || '';
+    const childKey = `${normalizePurokName(raw.purok || record.purok) || ''}:${birthday}:${childName.toLowerCase() || record.id || index}`;
+    const dateValue =
+      raw.updated_at ||
+      record.updated_at ||
+      raw.updatedAt ||
+      record.updatedAt ||
+      raw.dow ||
+      record.dow ||
+      raw.created_at ||
+      record.created_at ||
+      '';
+    const timestamp = Date.parse(dateValue) || 0;
+    const previous = latestRecords.get(childKey);
+    if (!previous || timestamp >= previous.timestamp) {
+      latestRecords.set(childKey, { record, raw, childName, timestamp });
+    }
+  });
+
+  return Array.from(latestRecords.values()).flatMap(({ record, raw, childName, timestamp }) => {
+    const computed = calculateWhoGrowthStatuses({
+      sex: ({
+        male: 'boys',
+        female: 'girls',
+      }[String(raw.sex || record.sex || '').toLowerCase()] || String(raw.sex || record.sex || '').toLowerCase()),
+      birthday: raw.dob || record.dob,
+      weighingDate: raw.dow || record.dow,
+      weightKg: raw.weight_kg ?? raw.wt_kg ?? record.weight,
+      lengthCm: raw.length_cm ?? record.length,
+      heightCm: raw.height_cm ?? raw.ht_cm ?? record.height,
+    });
+    const statuses = [
+      raw.w_a || record.wA || computed.w_a,
+      raw.h_a || record.hA || computed.h_a,
+      raw.w_l_h || record.wLH || computed.w_l_h,
+    ].map((status) => String(status || '').trim().toLowerCase());
+    const needsNutritionSupport = statuses.some((status) =>
+      status.includes('underweight') || status.includes('stunted') || status.includes('wasted')
+    );
+    if (!needsNutritionSupport) return [];
+
+    const riskStatuses = statuses.filter((status) =>
+      status.includes('underweight') || status.includes('stunted') || status.includes('wasted')
+    );
+    const recordId = String(record.id || `${childName}-${raw.dow || record.dow || ''}`);
+    return [{
+      id: `${recordId}:${timestamp}:${riskStatuses.join('|')}`,
+      recordId,
+      name: childName || 'Child',
+      purok: raw.purok || record.purok || '',
+      statuses: riskStatuses,
+      timestamp,
+    }];
+  });
+}
+
 // Header uses ONLY darkMode for styling. The notification dropdown
 // must never change the header's colors.
 const AdminHeader = ({
@@ -147,7 +228,8 @@ const AdminHeader = ({
   showNotifications,
   setShowNotifications,
   notifications,
-  notificationItems,
+  visibleNotificationItems,
+  onNotificationClick,
   notifRef,
   setDarkMode,
   setActiveTab,
@@ -281,20 +363,25 @@ const AdminHeader = ({
                 </p>
               </div>
               <div className="divide-y" style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}>
-                {notificationItems.length === 0 ? (
+                {visibleNotificationItems.length === 0 ? (
                   <div className="p-4 text-center text-sm" style={{ color: mutedColor }}>
                     No notifications
                   </div>
                 ) : (
-                  notificationItems.map((item) => (
-                    <div key={item.id} className="p-3 hover:bg-purple-50/50">
-                      <p className="font-medium text-sm" style={{ color: textColor }}>
+                  visibleNotificationItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => onNotificationClick(item)}
+                      className="w-full p-3 text-left transition hover:bg-pink-50/70 dark:hover:bg-white/10"
+                    >
+                      <p className="text-sm font-medium" style={{ color: textColor }}>
                         {item.label}
                       </p>
-                      <p className="text-xs mt-1" style={{ color: mutedColor }}>
+                      <p className="mt-1 text-xs" style={{ color: mutedColor }}>
                         {item.detail}
                       </p>
-                    </div>
+                    </button>
                   ))
                 )}
               </div>
@@ -382,6 +469,8 @@ const AdminHeader = ({
 
 const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', currentUserId }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
+  const [hasOpenedTasks, setHasOpenedTasks] = useState(false);
+  const [purokPeriod, setPurokPeriod] = useState('this-month');
   const [monthlyTrendView, setMonthlyTrendView] = useState('new-repeat');
   const [monthlyTrendEndMonth, setMonthlyTrendEndMonth] = useState(() => {
     const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
@@ -400,6 +489,17 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [selectedTaskFilter, setSelectedTaskFilter] = useState(null);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [readNotificationIds, setReadNotificationIds] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`${READ_NOTIFICATIONS_KEY}:${currentUserId || 'shared'}`) || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch (error) {
+      console.error('Could not load read notification state:', error);
+      return [];
+    }
+  });
+  const [pendingMapScroll, setPendingMapScroll] = useState(false);
+  const [alertPuroks, setAlertPuroks] = useState([]);
   const [adminFormCategory, setAdminFormCategory] = useState(null);
   const [adminEditingRecord, setAdminEditingRecord] = useState(null);
   const [adminConfirmation, setAdminConfirmation] = useState(null);
@@ -411,6 +511,45 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   useEffect(() => {
     localStorage.setItem(DARK_MODE_KEY, String(darkMode));
   }, [darkMode]);
+
+  useEffect(() => {
+    if (activeTab === 'tasks') setHasOpenedTasks(true);
+  }, [activeTab]);
+
+  const markNotificationsRead = (ids) => {
+    const next = Array.from(new Set([...readNotificationIds, ...ids]));
+    setReadNotificationIds(next);
+    try {
+      localStorage.setItem(
+        `${READ_NOTIFICATIONS_KEY}:${currentUserId || 'shared'}`,
+        JSON.stringify(next)
+      );
+    } catch (error) {
+      console.error('Could not save read notification state:', error);
+    }
+  };
+
+  const handleNotificationClick = (item) => {
+    markNotificationsRead(item.notificationIds || [item.id]);
+    setShowNotifications(false);
+    setActiveTab(item.mapAlert ? 'dashboard' : item.tab || 'dashboard');
+    if (item.mapAlert) {
+      setAlertPuroks(item.affectedPuroks || []);
+      setPendingMapScroll(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!pendingMapScroll || activeTab !== 'dashboard') return undefined;
+    const animationFrame = window.requestAnimationFrame(() => {
+      document.getElementById('admin-map-section')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+      setPendingMapScroll(false);
+    });
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [pendingMapScroll, activeTab]);
 
   useEffect(() => {
     const mobileViewport = window.matchMedia('(max-width: 767px)');
@@ -445,20 +584,28 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const pwaPhotoDocuments = useMemo(() => {
     const categories = [
-      { id: 'residents', label: 'Residents', records: households },
-      { id: 'environmental', label: 'Environmental Sanitation', records: environmentalSanitationData },
-      { id: 'infantfeeding', label: 'Infant Feeding', records: infantFeedingData },
-      { id: 'lactatingwoman', label: 'Lactating Woman', records: lactatingWomenData },
-      { id: 'pregnantwoman', label: 'Pregnant Woman', records: pregnantWomenData },
-      { id: 'monthlynatal', label: 'Monthly Natality', records: natalityData },
+      { id: 'residents', label: 'Residents', storageKey: STORAGE_KEYS.residents, records: households },
+      { id: 'environmental', label: 'Environmental Sanitation', storageKey: STORAGE_KEYS.environmental, records: environmentalSanitationData },
+      { id: 'infantfeeding', label: 'Infant Feeding', storageKey: STORAGE_KEYS.infantfeeding, records: infantFeedingData },
+      { id: 'lactatingwoman', label: 'Lactating Woman', storageKey: STORAGE_KEYS.lactatingwoman, records: lactatingWomenData },
+      { id: 'pregnantwoman', label: 'Pregnant Woman', storageKey: STORAGE_KEYS.pregnantwoman, records: pregnantWomenData },
+      { id: 'monthlynatal', label: 'Monthly Natality', storageKey: STORAGE_KEYS.monthlynatal, records: natalityData },
     ];
 
-    return categories.flatMap(({ id, label, records }) =>
-      (records || []).flatMap((record, index) => {
+    return categories.flatMap(({ id, label, storageKey, records }) => {
+      const localRecordsById = new Map(
+        getRecords(storageKey).map((record) => [String(record.id), record])
+      );
+      return (records || []).flatMap((record, index) => {
         const raw = record._raw || record;
+        const localRaw = localRecordsById.get(String(record.id)) || {};
         const image = raw.photo_url ||
           raw.residents_photo ||
           raw.environmental_sanitation_photo ||
+          raw.residentsPhoto ||
+          localRaw.photo_url ||
+          localRaw.residents_photo ||
+          localRaw.environmental_sanitation_photo ||
           record.environmentalSanitationPhoto;
         if (
           typeof image !== 'string' ||
@@ -470,10 +617,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           raw.mother_name ||
           [raw.first_name, raw.middle_name, raw.last_name].filter(Boolean).join(' ') ||
           `Record ${record.id ?? index + 1}`;
-        const dateValue = raw.visit_date ||
+        const dateValue = raw.updated_at ||
+          raw.created_at ||
+          raw.visit_date ||
           raw.date_of_registration ||
           raw.dow ||
-          raw.created_at ||
           raw.month ||
           '';
         const monthMatch = String(dateValue).match(/^(20\d{2})[-/](\d{1,2})/);
@@ -506,8 +654,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           categoryLabel: label,
           recordId: record.id,
         }];
-      })
-    );
+      });
+    });
   }, [
     households,
     environmentalSanitationData,
@@ -522,6 +670,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   useEffect(() => {
     let active = true;
     let loading = false;
+    const photoStorageKeys = [
+      STORAGE_KEYS.residents,
+      STORAGE_KEYS.environmental,
+      STORAGE_KEYS.infantfeeding,
+      STORAGE_KEYS.lactatingwoman,
+      STORAGE_KEYS.pregnantwoman,
+      STORAGE_KEYS.monthlynatal,
+    ];
 
     const loadSharedAdminData = async () => {
       if (!active) return;
@@ -533,7 +689,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
       loading = true;
       try {
-        const sharedData = await loadAdminDataFromSupabase(currentUserId);
+        const sharedData = await loadAdminDataFromSupabase(currentUserId, {
+          onRecordsLoaded: (records) => {
+            if (!active) return;
+            setAdminData((currentData) => ({ ...currentData, ...records }));
+            setAdminDataStatus('loaded');
+          },
+        });
         if (active) {
           setAdminData(sharedData);
           setAdminDataStatus('loaded');
@@ -546,25 +708,65 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       }
     };
 
-    const handleLocalRecordsChanged = (event) => {
-      if (event.detail?.operation === 'upsert' || event.detail?.operation === 'delete') {
-        setAdminData(reloadAllAdminData(currentUserId));
-      }
-    };
-    const handleStorageChanged = (event) => {
-      if (event.key && Object.values(STORAGE_KEYS).includes(event.key)) {
-        setAdminData(reloadAllAdminData(currentUserId));
+    const hydrateLocalPhotos = async () => {
+      try {
+        await Promise.all(photoStorageKeys.map((key) => getRecordsWithPhotos(key)));
+        if (active) setAdminData(reloadAllAdminData(currentUserId));
+      } catch (error) {
+        console.error('Could not hydrate local record photos from IndexedDB:', error);
       }
     };
 
+    const handleLocalRecordsChanged = (event) => {
+      if (event.detail?.operation === 'upsert' || event.detail?.operation === 'delete') {
+        setAdminData(reloadAllAdminData(currentUserId));
+        if (event.detail.operation === 'upsert') void hydrateLocalPhotos();
+      }
+    };
+    const handleStorageChanged = (event) => {
+      if (event.key === RECORDS_CHANGED_SIGNAL_KEY) {
+        setAdminData(reloadAllAdminData(currentUserId));
+        void hydrateLocalPhotos();
+        if (document.visibilityState === 'visible') void loadSharedAdminData();
+        return;
+      }
+      if (event.key && Object.values(STORAGE_KEYS).includes(event.key)) {
+        setAdminData(reloadAllAdminData(currentUserId));
+        if (photoStorageKeys.includes(event.key)) void hydrateLocalPhotos();
+        if (document.visibilityState === 'visible') void loadSharedAdminData();
+      }
+    };
+
+    const handlePageFocus = () => {
+      if (document.visibilityState === 'visible') void loadSharedAdminData();
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void loadSharedAdminData();
+    };
+    const channel = supabase
+      .channel(`admin-record-updates-${currentUserId || 'shared'}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, handlePageFocus)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'environmental_sanitation' }, handlePageFocus)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'infant_feeding' }, handlePageFocus)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lactating_women' }, handlePageFocus)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pregnant_women' }, handlePageFocus)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monthly_natality' }, handlePageFocus)
+      .subscribe();
+
     void loadSharedAdminData();
+    void hydrateLocalPhotos();
     window.addEventListener('bns-records-changed', handleLocalRecordsChanged);
     window.addEventListener('storage', handleStorageChanged);
+    window.addEventListener('focus', handlePageFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     return () => {
       active = false;
       window.removeEventListener('bns-records-changed', handleLocalRecordsChanged);
       window.removeEventListener('storage', handleStorageChanged);
+      window.removeEventListener('focus', handlePageFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      void supabase.removeChannel(channel);
     };
   }, []);
 
@@ -643,10 +845,40 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         detail: v.category || v.household_head || 'Visit pending sync',
       });
     });
+    const careNeeds = getNutritionCareNeeds(natalityData);
+    const legacyReadCareNeedIds = new Set(
+      readNotificationIds
+        .filter((id) => id.startsWith('nutrition-care:'))
+        .flatMap((id) => id.slice('nutrition-care:'.length).split(','))
+    );
+    const newCareNeeds = careNeeds.filter(
+      ({ id, recordId }) =>
+        !readNotificationIds.includes(`nutrition-care:${id}`) &&
+        !legacyReadCareNeedIds.has(recordId)
+    );
+    if (newCareNeeds.length) {
+      const notificationIds = newCareNeeds.map(({ id }) => `nutrition-care:${id}`);
+      items.push({
+        id: `nutrition-care:${notificationIds.join(',')}`,
+        notificationIds,
+        affectedPuroks: Array.from(new Set(
+          newCareNeeds.map(({ purok }) => normalizePurokName(purok)).filter(Boolean)
+        )),
+        label: 'Feeding program & parental guide',
+        detail: `${newCareNeeds.length} new child record${newCareNeeds.length === 1 ? '' : 's'} may benefit from nutrition support and caregiver guidance. Tap to review the map.`,
+        mapAlert: true,
+      });
+    }
     return items;
-  }, [households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData]);
+  }, [households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, readNotificationIds]);
 
-  const notifications = notificationItems.length;
+  const visibleNotificationItems = notificationItems.filter(
+    (item) =>
+      item.notificationIds
+        ? item.notificationIds.some((id) => !readNotificationIds.includes(id))
+        : !readNotificationIds.includes(item.id)
+  );
+  const notifications = visibleNotificationItems.length;
 
   // All figures below come from saved local records. Nothing is hardcoded.
   const stats = useMemo(() => {
@@ -667,6 +899,19 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       lactatingWomen: lactatingWomenData.length,
       synced,
       pending,
+      trends: {
+        totalHouseholds: calculateMonthlyTrend(households),
+        pregnantWomen: calculateMonthlyTrend(pregnantWomenData),
+        childrenUnderFive: calculateMonthlyTrend(infantFeedingData),
+        totalRecords: calculateMonthlyTrend([
+          ...households,
+          ...environmentalSanitationData,
+          ...infantFeedingData,
+          ...lactatingWomenData,
+          ...pregnantWomenData,
+          ...natalityData,
+        ]),
+      },
     };
   }, [
     households,
@@ -677,17 +922,32 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     natalityData,
   ]);
 
-  // Top puroks, counted from saved household records.
+  // Top puroks, counted from saved household records for the selected period.
   const purokData = useMemo(() => {
+    const now = new Date();
+    const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const periodStart = new Date(currentMonth);
+    const periodEnd = new Date(currentMonth);
+    periodEnd.setMonth(periodEnd.getMonth() + 1);
+    if (purokPeriod === 'last-month') periodStart.setMonth(periodStart.getMonth() - 1);
+    if (purokPeriod === 'last-month') periodEnd.setTime(currentMonth.getTime());
+    if (purokPeriod === 'last-3-months') periodStart.setMonth(periodStart.getMonth() - 2);
+
     const counts = new Map();
     households.forEach((h) => {
+      if (purokPeriod !== 'all-time') {
+        const dateValue = h.visit_date || h.created_at || h.updated_at;
+        const recordDate = dateValue ? new Date(dateValue) : null;
+        if (!recordDate || Number.isNaN(recordDate.getTime())) return;
+        if (recordDate < periodStart || recordDate >= periodEnd) return;
+      }
       const name = normalizePurokName(h.purok);
       if (name) counts.set(name, (counts.get(name) || 0) + 1);
     });
     return sortPurokCounts(
       Array.from(counts, ([purok, count]) => ({ purok, count }))
     ).map(({ purok, count }) => ({ name: purok, value: count }));
-  }, [households]);
+  }, [households, purokPeriod]);
   const maxPurokHouseholdCount = Math.max(1, ...purokData.map(({ value }) => value));
 
   const monthlyTrendData = useMemo(() => {
@@ -976,8 +1236,21 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     onAdd: () => openCategoryForm(formCategory),
     onEdit: (id) => {
       const row = dataset.find((r) => r.id === id);
-      const raw = row?._raw || getRecords(storageKey).find((r) => r.id === id);
-      if (raw) openCategoryForm(formCategory, raw);
+      const localRecord = getRecords(storageKey).find((record) => String(record.id) === String(id));
+      const raw = row?._raw || localRecord;
+      if (raw) {
+        openCategoryForm(formCategory, {
+          ...raw,
+          photo_url: raw.photo_url ||
+            raw.residents_photo ||
+            raw.environmental_sanitation_photo ||
+            raw.residentsPhoto ||
+            localRecord?.photo_url ||
+            localRecord?.residents_photo ||
+            localRecord?.environmental_sanitation_photo ||
+            null,
+        });
+      }
     },
     onDelete: (id) => requestAdminConfirmation(
       'Are you sure you want to delete this record? This cannot be undone.',
@@ -1039,16 +1312,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const markCheck = (value) => (Number(value) > 0 ? '✓' : '');
 
   const navItems = [
-    { id: 'dashboard', icon: Home, label: 'Dashboard' },
-    { id: 'residents', icon: Users, label: 'Residents' },
-    { id: 'environmentalSanitation', icon: Droplets, label: 'Environmental Sanitation Report' },
+    { id: 'dashboard', icon: LayoutDashboard, label: 'Home Dashboard' },
+    { id: 'residents', icon: Users2, label: 'Residents' },
+    { id: 'environmentalSanitation', icon: Leaf, label: 'Environmental Sanitation Report' },
     { id: 'infantFeeding', icon: Baby, label: 'Infant Feeding (0-5 mo)' },
-    { id: 'lactatingWoman', icon: Milk, label: 'Lactating Woman' },
+    { id: 'lactatingWoman', icon: PersonStanding, label: 'Lactating Woman' },
     { id: 'pregnantWoman', icon: Heart, label: 'Pregnant Woman' },
-    { id: 'monthlyNatality', icon: Calendar, label: 'Monthly Natality' },
-    { id: 'monthlyReport', icon: FileSpreadsheet, label: 'Monthly Report' },
-    { id: 'documents', icon: FileText, label: 'Documents' },
-    { id: 'tasks', icon: TaskIcon, label: 'Tasks' },
+    { id: 'monthlyNatality', icon: CalendarDays, label: 'Monthly Natality' },
+    { id: 'monthlyReport', icon: BarChart3, label: 'Monthly Report' },
+    { id: 'documents', icon: Folder, label: 'Documents' },
+    { id: 'tasks', icon: ClipboardCheck, label: 'Tasks' },
   ];
 
   // ====================================================================
@@ -1095,8 +1368,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           <button
             type="button"
             onClick={onAdd}
-            className="px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 text-white transition"
-            style={{ background: THEME.accentGradient }}
+            className="px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 text-[#9D174D] transition hover:bg-[#FBCFE8]"
+            style={{ backgroundColor: '#FCE7F3' }}
           >
             <Plus size={16} />
             Add New
@@ -1235,6 +1508,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const TableView = ({ data, columns, fileName = 'records', onAdd, onEdit, onDelete, onExport: customExport, aboveTable }) => {
     const showActions = Boolean(onEdit && onDelete);
+    const nameColumns = new Set(['head', 'householdhead', 'mothername', 'childname', 'firstname', 'lastname', 'name']);
+    const updatedColumn = getColumnKey(columns.find((column) =>
+      nameColumns.has(getColumnKey(column).toLowerCase())
+    ) || columns[0] || '').toLowerCase();
     const exportTable = () => exportPdfFile({
       fileName,
       title: fileName.replace(/-/g, ' '),
@@ -1294,7 +1571,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                           {row[getColumnKey(col)]}
                         </span>
                       ) : (
-                        row[getColumnKey(col)]
+                        <span className="inline-flex max-w-full items-center justify-center gap-1">
+                          <span className="truncate">{row[getColumnKey(col)]}</span>
+                          {getColumnKey(col).toLowerCase() === updatedColumn && row._raw?.updated_at && (
+                            <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-semibold text-pink-700">
+                              Updated
+                            </span>
+                          )}
+                        </span>
                       )}
                     </td>
                   ))}
@@ -1319,7 +1603,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const Sidebar = () => (
     <aside
-      className={`flex-shrink-0 flex flex-col h-full min-h-0 border-r transition-all duration-300 relative ${
+      className={`relative flex h-full min-h-0 flex-shrink-0 flex-col border-r transition-all duration-300 ${
         isExpanded ? 'w-64' : 'w-20'
       }`}
       style={{
@@ -1331,26 +1615,25 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       <button
         type="button"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="absolute -right-3.5 top-6 z-30 w-7 h-7 rounded-full bg-white border border-gray-200 flex items-center justify-center shadow-md text-gray-600 hover:scale-105 transition"
+        className="absolute -right-3.5 top-6 z-30 flex h-7 w-7 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-600 shadow-md transition hover:scale-105"
         aria-label={isExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
       >
         {isExpanded ? <ChevronLeft size={14} /> : <ChevronRight size={14} />}
       </button>
 
-      <div className={`p-4 pb-4 flex items-center ${isExpanded ? 'justify-between' : 'justify-center flex-col gap-3'}`}>
-        <div className={`flex items-center gap-3 ${!isExpanded && 'justify-center'}`}>
-          <div
-            className="w-12 h-12 rounded-2xl flex items-center justify-center text-sm font-bold text-white shadow-md flex-shrink-0"
-            style={{ background: THEME.accentGradient }}
-          >
-            MS
-          </div>
+      <div className={`flex flex-shrink-0 items-center px-4 pt-5 pb-4 ${isExpanded ? 'justify-between' : 'justify-center'}`}>
+        <div className={`flex min-w-0 items-center gap-3 ${!isExpanded ? 'justify-center' : ''}`}>
+          <img
+            src={nutrigridIcon}
+            alt="NutriGrid"
+            className="h-14 w-14 flex-shrink-0 rounded-xl object-cover shadow-md"
+          />
           {isExpanded && (
             <div className="overflow-hidden transition-all duration-200">
-              <p className="font-semibold text-sm leading-tight truncate" style={{ color: darkMode ? THEME.dark.text : THEME.light.text }}>
+              <p className="truncate text-lg font-semibold leading-tight" style={{ color: darkMode ? THEME.dark.text : THEME.light.text }}>
                 NutriGrid
               </p>
-              <p className="text-xs mt-0.5 truncate" style={{ color: darkMode ? THEME.dark.muted : THEME.light.muted }}>
+              <p className="mt-1 truncate text-sm" style={{ color: darkMode ? THEME.dark.muted : THEME.light.muted }}>
                 {adminName}
               </p>
             </div>
@@ -1358,7 +1641,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         </div>
       </div>
 
-      <nav className="flex-1 min-h-0 px-3 py-2 pb-4 space-y-2.5 overflow-y-auto overscroll-contain">
+      <nav className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain px-3 pt-4 pb-3">
         {navItems.map(({ id, icon: Icon, label }) => {
           const isActive = activeTab === id;
           return (
@@ -1367,38 +1650,42 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               type="button"
               onClick={() => setActiveTab(id)}
               title={!isExpanded ? label : undefined}
-              className={`w-full flex items-center transition-all rounded-2xl ${
-                isExpanded ? 'gap-3.5 px-4 py-3.5 text-base font-medium' : 'justify-center px-0 py-3.5 text-base font-medium'
+              aria-current={isActive ? 'page' : undefined}
+              className={`relative flex w-full flex-shrink-0 items-center rounded-2xl transition-all ${
+                isExpanded ? 'gap-3 px-4 py-2.5 text-base font-medium' : 'justify-center px-0 py-2.5 text-base font-medium'
               }`}
               style={
                 isActive
                   ? { background: THEME.accentGradient, color: '#FFFFFF', boxShadow: '0 4px 14px rgba(143, 101, 255, 0.35)' }
                   : { color: darkMode ? THEME.dark.muted : THEME.light.text }
               }
-              onMouseEnter={(e) => {
-                if (!isActive) e.currentTarget.style.backgroundColor = darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.45)';
+              onMouseEnter={(event) => {
+                if (!isActive) event.currentTarget.style.backgroundColor = darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.45)';
               }}
-              onMouseLeave={(e) => {
-                if (!isActive) e.currentTarget.style.backgroundColor = 'transparent';
+              onMouseLeave={(event) => {
+                if (!isActive) event.currentTarget.style.backgroundColor = 'transparent';
               }}
             >
-              <Icon size={21} className="flex-shrink-0" />
-              {isExpanded && <span className="text-left leading-snug truncate">{label}</span>}
+              {isActive && isExpanded && (
+                <span className="absolute left-1.5 top-2 bottom-2 w-1 rounded-full bg-white/85" aria-hidden="true" />
+              )}
+              <Icon size={26} strokeWidth={2.2} className="flex-shrink-0" />
+              {isExpanded && <span className="truncate text-left leading-snug">{label}</span>}
             </button>
           );
         })}
       </nav>
 
       <div
-        className={`flex-shrink-0 p-4 border-t flex flex-col gap-2 ${isExpanded ? '' : 'items-center'}`}
+        className={`flex-shrink-0 border-t px-4 pt-2 pb-4 ${isExpanded ? '' : 'flex justify-center'}`}
         style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}
       >
         <button
           type="button"
           onClick={() => onLogout?.()}
           title={!isExpanded ? 'Logout' : undefined}
-          className={`w-full flex items-center text-red-500 hover:bg-red-50 rounded-2xl transition ${
-            isExpanded ? 'gap-3 px-4 py-3 text-sm' : 'justify-center px-0 py-3'
+          className={`flex w-full items-center rounded-2xl text-red-500 transition hover:bg-red-50/70 ${
+            isExpanded ? 'gap-3 px-4 py-3 text-sm font-medium' : 'justify-center px-0 py-3'
           }`}
         >
           <LogOut size={19} className="flex-shrink-0" />
@@ -1408,43 +1695,59 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     </aside>
   );
 
-  const overviewStatStyle = darkMode
-    ? {
-        background: 'linear-gradient(135deg, rgba(255,117,195,0.14) 0%, rgba(143,101,255,0.12) 100%)',
-        border: `1px solid ${THEME.dark.border}`,
-      }
-    : {
-        background: 'linear-gradient(135deg, #FFF5FB 0%, #FAF5FF 100%)',
-        border: '1px solid #E8C4F0',
-      };
-
-  const OverviewCard = ({ icon: Icon, label, value }) => (
-    <div className="relative grid min-h-[76px] place-items-center rounded-[1.35rem] px-16 py-2.5" style={overviewStatStyle}>
+  const OverviewCard = ({ icon: Icon, label, value, accent, tint, trend }) => (
+    <div
+      className="relative flex min-h-[104px] min-w-0 items-center overflow-hidden rounded-2xl border px-3 py-3 shadow-sm"
+      style={{
+        background: `linear-gradient(135deg, #FFFFFF 0%, ${tint} 100%)`,
+        borderColor: `${accent}30`,
+      }}
+    >
       <div
-        className="absolute left-3 top-1/2 grid h-12 w-12 -translate-y-1/2 place-items-center rounded-xl shadow-sm"
-        style={{ background: THEME.accentGradient }}
+        className="absolute left-3 top-1/2 z-20 flex h-14 w-14 -translate-y-1/2 items-center justify-center rounded-full text-white shadow-sm"
+        style={{ background: `linear-gradient(145deg, ${accent} 0%, ${accent}CC 100%)` }}
       >
-        <Icon size={25} strokeWidth={2} className="text-white" />
+        <Icon className="block shrink-0" size={32} strokeWidth={2.2} aria-hidden="true" />
       </div>
-      <div className="min-w-0 text-center">
-        <p className="text-center text-sm font-bold" style={{ color: darkMode ? THEME.dark.muted : THEME.light.muted }}>
+      <div className="relative z-10 w-full min-w-0 text-center">
+        <p className="truncate text-sm font-bold leading-tight" style={{ color: THEME.light.text }}>
           {label}
         </p>
-        <p className="mt-0.5 text-center text-3xl font-extrabold leading-tight" style={{ color: darkMode ? THEME.dark.text : THEME.light.text }}>
+        <p className="mt-1 text-3xl font-extrabold leading-none" style={{ color: THEME.light.text }}>
           {value}
         </p>
       </div>
+      <span title={trend.description} aria-label={trend.description} className={`absolute bottom-2 right-3 z-10 inline-flex items-center gap-0.5 text-[10px] font-bold ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
+        {trend.isPositive
+          ? <TrendingUp size={12} strokeWidth={2.5} aria-hidden="true" />
+          : <TrendingDown size={12} strokeWidth={2.5} aria-hidden="true" />}
+        {trend.label}
+      </span>
+      <div
+        className="absolute -bottom-7 -right-2 h-16 w-24 rotate-[-18deg] rounded-full opacity-20"
+        style={{ backgroundColor: accent }}
+        aria-hidden="true"
+      />
     </div>
   );
 
   const dashCardClass = 'rounded-3xl p-5';
-  const dashCardStyle = cardSurfaceStyle;
+  const dashCardStyle = darkMode
+    ? {
+        backgroundColor: THEME.dark.card,
+        border: `1px solid ${THEME.dark.border}`,
+      }
+    : {
+        background: 'linear-gradient(135deg, #FFF5FB 0%, #FAF5FF 100%)',
+        border: `1px solid ${THEME.light.border}`,
+      };
   const titleColor = darkMode ? THEME.dark.text : THEME.light.text;
+  const chartMutedColor = darkMode ? THEME.dark.muted : THEME.light.muted;
   const mutedColor = darkMode ? THEME.dark.muted : THEME.light.muted;
 
   const EmptyState = ({ message }) => (
     <div className="h-full min-h-[200px] flex items-center justify-center text-center px-4">
-      <p className="text-sm" style={{ color: mutedColor }}>
+      <p className="text-sm" style={{ color: chartMutedColor }}>
         {message}
       </p>
     </div>
@@ -1460,11 +1763,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         <p className="text-sm font-semibold mb-3" style={{ color: mutedColor }}>
           Over View
         </p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <OverviewCard icon={Home} label="Total Households" value={stats.totalHouseholds} />
-          <OverviewCard icon={Heart} label="Pregnant Women" value={stats.pregnantWomen} />
-          <OverviewCard icon={Baby} label="Children (0-5)" value={stats.childrenUnderFive} />
-          <OverviewCard icon={FileText} label="Total Records" value={stats.totalRecords} />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <OverviewCard icon={Home} label="Total Households" value={stats.totalHouseholds} accent="#7048E8" tint="#F1EDFF" trend={stats.trends.totalHouseholds} />
+          <OverviewCard icon={Heart} label="Pregnant Women" value={stats.pregnantWomen} accent="#D94E9F" tint="#FFF0F7" trend={stats.trends.pregnantWomen} />
+          <OverviewCard icon={Baby} label="Children (0-5)" value={stats.childrenUnderFive} accent="#35AFC1" tint="#E9FAFC" trend={stats.trends.childrenUnderFive} />
+          <OverviewCard icon={FileText} label="Total Records" value={stats.totalRecords} accent="#E99A45" tint="#FFF5E9" trend={stats.trends.totalRecords} />
         </div>
       </div>
 
@@ -1491,7 +1794,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                       .filter((d) => d.value > 0)
                       .map((entry) => <Cell key={entry.name} fill={entry.color} />)}
                   </Pie>
-                  <Tooltip formatter={(v) => [v, 'Households']} contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }} />
+                  <Tooltip
+                    formatter={(v) => [v, 'Households']}
+                    contentStyle={{
+                      borderRadius: '12px',
+                      border: `1px solid ${darkMode ? THEME.dark.border : THEME.light.border}`,
+                      backgroundColor: '#FFFFFF',
+                      color: THEME.light.text,
+                      boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                    }}
+                  />
                 </PieChart>
               </ResponsiveContainer>
             </div>
@@ -1500,14 +1812,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                 <div key={item.name} className="border-b pb-3 last:border-b-0 last:pb-0" style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}>
                   <div className="flex items-center gap-2">
                     <div className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: item.color }} />
-                    <span className="text-sm font-semibold" style={{ color: mutedColor }}>
+                    <span className="text-sm font-semibold" style={{ color: chartMutedColor }}>
                       {item.name}
                     </span>
                     <span className="ml-auto text-sm font-bold" style={{ color: titleColor }}>
                       {item.value}
                     </span>
                   </div>
-                  <p className="ml-5 mt-1 text-xs font-medium" style={{ color: mutedColor }}>{item.pct}% of households</p>
+                  <p className="ml-5 mt-1 text-xs font-medium" style={{ color: chartMutedColor }}>{item.pct}% of households</p>
                 </div>
               ))}
             </div>
@@ -1515,9 +1827,30 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         </div>
 
         <div className={`lg:col-span-6 ${dashCardClass}`} style={dashCardStyle}>
-          <p className="text-base font-bold mb-3" style={{ color: titleColor }}>
-            Top 10 Puroks by Households
-          </p>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="text-base font-bold" style={{ color: titleColor }}>
+              Top 10 Puroks by Households
+            </p>
+            <label className="relative block shrink-0">
+              <span className="sr-only">Filter Top 10 Puroks by date</span>
+              <select
+                value={purokPeriod}
+                onChange={(event) => setPurokPeriod(event.target.value)}
+                className="appearance-none rounded-xl border py-1.5 pl-3 pr-8 text-xs font-semibold shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+                style={{
+                  backgroundColor: darkMode ? '#302338' : '#FFFFFF',
+                  borderColor: darkMode ? '#67445F' : '#E5E7EB',
+                  color: darkMode ? '#FCE7F3' : '#374151',
+                }}
+              >
+                <option value="this-month">This Month</option>
+                <option value="last-month">Last Month</option>
+                <option value="last-3-months">Last 3 Months</option>
+                <option value="all-time">All Time</option>
+              </select>
+              <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-300' : 'text-gray-500'}`} aria-hidden="true" />
+            </label>
+          </div>
           {purokData.length === 0 ? (
             <div className="min-h-[150px]">
               <EmptyState message="No household records yet. This chart fills in as records are saved." />
@@ -1527,7 +1860,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               {purokData.map(({ name, value }) => {
                 return (
                   <div key={name} className="grid grid-cols-[3.25rem_minmax(0,1fr)_1rem] items-center gap-2 text-[11px]">
-                    <span className="truncate" style={{ color: mutedColor }}>{name}</span>
+                    <span className="truncate" style={{ color: chartMutedColor }}>{name}</span>
                     <div className="h-2 overflow-hidden rounded-full bg-purple-100">
                       <div
                         className="h-full rounded-full"
@@ -1553,25 +1886,33 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             <select
               value={monthlyTrendView}
               onChange={(event) => setMonthlyTrendView(event.target.value)}
-              className="max-w-[min(60vw,28rem)] appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-9 text-sm font-bold text-gray-800 shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+              className={`max-w-[min(60vw,28rem)] appearance-none rounded-xl border py-1.5 pl-3 pr-8 text-xs font-semibold shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 ${
+                darkMode
+                  ? 'border-[#67445F] bg-[#302338] text-[#FCE7F3]'
+                  : 'border-gray-300 bg-white text-gray-800'
+              }`}
             >
               <option value="new-repeat">New vs. Repeat Malnutrition Cases</option>
               <option value="vulnerable">Total Vulnerable Demographics Trend</option>
             </select>
-            <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500" aria-hidden="true" />
+            <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-300' : 'text-gray-500'}`} aria-hidden="true" />
           </label>
           <label className="relative ml-auto block">
             <span className="sr-only">Choose the last month in the trend window</span>
             <select
               value={monthlyTrendEndMonth}
               onChange={(event) => setMonthlyTrendEndMonth(event.target.value)}
-              className="appearance-none rounded-lg border border-gray-300 bg-white py-2 pl-3 pr-9 text-sm font-semibold text-gray-800 shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
+              className={`appearance-none rounded-xl border py-1.5 pl-3 pr-8 text-xs font-semibold shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 ${
+                darkMode
+                  ? 'border-[#67445F] bg-[#302338] text-[#FCE7F3]'
+                  : 'border-gray-300 bg-white text-gray-800'
+              }`}
             >
               {monthlyTrendMonthOptions.map((month) => (
                 <option key={month.value} value={month.value}>{month.label}</option>
               ))}
             </select>
-            <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-500" aria-hidden="true" />
+            <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-300' : 'text-gray-500'}`} aria-hidden="true" />
           </label>
           <span
             className="text-xs px-3 py-1 rounded-full"
@@ -1594,14 +1935,20 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={monthlyTrendData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#9ca3af' }} axisLine={false} tickLine={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#554153' : '#f0f0f0'} vertical={false} />
+                <XAxis dataKey="month" tick={{ fontSize: 12, fill: darkMode ? '#D8C8D6' : '#9ca3af' }} axisLine={false} tickLine={false} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: darkMode ? '#D8C8D6' : '#9ca3af' }} axisLine={false} tickLine={false} />
                 <Tooltip
                   formatter={(value, name) => [value, name]}
-                  contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                  contentStyle={{
+                    borderRadius: '12px',
+                    border: `1px solid ${darkMode ? '#67445F' : '#E8DCEF'}`,
+                    backgroundColor: '#FFFFFF',
+                    color: titleColor,
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+                  }}
                 />
-                <Legend />
+                <Legend wrapperStyle={{ color: titleColor }} />
                 {monthlyTrendView === 'new-repeat' ? (
                   <>
                     <Line type="monotone" dataKey="newCases" stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4 }} name="New Cases" />
@@ -1620,7 +1967,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         </div>
       </div>
 
-      <div className={dashCardClass} style={dashCardStyle}>
+      <div id="admin-map-section" className={dashCardClass} style={dashCardStyle}>
         <InteractiveMapComponent
           darkMode={darkMode}
           onPurokResidents={handlePurokResidents}
@@ -1632,6 +1979,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           environmentalSanitationData={environmentalSanitationData}
           natalityData={natalityData}
           dataStatus={adminDataStatus}
+          highlightedPuroks={alertPuroks}
         />
       </div>
 
@@ -1656,6 +2004,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     'estBakery',
     'estCarenderia',
     'estRestaurant',
+    'notes',
   ];
   const environmentalExportHeaders = [
     'Purok',
@@ -1675,6 +2024,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     'Bakery',
     'Carenderia',
     'Restaurant',
+    'Notes',
   ];
 
   const environmentalHeadRows = [
@@ -1688,6 +2038,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'Selling Iodized Salt', colSpan: 1 },
       { label: 'Selling Fortified Foods', colSpan: 1 },
       { label: 'Establishments Using Iodized Salt', colSpan: 3 },
+      { label: 'Notes', rowSpan: 2 },
       ACTIONS_HEAD_CELL,
     ],
     [
@@ -1715,6 +2066,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'Pangalan ng Nanay', rowSpan: 2 },
       { label: 'Pangalan ng Bata', rowSpan: 2 },
       { label: 'Paraan ng Pagpapakain o Pagpapainom', colSpan: 6 },
+      { label: 'Notes', rowSpan: 2 },
       ACTIONS_HEAD_CELL,
     ],
     [
@@ -1744,6 +2096,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'PhilHealth', rowSpan: 2 },
       { label: '4Ps', rowSpan: 2 },
       { label: 'Measurements', colSpan: 4 },
+      { label: 'Notes', rowSpan: 2 },
       ACTIONS_HEAD_CELL,
     ],
     [
@@ -1801,8 +2154,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       <AdminReportTable
         darkMode={darkMode}
         data={filteredResidentHouseholds}
-        columnKeys={['purok', 'head', 'members', 'lastVisit']}
-        singleRowHeaders={['Purok', 'Household Head', 'Members', 'Last Visit']}
+        columnKeys={['purok', 'head', 'members', 'lastVisit', 'notes']}
+        singleRowHeaders={['Purok', 'Household Head', 'Members', 'Last Visit', 'Notes']}
         reportHeader={
           <ReportHeader
             title="Residents Masterlist"
@@ -1819,14 +2172,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           <ReportExportActions
             title="Residents Masterlist"
             fileName="alawihao-residents"
-            headers={['Purok', 'Household Head', 'Members', 'Last Visit']}
-            rows={filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit])}
+            headers={['Purok', 'Household Head', 'Members', 'Last Visit', 'Notes']}
+            rows={filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit, row.notes])}
             signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
             onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-residents',
             title: 'Residents Masterlist',
-            headers: ['Purok', 'Household Head', 'Members', 'Last Visit'],
-            rows: filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit]),
+            headers: ['Purok', 'Household Head', 'Members', 'Last Visit', 'Notes'],
+            rows: filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit, row.notes]),
             signatures,
             preview: options.preview,
             })}
@@ -1930,7 +2283,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredInfantFeeding}
-      columnKeys={['no', 'purok', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5']}
+      columnKeys={['no', 'purok', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5', 'notes']}
       headRows={infantFeedingHeadRows}
       legend="Code: E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding"
       minTableWidth={980}
@@ -1953,7 +2306,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         <ReportExportActions
           title="Infant Feeding (0-5 mo)"
           fileName="alawihao-infant-feeding"
-          headers={['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months']}
+          headers={['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', 'Notes']}
           rows={filteredInfantFeeding.map((row) => [
             row.no,
             row.purok,
@@ -1965,11 +2318,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.month3,
             row.month4,
             row.month5,
+            row.notes,
           ])}
           onExportPdf={() => exportPdfFile({
           fileName: 'alawihao-infant-feeding',
           title: 'Infant Feeding (0-5 mo)',
-          headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months'],
+          headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', 'Notes'],
           rows: filteredInfantFeeding.map((row) => [
             row.no,
             row.purok,
@@ -1981,6 +2335,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.month3,
             row.month4,
             row.month5,
+            row.notes,
           ]),
           })}
         />
@@ -1992,12 +2347,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const lactatingExportHeaders = [
     'No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name',
     'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'PhilHealth',
-    '4Ps', 'Wt.', 'Ht.', 'BMI', 'MUAC', 'Date Delivered',
+    '4Ps', 'Wt.', 'Ht.', 'BMI', 'MUAC', 'Date Delivered', 'Notes',
   ];
   const lactatingExportRows = filteredLactating.map((row) => [
     row.no, row.purok, row.dateRegistration, row.familySerial, row.lastName, row.firstName,
     row.middleName, row.spouseName, row.contactNumber, row.birthday, row.age, row.civilStatus,
-    row.philhealth, row.fourPs, row.wt, row.ht, row.bmi, row.muac, row.dateDelivered,
+    row.philhealth, row.fourPs, row.wt, row.ht, row.bmi, row.muac, row.dateDelivered, row.notes,
   ]);
   const LactatingWomen = () => (
     <AdminReportTable
@@ -2023,6 +2378,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         'bmi',
         'muac',
         'dateDelivered',
+        'notes',
       ]}
       singleRowHeaders={[
         'No.',
@@ -2044,6 +2400,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         'BMI',
         'MUAC',
         'Date Delivered',
+        'Notes',
       ]}
       reportHeader={
         <ReportHeader
@@ -2112,6 +2469,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         'ht',
         'bmi',
         'muac',
+        'notes',
       ]}
       headRows={pregnantWomenHeadRows}
       reportHeader={
@@ -2132,7 +2490,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         <ReportExportActions
           title="Masterlist of Pregnant Women"
           fileName="alawihao-pregnant-women"
-          headers={['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC']}
+          headers={['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Notes']}
           rows={filteredPregnant.map((row) => [
             row.no,
             row.purok,
@@ -2154,17 +2512,19 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.ht,
             row.bmi,
             row.muac,
+            row.notes,
           ])}
           signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
           onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-pregnant-women',
             title: 'Masterlist of Pregnant Women',
-            headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC'],
+            headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Notes'],
             rows: filteredPregnant.map((row) => [
               row.no, row.purok, row.dateRegistration, row.familySerial, row.lastName,
               row.firstName, row.middleName, row.spouseName, row.contactNumber,
               row.birthday, row.age, row.civilStatus, row.lmp, row.expectedDelivery,
               row.philhealth, row.fourPs, row.wt, row.ht, row.bmi, row.muac,
+              row.notes,
             ]),
             signatures,
             preview: options.preview,
@@ -2175,7 +2535,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         exportPdfFile({
           fileName: 'alawihao-pregnant-women',
           title: 'Masterlist of Pregnant Women',
-          headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC'],
+          headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Notes'],
           rows: filteredPregnant.map((row) => [
             row.no,
             row.purok,
@@ -2197,6 +2557,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.ht,
             row.bmi,
             row.muac,
+            row.notes,
           ]),
         })
       }
@@ -2353,25 +2714,26 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             ],
           })}
           onSendEmail={async (emailDetails) => {
-            if (!supabase.functions?.invoke) {
-              throw new Error('Supabase email sending is not configured in this environment.');
+            const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+            if (sessionError || !session?.access_token) {
+              throw new Error('Your sign-in session expired. Sign in again before sending the report.');
             }
-            const { data, error } = await supabase.functions.invoke('send-monthly-report-email', {
-              body: emailDetails,
-            });
-            if (error) {
-              const details = error.context instanceof Response
-                ? (await error.context.clone().json().catch(() => null))?.error
-                : null;
-              const reason = details || (
-                error.name === 'FunctionsFetchError'
-                  ? 'Could not reach the email Edge Function. Deploy send-monthly-report-email to the Supabase project configured in this app.'
-                  : error.message
-              );
-              throw new Error(`Could not send monthly report email: ${reason}`);
+            const response = await fetch(
+              import.meta.env.VITE_REPORT_EMAIL_API_URL || '/api/reports/email',
+              {
+                method: 'POST',
+                headers: {
+                  Authorization: `Bearer ${session.access_token}`,
+                  'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(emailDetails),
+              }
+            );
+            const result = await response.json().catch(() => null);
+            if (!response.ok) {
+              throw new Error(result?.error || `Could not send report email (HTTP ${response.status}).`);
             }
-            if (data?.error) throw new Error(data.error);
-            if (!data?.sent) throw new Error('The email service did not confirm delivery.');
+            if (!result?.sent) throw new Error('The email service did not confirm delivery.');
           }}
         />
       }
@@ -2438,7 +2800,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             showNotifications={showNotifications}
             setShowNotifications={setShowNotifications}
             notifications={notifications}
-            notificationItems={notificationItems}
+            visibleNotificationItems={visibleNotificationItems}
+            onNotificationClick={handleNotificationClick}
             notifRef={notifRef}
             setDarkMode={setDarkMode}
             setActiveTab={setActiveTab}
@@ -2459,14 +2822,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                   : 'Could not load shared Supabase records. Showing records saved on this device; check admin read policies and the browser console.'}
               </p>
             )}
-            {activeTab === 'dashboard' && <DashboardView />}
-            {activeTab === 'residents' && <Residents />}
-            {activeTab === 'environmentalSanitation' && <EnvironmentalSanitation />}
-            {activeTab === 'infantFeeding' && <InfantFeeding />}
-            {activeTab === 'lactatingWoman' && <LactatingWomen />}
-            {activeTab === 'pregnantWoman' && <PregnantWomen />}
-            {activeTab === 'monthlyNatality' && <MonthlyNatality />}
-            {activeTab === 'monthlyReport' && <MonthlyReport />}
+            {activeTab === 'dashboard' && DashboardView()}
+            {activeTab === 'residents' && Residents()}
+            {activeTab === 'environmentalSanitation' && EnvironmentalSanitation()}
+            {activeTab === 'infantFeeding' && InfantFeeding()}
+            {activeTab === 'lactatingWoman' && LactatingWomen()}
+            {activeTab === 'pregnantWoman' && PregnantWomen()}
+            {activeTab === 'monthlyNatality' && MonthlyNatality()}
+            {activeTab === 'monthlyReport' && MonthlyReport()}
             {activeTab === 'documents' && (
               <AdminDocuments
                 darkMode={darkMode}
@@ -2476,14 +2839,17 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                 onDeletePwaPhoto={requestPwaPhotoDeletion}
               />
             )}
-            {activeTab === 'tasks' && (
+            {(activeTab === 'tasks' || hasOpenedTasks) && (
+              <div className={activeTab === 'tasks' ? '' : 'hidden'}>
               <AdminTasks
+                darkMode={darkMode}
                 initialPurok={scheduledVisitPurok}
                 onInitialTaskHandled={clearScheduledVisitPurok}
                 searchQuery={searchTerm}
                 onSearchResultsChange={handleSearchResultsChange}
                 selectedTaskFilter={selectedTaskFilter}
               />
+              </div>
             )}
             {activeTab === 'users' && <UserManagement />}
           </div>
@@ -2503,7 +2869,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             aria-labelledby="admin-category-form-title"
             className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl"
           >
-            <header className="flex items-center justify-between gap-4 bg-gradient-to-r from-violet-500 to-pink-400 px-5 py-4 text-white">
+            <header
+              className="flex items-center justify-between gap-4 px-5 py-4 text-white"
+              style={{ background: ADMIN_FORM_GRADIENTS[adminFormCategory] }}
+            >
               <h2 id="admin-category-form-title" className="text-lg font-bold">
                 {ADMIN_FORM_TITLES[adminFormCategory]}
               </h2>
@@ -2526,52 +2895,43 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                   const key = storageKeyForCategory(record.category);
                   const pending = {
                     ...record,
+                    updated_at: adminEditingRecord
+                      ? new Date().toISOString()
+                      : record.updated_at,
                     created_by_user_id: record.created_by_user_id || currentUserId,
                     synced: false,
                     status: 'pending',
                   };
-                  upsertRecord(key, pending);
+                  await upsertRecord(key, pending);
                   refreshData();
                   closeCategoryForm();
-                  try {
-                    const singleErr = await syncSingleRecord(record.category, pending, {
-                      includeShared: true,
-                    });
-                    if (singleErr === 'offline' || singleErr === 'not-signed-in') {
-                      alert(
-                        singleErr === 'offline'
+                  setAdminDataStatus('loaded');
+                  void (async () => {
+                    try {
+                      const syncError = await syncSingleRecord(record.category, pending, {
+                        includeShared: true,
+                      });
+                      if (syncError) {
+                        const message = syncError === 'offline'
                           ? 'Saved locally. The changes will sync to Supabase when you are back online.'
-                          : 'Saved locally. Sign in to Supabase to sync these changes.'
-                      );
-                      return;
-                    }
-                    if (!singleErr) {
-                      upsertRecord(key, { ...pending, synced: true, status: 'Synced' });
+                          : syncError === 'not-signed-in'
+                            ? 'Saved locally. Sign in to Supabase to sync these changes.'
+                            : `Saved locally, but Supabase sync failed: ${syncError}`;
+                        if (!['offline', 'not-signed-in'].includes(syncError)) {
+                          console.error('Admin record changes are still waiting to sync:', syncError);
+                          setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
+                        }
+                        alert(message);
+                        return;
+                      }
+                      await upsertRecord(key, { ...pending, synced: true, status: 'Synced' });
                       refreshData();
+                    } catch (error) {
+                      console.error('Could not sync the admin record to Supabase:', error);
+                      setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
+                      alert(`Saved locally, but Supabase sync failed: ${error.message || 'request failed'}`);
                     }
-                    const syncResult = await syncPendingRecords({ includeShared: true });
-                    if (syncResult.skipped) {
-                      alert('Saved locally. The changes are waiting to sync with Supabase.');
-                      return;
-                    }
-                    if (syncResult.errors?.length) {
-                      console.error('Admin record changes are still waiting to sync:', syncResult.errors);
-                      alert('Saved locally, but the changes are still waiting to sync. Check the connection and try again.');
-                      return;
-                    }
-                    const sharedData = await loadAdminDataFromSupabase(currentUserId);
-                    setAdminData(sharedData);
-                    setAdminDataStatus('loaded');
-                    if (syncResult.errors?.length) {
-                      alert(`Saved, but ${syncResult.errors.length} record(s) could not sync. Check the browser console.`);
-                    } else if (syncResult.skipped) {
-                      alert('Saved on this device. Connect to the internet and sign in again to sync it.');
-                    }
-                  } catch (error) {
-                    console.error('Could not sync the admin record to Supabase:', error);
-                    setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
-                    alert('Saved on this device, but could not update the shared Supabase records. Check the admin write policy and try again.');
-                  }
+                  })();
                   }
                 )}
                 onCancel={closeCategoryForm}

@@ -21,23 +21,23 @@ const RECORD_TABLES = {
   residents: {
     table: 'residents',
     idColumn: 'resident_id',
-    fields: { residents_photo: 'photo_url' },
+    fields: { residents_photo: 'photo_url', notes: 'notes' },
   },
   environmental: {
     table: 'environmental_sanitation',
     idColumn: 'env_san_id',
-    fields: { environmental_sanitation_photo: 'photo_url' },
+    fields: { environmental_sanitation_photo: 'photo_url', notes: 'notes' },
   },
-  infantfeeding: { table: 'infant_feeding', idColumn: 'infant_id', fields: {} },
+  infantfeeding: { table: 'infant_feeding', idColumn: 'infant_id', fields: { notes: 'notes' } },
   lactatingwoman: {
     table: 'lactating_women',
     idColumn: 'lactating_id',
-    fields: { wt: 'weight', ht: 'height' },
+    fields: { wt: 'weight', ht: 'height', notes: 'notes' },
   },
   pregnantwoman: {
     table: 'pregnant_women',
     idColumn: 'pregnant_id',
-    fields: { wt: 'weight', ht: 'height' },
+    fields: { wt: 'weight', ht: 'height', notes: 'notes' },
   },
   monthlynatal: {
     table: 'monthly_natality',
@@ -47,6 +47,7 @@ const RECORD_TABLES = {
       name_of_child: 'child_name',
       wt_kg: 'weight_kg',
       ht_cm: 'height_cm',
+      remarks: 'remarks',
     },
   },
 };
@@ -113,11 +114,18 @@ function normalizeRemoteRecord(category, row, userId) {
   Object.entries(fields).forEach(([column, field]) => {
     if (row[column] !== null && row[column] !== undefined) record[field] = row[column];
   });
+  record.photo_url = record.photo_url ||
+    row.residents_photo ||
+    row.environmental_sanitation_photo ||
+    record.residents_photo ||
+    record.environmental_sanitation_photo ||
+    null;
 
   record.id = payload.id ?? row.local_id ?? row[idColumn];
   record.category = payload.category || category;
   record.purok = row.purok ?? record.purok ?? '';
   record.created_at = row.created_at || payload.created_at;
+  record.updated_at = payload.updated_at;
   record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || userId;
   record.status = 'Synced';
   record.synced = true;
@@ -126,11 +134,32 @@ function normalizeRemoteRecord(category, row, userId) {
 
 async function pullCategoryRecords(category, userId) {
   const { table, idColumn } = RECORD_TABLES[category];
-  let result = await readUserRows(table, idColumn, 'created_by_user_id', userId);
-  if (result.error && isMissingOwnerColumnError(result.error)) {
-    result = await readUserRows(table, idColumn, 'data->>created_by_user_id', userId);
+  let ownerResult = await readUserRows(table, idColumn, 'created_by_user_id', userId);
+  let rows;
+  if (ownerResult.error && isMissingOwnerColumnError(ownerResult.error)) {
+    ownerResult = await readUserRows(table, idColumn, 'data->>created_by_user_id', userId);
+    if (ownerResult.error) throw new Error(`${table}: ${ownerResult.error.message}`);
+    rows = ownerResult.rows;
+  } else {
+    if (ownerResult.error) throw new Error(`${table}: ${ownerResult.error.message}`);
+    const dataOwnerResult = await readUserRows(table, idColumn, 'data->>created_by_user_id', userId);
+    if (dataOwnerResult.error) {
+      throw new Error(`${table}: ${dataOwnerResult.error.message}`);
+    }
+
+    const rowsById = new Map();
+    [...ownerResult.rows, ...dataOwnerResult.rows].forEach((row) => {
+      const key = String(row.local_id ?? row[idColumn] ?? row.data?.id ?? '');
+      rowsById.set(key, row);
+    });
+    rows = [...rowsById.values()];
   }
-  if (result.error) throw new Error(`${table}: ${result.error.message}`);
+  rows = rows.filter((row) => {
+    const owners = [row.created_by_user_id, row.data?.created_by_user_id]
+      .filter(Boolean)
+      .map(String);
+    return owners.length > 0 && owners.every((ownerId) => ownerId === String(userId));
+  });
 
   const deletedIds = new Set(
     getPendingRecordDeletions()
@@ -140,7 +169,7 @@ async function pullCategoryRecords(category, userId) {
       )
       .map((deletion) => String(deletion.recordId))
   );
-  const remoteRecords = result.rows
+  const remoteRecords = rows
     .map((row) => normalizeRemoteRecord(category, row, userId))
     .filter((record) => record.id !== null && record.id !== undefined);
   const remoteById = new Map(
@@ -287,6 +316,7 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       feeding_3_month: record.feeding_3_month || null,
       feeding_4_month: record.feeding_4_month || null,
       feeding_5_month: record.feeding_5_month || null,
+      notes: record.notes || null,
     },
     lactatingwoman: {
       date_of_registration: record.date_of_registration || null,
@@ -306,6 +336,7 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       bmi: asNumberOrNull(record.bmi),
       muac: asNumberOrNull(record.muac),
       date_delivered: record.date_delivered || null,
+      notes: record.notes || null,
     },
     pregnantwoman: {
       date_of_registration: record.date_of_registration || null,
@@ -326,6 +357,7 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       ht: asNumberOrNull(record.ht ?? record.height),
       bmi: asNumberOrNull(record.bmi),
       muac: asNumberOrNull(record.muac),
+      notes: record.notes || null,
     },
     monthlynatal: {
       month: record.month || null,

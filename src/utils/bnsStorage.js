@@ -17,6 +17,7 @@ export const STORAGE_KEYS = {
 };
 
 const MONTHLY_REPORT_DELETED_SLUGS_KEY = 'bns_admin_monthly_report_deleted_slugs';
+export const RECORDS_CHANGED_SIGNAL_KEY = 'nutrigrid_records_changed_at';
 
 export function getDeletedMonthlyReportSlugs() {
   try {
@@ -73,47 +74,104 @@ export const bnsDatabase = new NutriGridDatabase();
 const tableForStorageKey = (key) =>
   CATEGORY_TABLES[key] ? bnsDatabase.table(CATEGORY_TABLES[key]) : null;
 
+const PHOTO_FIELDS = ['photo_url', 'residents_photo', 'environmental_sanitation_photo'];
+const photoCache = new Map();
+
+function photoCacheKey(key, recordId, field) {
+  return `${key}:${recordId}:${field}`;
+}
+
+function cacheRecordPhotos(key, records) {
+  records.forEach((record) => {
+    PHOTO_FIELDS.forEach((field) => {
+      const cacheKey = photoCacheKey(key, record.id, field);
+      if (Object.prototype.hasOwnProperty.call(record, field)) {
+        if (record[field]) photoCache.set(cacheKey, record[field]);
+        else photoCache.delete(cacheKey);
+      }
+    });
+  });
+}
+
+function replaceCachedRecordPhotos(key, records) {
+  const prefix = `${key}:`;
+  Array.from(photoCache.keys())
+    .filter((cacheKey) => cacheKey.startsWith(prefix))
+    .forEach((cacheKey) => photoCache.delete(cacheKey));
+  cacheRecordPhotos(key, records);
+}
+
+function withoutPhotos(records) {
+  return records.map((record) => {
+    const metadata = { ...record };
+    PHOTO_FIELDS.forEach((field) => delete metadata[field]);
+    return metadata;
+  });
+}
+
+function readStoredRecords(key) {
+  try {
+    return JSON.parse(localStorage.getItem(key) || '[]');
+  } catch {
+    return [];
+  }
+}
+
 function publishRecords(key, records) {
-  localStorage.setItem(key, JSON.stringify(records));
+  replaceCachedRecordPhotos(key, records);
+  localStorage.setItem(key, JSON.stringify(withoutPhotos(records)));
   window.dispatchEvent(new CustomEvent('bns-records-changed', { detail: { key } }));
 }
 
 function persistCategoryRecords(key, records) {
   const table = tableForStorageKey(key);
-  if (!table) return;
-  void bnsDatabase.transaction('rw', table, async () => {
+  if (!table) return Promise.resolve();
+  return bnsDatabase.transaction('rw', table, async () => {
     await table.clear();
     if (records.length) await table.bulkPut(records);
-  }).catch((error) => {
-    console.error(`Could not persist ${key} in IndexedDB:`, error);
   });
 }
 
 export async function initializeLocalDatabase() {
   await bnsDatabase.open();
-  for (const key of Object.keys(CATEGORY_TABLES)) {
+  await Promise.all(Object.keys(CATEGORY_TABLES).map(async (key) => {
     const table = tableForStorageKey(key);
     const localStorageValue = localStorage.getItem(key);
+    const indexedRecords = await table.toArray();
     if (localStorageValue !== null) {
-      const localRecords = getRecords(key);
+      const indexedById = new Map(indexedRecords.map((record) => [String(record.id), record]));
+      const localRecords = readStoredRecords(key).map((localRecord) => {
+        const indexedRecord = indexedById.get(String(localRecord.id)) || {};
+        const record = { ...indexedRecord, ...localRecord };
+        PHOTO_FIELDS.forEach((field) => {
+          if (
+            !Object.prototype.hasOwnProperty.call(localRecord, field) &&
+            indexedRecord[field]
+          ) record[field] = indexedRecord[field];
+        });
+        return record;
+      });
+      replaceCachedRecordPhotos(key, localRecords);
+      localStorage.setItem(key, JSON.stringify(withoutPhotos(localRecords)));
       await bnsDatabase.transaction('rw', table, async () => {
         await table.clear();
         if (localRecords.length) await table.bulkPut(localRecords);
       });
-      continue;
+      return;
     }
 
-    const indexedRecords = await table.toArray();
     if (indexedRecords.length) {
       publishRecords(key, indexedRecords);
-      continue;
+      return;
     }
 
-    const legacyRecords = getRecords(key);
+    const legacyRecords = readStoredRecords(key);
     if (legacyRecords.length) {
+      replaceCachedRecordPhotos(key, legacyRecords);
+      localStorage.setItem(key, JSON.stringify(withoutPhotos(legacyRecords)));
       await table.bulkPut(legacyRecords);
     }
-  }
+  }));
 
   const accounts = await bnsDatabase.table('accounts').toArray();
   if (accounts.length) {
@@ -218,19 +276,57 @@ export function clearLocalSession() {
 }
 
 export function getRecords(key) {
-  try {
-    return JSON.parse(localStorage.getItem(key) || '[]');
-  } catch {
-    return [];
-  }
+  const records = readStoredRecords(key);
+  cacheRecordPhotos(key, records);
+  return records.map((record) => {
+    const hydrated = { ...record };
+    PHOTO_FIELDS.forEach((field) => {
+      const cachedPhoto = photoCache.get(photoCacheKey(key, record.id, field));
+      if (cachedPhoto && !hydrated[field]) hydrated[field] = cachedPhoto;
+    });
+    return hydrated;
+  });
+}
+
+export async function getRecordsWithPhotos(key) {
+  const records = getRecords(key);
+  const table = tableForStorageKey(key);
+  if (!table || records.length === 0) return records;
+
+  const indexedRecords = await table.toArray();
+  const indexedById = new Map(indexedRecords.map((record) => [String(record.id), record]));
+  const hydratedRecords = records.map((record) => {
+    const indexedRecord = indexedById.get(String(record.id)) || {};
+    const hydrated = { ...record };
+    PHOTO_FIELDS.forEach((field) => {
+      if (!hydrated[field] && indexedRecord[field]) hydrated[field] = indexedRecord[field];
+    });
+    return hydrated;
+  });
+  cacheRecordPhotos(key, hydratedRecords);
+  return hydratedRecords;
 }
 
 export function setRecords(key, records, change = null) {
   publishRecords(key, records);
-  persistCategoryRecords(key, records);
+  const persistence = persistCategoryRecords(key, records);
+  persistence.catch((error) => {
+    console.error(`Could not persist ${key} in IndexedDB:`, error);
+  });
   if (change) {
     window.dispatchEvent(new CustomEvent('bns-records-changed', { detail: { key, ...change } }));
+    persistence.then(
+      () => {
+        try {
+          localStorage.setItem(RECORDS_CHANGED_SIGNAL_KEY, `${Date.now()}-${Math.random()}`);
+        } catch (error) {
+          console.error('Could not notify other tabs about the record change:', error);
+        }
+      },
+      () => {}
+    );
   }
+  return persistence;
 }
 
 export function deleteRecordById(key, id) {
@@ -258,7 +354,7 @@ export function upsertRecord(key, record) {
     : list.findIndex((r) => String(r.id) === String(record.id));
   if (idx >= 0) list[idx] = { ...list[idx], ...record };
   else list.push(record);
-  setRecords(key, list, { operation: 'upsert', record });
+  return setRecords(key, list, { operation: 'upsert', record });
 }
 
 export function getPendingRecordDeletions() {
@@ -527,8 +623,8 @@ export function countPendingAcrossCategories() {
 export function sortRecordsNewestFirst(records) {
   const timestamp = (record) => {
     const date = [
-      record.created_at,
       record.updated_at,
+      record.created_at,
       record.visit_date,
       record.date_of_registration,
       record.dow,
@@ -550,7 +646,11 @@ export function toAdminResidents(records) {
     members: r.total_members ?? '—',
     status: r.synced ? 'Synced' : 'Pending',
     lastVisit: r.visit_date || (r.created_at ? r.created_at.split('T')[0] : '—'),
-    _raw: r,
+    notes: r.notes || '—',
+    _raw: {
+      ...r,
+      photo_url: r.photo_url || r.residents_photo || null,
+    },
   }));
 }
 
@@ -558,12 +658,14 @@ export function fromAdminResident(row) {
   const raw = row._raw || {};
   return {
     ...raw,
+    photo_url: raw.photo_url || raw.residents_photo || row.photo_url || null,
     id: row.id || nextRecordId(),
     category: 'residents',
     purok: row.purok,
     household_head: row.head,
     total_members: row.members,
     visit_date: row.lastVisit,
+    notes: row.notes === '—' ? '' : row.notes,
     synced: row.status === 'Synced',
     status: 'pending',
     created_at: raw.created_at || new Date().toISOString(),
@@ -583,6 +685,7 @@ export function toAdminInfantFeeding(records) {
     month3: r.feeding_3_month || '—',
     month4: r.feeding_4_month || '—',
     month5: r.feeding_5_month || '—',
+    notes: r.notes || '—',
     status: r.status || (r.synced ? 'Synced' : 'Pending'),
     _raw: r,
   }));
@@ -603,6 +706,7 @@ export function fromAdminInfantFeeding(row) {
     feeding_3_month: row.month3,
     feeding_4_month: row.month4,
     feeding_5_month: row.month5,
+    notes: row.notes === '—' ? '' : row.notes,
     synced: false,
     status: 'pending',
     created_at: raw.created_at || new Date().toISOString(),
@@ -631,6 +735,7 @@ export function toAdminLactating(records) {
     bmi: r.bmi ?? '—',
     muac: r.muac ?? '—',
     dateDelivered: r.date_delivered || '—',
+    notes: r.notes || '—',
     status: r.status || (r.synced ? 'Synced' : 'Pending'),
     _raw: r,
   }));
@@ -660,6 +765,7 @@ export function fromAdminLactating(row) {
     bmi: row.bmi,
     muac: row.muac,
     date_delivered: row.dateDelivered,
+    notes: row.notes === '—' ? '' : row.notes,
     synced: false,
     status: 'pending',
     created_at: raw.created_at || new Date().toISOString(),
@@ -689,6 +795,7 @@ export function toAdminPregnant(records) {
     ht: r.height ?? '—',
     bmi: r.bmi ?? '—',
     muac: r.muac ?? '—',
+    notes: r.notes || '—',
     status: r.status || (r.synced ? 'Synced' : 'Pending'),
     _raw: r,
   }));
@@ -719,6 +826,7 @@ export function fromAdminPregnant(row) {
     height: row.ht,
     bmi: row.bmi,
     muac: row.muac,
+    notes: row.notes === '—' ? '' : row.notes,
     synced: false,
     status: 'pending',
     created_at: raw.created_at || new Date().toISOString(),

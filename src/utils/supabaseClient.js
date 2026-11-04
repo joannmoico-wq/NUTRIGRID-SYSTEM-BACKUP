@@ -20,6 +20,9 @@ const unavailableAuth = {
   async signInWithPassword() {
     return { data: { user: null }, error: new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local.') };
   },
+  async signInWithOAuth() {
+    return { data: { provider: null, url: null }, error: new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local.') };
+  },
   async signUp() {
     return { data: { user: null }, error: new Error('Supabase is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env.local.') };
   },
