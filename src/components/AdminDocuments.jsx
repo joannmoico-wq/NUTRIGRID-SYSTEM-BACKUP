@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { ChevronDown, ChevronLeft, FileText, Folder, Image, Trash2, UploadCloud, X } from 'lucide-react';
 
 const DATABASE_NAME = 'nutrigrid-admin-documents';
 const STORE_NAME = 'documents';
+const DOCUMENT_PAGE_SIZE = 12;
 const RECORD_CATEGORY_FOLDERS = [
   'Residents',
   'Environmental Sanitation',
@@ -25,10 +27,13 @@ function getDocumentSearchTerms(document) {
 
 function openDocumentDatabase() {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DATABASE_NAME, 1);
+    const request = indexedDB.open(DATABASE_NAME, 2);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE_NAME)) {
-        request.result.createObjectStore(STORE_NAME, { keyPath: 'id' });
+        request.result.createObjectStore(STORE_NAME, { keyPath: 'id' }).createIndex('addedAt', 'addedAt');
+      } else {
+        const store = request.transaction.objectStore(STORE_NAME);
+        if (!store.indexNames.contains('addedAt')) store.createIndex('addedAt', 'addedAt');
       }
     };
     request.onsuccess = () => {
@@ -144,7 +149,7 @@ export default function AdminDocuments({
   pwaPhotos = [],
   onDeletePwaPhoto,
 }) {
-  const [documents, setDocuments] = useState([]);
+  const queryClient = useQueryClient();
   const [selectedMonth, setSelectedMonth] = useState('all');
   const [openedFolder, setOpenedFolder] = useState(null);
   const [dragging, setDragging] = useState(false);
@@ -157,6 +162,17 @@ export default function AdminDocuments({
   const documentCardClass = darkMode
     ? 'border-slate-600 bg-[#302338] text-slate-100'
     : 'border-gray-200 bg-white text-gray-800';
+  const {
+    data: documents = [],
+    isLoading: documentsLoading,
+    error: documentsLoadError,
+  } = useQuery({
+    queryKey: ['admin-documents', 'all'],
+    queryFn: async () => {
+      const items = await withDocumentStore('readonly', (store) => store.getAll());
+      return (items || []).sort((left, right) => right.addedAt - left.addedAt);
+    },
+  });
   const allDocuments = useMemo(() => [...pwaPhotos, ...documents], [pwaPhotos, documents]);
   const documentUrls = useMemo(() => allDocuments.map((document) => {
     if (document.url) return { id: document.id, url: document.url, revoke: false };
@@ -223,25 +239,56 @@ export default function AdminDocuments({
         return latestRight - latestLeft;
       });
   }, [filteredDocuments]);
+  const openedFolderDocuments = useMemo(
+    () => documentFolders.find(([name]) => name === openedFolder)?.[1] || [],
+    [documentFolders, openedFolder]
+  );
+  const {
+    data: documentPages,
+    error: documentPageError,
+    fetchNextPage,
+    hasNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery({
+    queryKey: [
+      'admin-documents',
+      'pages',
+      openedFolder,
+      selectedMonth,
+      searchQuery.trim().toLowerCase(),
+      openedFolderDocuments.map((document) => document.id),
+    ],
+    enabled: Boolean(openedFolder),
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => ({
+      items: openedFolderDocuments.slice(pageParam, pageParam + DOCUMENT_PAGE_SIZE),
+      nextOffset: pageParam + DOCUMENT_PAGE_SIZE,
+    }),
+    getNextPageParam: (lastPage) =>
+      lastPage.nextOffset < openedFolderDocuments.length ? lastPage.nextOffset : undefined,
+  });
+  const visibleFolderDocuments = documentPages?.pages.flatMap((page) => page.items) || [];
+  const loadMoreRef = useRef(null);
+
+  useEffect(() => {
+    const sentinel = loadMoreRef.current;
+    if (!sentinel || !hasNextPage || isFetchingNextPage) return undefined;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) void fetchNextPage();
+    }, { rootMargin: '240px' });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   useEffect(() => () => {
     documentUrls.filter(({ revoke }) => revoke).forEach(({ url }) => URL.revokeObjectURL(url));
   }, [documentUrls]);
 
-  const refresh = useCallback(async () => {
-    try {
-      const items = await withDocumentStore('readonly', (store) => store.getAll());
-      setDocuments((items || []).sort((left, right) => right.addedAt - left.addedAt));
-      setError('');
-    } catch (loadError) {
-      console.error('Could not load saved documents:', loadError);
-      setError(`Could not load documents: ${loadError.message}`);
-    }
-  }, []);
-
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    if (!documentsLoadError) return;
+    console.error('Could not load saved documents:', documentsLoadError);
+    setError(`Could not load documents: ${documentsLoadError.message}`);
+  }, [documentsLoadError]);
 
   useEffect(() => {
     const preventFileNavigation = (event) => {
@@ -286,7 +333,8 @@ export default function AdminDocuments({
       } finally {
         database.close();
       }
-      await refresh();
+      await queryClient.invalidateQueries({ queryKey: ['admin-documents'] });
+      setError('');
     } catch (uploadError) {
       console.error('Could not save selected documents:', uploadError);
       setError(`Could not upload selected files: ${uploadError.message}`);
@@ -298,7 +346,7 @@ export default function AdminDocuments({
   const remove = async (id) => {
     try {
       await withDocumentStore('readwrite', (store) => store.delete(id));
-      await refresh();
+      await queryClient.invalidateQueries({ queryKey: ['admin-documents'] });
     } catch (removeError) {
       console.error('Could not remove saved document:', removeError);
       setError(`Could not remove document: ${removeError.message}`);
@@ -306,31 +354,7 @@ export default function AdminDocuments({
   };
 
   return (
-    <section
-      className={`rounded-3xl border p-5 shadow-sm sm:p-8 ${cardClass}`}
-      onDragEnter={(event) => {
-        event.preventDefault();
-        if (Array.from(event.dataTransfer?.types || []).includes('Files')) setDragging(true);
-      }}
-      onDragOver={(event) => {
-        event.preventDefault();
-        if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
-      }}
-      onDragLeave={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false);
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        setDragging(false);
-        const files = Array.from(event.dataTransfer?.files || []);
-        if (!files.length) {
-          setError('No files were detected. Drop files directly into the Documents panel.');
-          return;
-        }
-        void addFiles(files);
-      }}
-    >
+    <section className={`rounded-3xl border p-5 shadow-sm sm:p-8 ${cardClass}`}>
       <input
         id="admin-document-file-input"
         ref={fileInput}
@@ -373,7 +397,7 @@ export default function AdminDocuments({
             <ChevronDown size={16} className={`pointer-events-none absolute right-3 ${mutedTextClass}`} aria-hidden="true" />
           </label>
         </div>
-        {filteredDocuments.length === 0 && (searchQuery || selectedMonth !== 'all') ? (
+        {!openedFolder && filteredDocuments.length === 0 && (searchQuery || selectedMonth !== 'all') ? (
           <p className={`mt-3 rounded-xl p-4 text-sm ${darkMode ? 'bg-[#302338] text-slate-300' : 'bg-gray-50 text-gray-500'}`}>
             {searchQuery || selectedMonth !== 'all'
               ? 'No files match the selected filters.'
@@ -393,12 +417,14 @@ export default function AdminDocuments({
                 All folders
               </button>
               <h3 className={`mb-3 text-sm font-semibold ${darkMode ? 'text-slate-100' : 'text-gray-700'}`}>{openedFolder}</h3>
-              {(documentFolders.find(([name]) => name === openedFolder)?.[1] || []).length === 0 ? (
+              {documentsLoading ? (
+                <p role="status" className={`rounded-xl p-4 text-sm ${mutedTextClass}`}>Loading saved documents…</p>
+              ) : openedFolderDocuments.length === 0 ? (
                 <p className={`rounded-xl p-4 text-sm ${darkMode ? 'bg-[#302338] text-slate-300' : 'bg-gray-50 text-gray-500'}`}>
                   No files in this category yet.
                 </p>
               ) : <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-                {(documentFolders.find(([month]) => month === openedFolder)?.[1] || []).map((document) => {
+                {visibleFolderDocuments.map((document) => {
               const fileUrl = documentUrls.find((entry) => entry.id === document.id)?.url;
               const imageUrl = (document.type || '').startsWith('image/') ? fileUrl : null;
               return (
@@ -454,6 +480,71 @@ export default function AdminDocuments({
               );
                 })}
               </ul>}
+              {documentPageError && (
+                <p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-sm text-rose-700">
+                  Could not load more documents: {documentPageError.message}
+                </p>
+              )}
+              {hasNextPage && (
+                <div ref={loadMoreRef} className="py-4 text-center text-xs text-gray-500" aria-live="polite">
+                  {isFetchingNextPage ? 'Loading more documents…' : 'Scroll to load more'}
+                </div>
+              )}
+              {openedFolder === 'Other Documents' && (
+                <div
+                  className={`mt-5 rounded-2xl border-2 border-dashed px-4 py-10 text-center transition sm:py-14 ${
+                    dragging
+                      ? darkMode ? 'border-pink-300 bg-[#392A45]' : 'border-violet-500 bg-violet-50'
+                      : darkMode ? 'border-[#67445F] bg-[#302338]' : 'border-violet-200 bg-violet-50/40'
+                  }`}
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    if (Array.from(event.dataTransfer?.types || []).includes('Files')) setDragging(true);
+                  }}
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
+                  }}
+                  onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget)) setDragging(false);
+                  }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setDragging(false);
+                    const files = Array.from(event.dataTransfer?.files || []);
+                    if (!files.length) {
+                      setError('No files were detected. Drop files into the Other Documents upload area.');
+                      return;
+                    }
+                    void addFiles(files);
+                  }}
+                >
+                  {dragging ? (
+                    <Image size={38} className="mx-auto text-violet-500" aria-hidden="true" />
+                  ) : (
+                    <UploadCloud size={38} className="mx-auto text-violet-500" aria-hidden="true" />
+                  )}
+                  <h4 className={`mt-3 text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    Drag and drop your documents file instantly
+                  </h4>
+                  <p className={`mt-1 text-sm ${mutedTextClass}`}>Or choose files to upload.</p>
+                  <div className="mt-5 flex flex-wrap justify-center gap-3">
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => fileInput.current?.click()}
+                      className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#FCE7F3] px-4 py-2.5 text-sm font-semibold text-[#9D174D] hover:bg-[#FBCFE8] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <FileText size={16} /> Browse files
+                    </button>
+                  </div>
+                  {busy && <p role="status" className={`mt-4 text-sm ${darkMode ? 'text-pink-200' : 'text-violet-700'}`}>Saving files…</p>}
+                  <p className={`mt-3 text-xs ${mutedTextClass}`}>
+                    Files are saved on this browser and remain available offline on this device.
+                  </p>
+                </div>
+              )}
             </div>
           ) : (
             <ul className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
@@ -513,33 +604,6 @@ export default function AdminDocuments({
         </div>
       )}
 
-      <div
-        className={`rounded-2xl border-2 border-dashed px-4 py-10 text-center transition sm:py-14 ${
-          dragging
-            ? darkMode ? 'border-pink-300 bg-[#392A45]' : 'border-violet-500 bg-violet-50'
-            : darkMode ? 'border-[#67445F] bg-[#302338]' : 'border-violet-200 bg-violet-50/40'
-        }`}
-      >
-        {dragging ? (
-          <Image size={38} className="mx-auto text-violet-500" aria-hidden="true" />
-        ) : (
-          <UploadCloud size={38} className="mx-auto text-violet-500" aria-hidden="true" />
-        )}
-        <h2 className={`mt-3 text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Drag and drop your documents file instantly</h2>
-        <p className={`mt-1 text-sm ${mutedTextClass}`}>Or choose files to upload.</p>
-        <div className="mt-5 flex flex-wrap justify-center gap-3">
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => fileInput.current?.click()}
-            className="inline-flex cursor-pointer items-center gap-2 rounded-xl bg-[#FCE7F3] px-4 py-2.5 text-sm font-semibold text-[#9D174D] hover:bg-[#FBCFE8] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <FileText size={16} /> Browse files
-          </button>
-        </div>
-        {busy && <p role="status" className={`mt-4 text-sm ${darkMode ? 'text-pink-200' : 'text-violet-700'}`}>Saving files…</p>}
-      </div>
-      <p className={`mt-3 text-xs ${mutedTextClass}`}>Files are saved on this browser and remain available offline on this device.</p>
     </section>
   );
 }

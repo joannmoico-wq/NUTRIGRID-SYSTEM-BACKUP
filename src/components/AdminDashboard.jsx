@@ -27,7 +27,7 @@ import MonthlyReportTable from './MonthlyReportTable';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
 import BnsSearchBar from './BnsSearchBar';
 import AdminTasks from './AdminTasks';
-import AdminReportTable, { ACTIONS_HEAD_CELL, ReportHeader, REPORT_META } from './AdminReportTable';
+import AdminReportTable, { ACTIONS_HEAD_CELL, ExpandableNote, ReportHeader, REPORT_META } from './AdminReportTable';
 import InteractiveMapComponent from './InteractiveMapComponent';
 import AdminDocuments from './AdminDocuments';
 import ReportExportActions from './ReportExportActions';
@@ -35,6 +35,7 @@ import ConfirmActionDialog from './ConfirmActionDialog';
 import {
   Home,
   Users,
+  Archive,
   FileText,
   Settings,
   LogOut,
@@ -69,6 +70,11 @@ import { normalizePurokName, sortPurokCounts } from '../utils/purok';
 import { isTaskOverdue } from '../utils/taskSyncService';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
 import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
+import {
+  getActivityCategoryLabel,
+  loadRecordActivityLogs,
+  recordInformationEdit,
+} from '../utils/activityLogService';
 import nutrigridIcon from '../public/icon-192.png';
 import {
   PieChart,
@@ -237,11 +243,25 @@ const AdminHeader = ({
   activeTab,
   adminEmail,
   onLogout,
+  showActivityLogs,
+  setShowActivityLogs,
+  activityLogs,
+  activityLogLoading,
+  activityLogError,
+  currentUserId,
+  showOnlyMyActivity,
+  setShowOnlyMyActivity,
+  selectedActivityId,
 }) => {
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [accountMessage, setAccountMessage] = useState('');
   const [accountBusy, setAccountBusy] = useState(false);
+  const [activityMonth, setActivityMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const accountRef = useRef(null);
+  const activityRef = useRef(null);
   const textColor = darkMode ? THEME.dark.text : THEME.light.text;
   const mutedColor = darkMode ? THEME.dark.muted : THEME.light.muted;
   const iconButtonStyle = {
@@ -254,10 +274,13 @@ const AdminHeader = ({
       if (accountRef.current && !accountRef.current.contains(event.target)) {
         setShowAccountMenu(false);
       }
+      if (activityRef.current && !activityRef.current.contains(event.target)) {
+        setShowActivityLogs(false);
+      }
     };
     document.addEventListener('mousedown', closeAccountMenu);
     return () => document.removeEventListener('mousedown', closeAccountMenu);
-  }, []);
+  }, [setShowActivityLogs]);
 
   return (
     <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-5 sm:py-4 lg:px-8 lg:py-5">
@@ -329,7 +352,10 @@ const AdminHeader = ({
         <div className="relative" ref={notifRef}>
           <button
             type="button"
-            onClick={() => setShowNotifications((open) => !open)}
+            onClick={() => {
+              setShowActivityLogs(false);
+              setShowNotifications((open) => !open);
+            }}
             className={`relative w-10 h-10 rounded-2xl flex items-center justify-center hover:opacity-95 transition shadow-sm ${
               showNotifications ? 'ring-2 ring-[#8F65FF]/40' : ''
             }`}
@@ -388,10 +414,51 @@ const AdminHeader = ({
             </div>
           )}
         </div>
+        <div className="relative" ref={activityRef}>
+          <button
+            type="button"
+            onClick={() => {
+              setShowNotifications(false);
+              setShowActivityLogs((open) => !open);
+            }}
+            className={`relative flex h-10 w-10 items-center justify-center rounded-2xl shadow-sm transition hover:opacity-95 ${
+              showActivityLogs ? 'ring-2 ring-[#8F65FF]/40' : ''
+            }`}
+            style={iconButtonStyle}
+            aria-label="Activity logs"
+            title="Activity logs"
+            aria-expanded={showActivityLogs}
+          >
+            <Archive size={18} style={{ color: mutedColor }} />
+          </button>
+          {showActivityLogs && (
+            <div
+              className="absolute right-0 z-50 mt-2 max-h-[min(30rem,75vh)] w-[min(22rem,calc(100vw-2rem))] overflow-visible rounded-3xl shadow-xl"
+              style={{
+                backgroundColor: darkMode ? THEME.dark.card : THEME.light.card,
+                border: `1px solid ${darkMode ? THEME.dark.border : THEME.light.border}`,
+              }}
+            >
+              <ActivityLogsView
+                logs={activityLogs}
+                loading={activityLogLoading}
+                error={activityLogError}
+                darkMode={darkMode}
+                currentUserId={currentUserId}
+                showOnlyMine={showOnlyMyActivity}
+                onToggleMine={setShowOnlyMyActivity}
+                selectedMonth={activityMonth}
+                onMonthChange={setActivityMonth}
+                selectedActivityId={selectedActivityId}
+              />
+            </div>
+          )}
+        </div>
         <div className="relative" ref={accountRef}>
           <button
             type="button"
             onClick={() => {
+              setShowActivityLogs(false);
               setShowAccountMenu((open) => !open);
               setShowNotifications(false);
               setAccountMessage('');
@@ -467,11 +534,275 @@ const AdminHeader = ({
   );
 };
 
+function getActivityActorDisplayName(actorName) {
+  const name = String(actorName || '').replace(/^BHW\s+/i, '').trim();
+  return name || 'Field Worker';
+}
+
+function ActivityLogsView({
+  logs,
+  loading,
+  error,
+  darkMode,
+  currentUserId,
+  showOnlyMine,
+  onToggleMine,
+  selectedMonth,
+  onMonthChange,
+  selectedActivityId,
+}) {
+  const actorLogs = showOnlyMine
+    ? logs.filter((log) => log.actor_user_id === currentUserId)
+    : logs.filter((log) => ['field_worker', 'bhw'].includes(String(log.actor_role || '').toLowerCase()));
+  const visibleLogs = actorLogs.filter((log) => {
+    const date = new Date(log.created_at);
+    if (Number.isNaN(date.getTime())) return false;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` === selectedMonth;
+  });
+
+  return (
+    <section className="space-y-2">
+      <div className="flex w-full flex-col gap-2 border-b px-3 py-2.5" style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}>
+        <h2 className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Activity Logs</h2>
+        <div className="flex min-w-0 items-center gap-2">
+          <label className="relative block min-w-0 flex-1">
+            <span className="sr-only">Choose whose edits to show</span>
+            <select
+              value={showOnlyMine ? 'mine' : 'bhw'}
+              onChange={(event) => onToggleMine(event.target.value === 'mine')}
+              className={`w-full appearance-none rounded-lg border py-1.5 pl-2 pr-7 text-center text-[11px] font-bold tracking-wide shadow-sm transition focus:outline-none focus:ring-2 focus:ring-violet-400 ${
+                darkMode
+                  ? 'border-slate-600 bg-[#26263B] text-slate-100'
+                  : 'border-[#E8DCEF] bg-white text-gray-800'
+              }`}
+            >
+              <option value="bhw">BHW Modified</option>
+              <option value="mine">User Revised</option>
+            </select>
+            <ChevronDown
+              size={13}
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2"
+              aria-hidden="true"
+            />
+          </label>
+          <MonthYearPicker
+            value={selectedMonth}
+            onChange={onMonthChange}
+            max={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`}
+            darkMode={darkMode}
+            compact
+            label="Filter activity logs by month and year"
+          />
+        </div>
+      </div>
+      {error && (
+        <p role="alert" className="mx-3 rounded-lg border border-amber-300 bg-amber-50 p-2 text-xs text-amber-900">
+          {error}
+        </p>
+      )}
+      {loading && logs.length === 0 ? (
+        <p className={`p-4 text-center text-xs ${darkMode ? 'text-slate-300' : 'text-gray-500'}`}>
+          Loading activity…
+        </p>
+      ) : visibleLogs.length === 0 ? (
+        <p className={`p-4 text-center text-xs ${darkMode ? 'text-slate-300' : 'text-gray-500'}`}>
+          {showOnlyMine
+            ? 'You have not edited any records in this month.'
+            : 'No BHW record edits have been logged for this month.'}
+        </p>
+      ) : (
+        <div className="max-h-[min(20rem,55vh)] space-y-2 overflow-y-auto px-2 pb-2">
+          {visibleLogs.map((log) => {
+            const changes = Array.isArray(log.field_changes) ? log.field_changes : [];
+            return (
+              <article
+                key={log.id}
+                className={`rounded-xl border p-2.5 ${
+                  log.id === selectedActivityId
+                    ? 'border-violet-400 ring-2 ring-violet-300/70'
+                    : darkMode
+                      ? 'border-slate-700 bg-[#26263B]'
+                      : 'border-[#E8DCEF] bg-white'
+                }`}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <h3 className={`text-xs font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                      BHW {getActivityActorDisplayName(log.actor_name)} updated {getActivityCategoryLabel(log.category)}
+                    </h3>
+                    <p className={`mt-0.5 text-[10px] ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                      Record {log.record_id} · {new Date(log.created_at).toLocaleString()}
+                      {log.pending_sync ? ' · Waiting to sync' : ''}
+                    </p>
+                  </div>
+                </div>
+                {changes.length > 0 && (
+                  <ul className={`mt-1 divide-y ${darkMode ? 'divide-slate-700' : 'divide-gray-100'}`}>
+                    {changes.map((change, index) => (
+                      <li key={`${log.id}-${change.field || index}`} className="grid grid-cols-[minmax(5rem,0.4fr)_minmax(0,1fr)] gap-1 py-1 text-[11px]">
+                        <span className={`font-semibold ${darkMode ? 'text-slate-200' : 'text-gray-700'}`}>
+                          {change.label || change.field}
+                        </span>
+                        <span className={`${darkMode ? 'text-slate-300' : 'text-gray-600'} break-words`}>
+                          {change.old_value || '—'} <span aria-label="changed to" className="px-1 font-bold text-violet-500">→</span> {change.new_value || '—'}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MonthYearPicker({ value, onChange, min, max, darkMode = false, compact = false, label }) {
+  const [open, setOpen] = useState(false);
+  const pickerRef = useRef(null);
+  const [selectedYear, selectedMonth] = /^\d{4}-\d{2}$/.test(value)
+    ? value.split('-').map(Number)
+    : [new Date().getFullYear(), new Date().getMonth() + 1];
+  const currentYear = new Date().getFullYear();
+  const minYear = min ? Number(min.slice(0, 4)) : 2000;
+  const maxYear = max ? Number(max.slice(0, 4)) : currentYear;
+  const years = Array.from(
+    { length: Math.max(1, maxYear - minYear + 1) },
+    (_, index) => minYear + index
+  );
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const formatMonthValue = (year, month) => `${year}-${String(month).padStart(2, '0')}`;
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handlePointerDown = (event) => {
+      if (!pickerRef.current?.contains(event.target)) setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  const yearSelectClass = `w-full appearance-none rounded-md border pl-3 pr-9 font-bold focus:outline-none focus:ring-2 focus:ring-violet-300 ${
+    compact ? 'py-1.5 text-xs' : 'py-2 text-sm'
+  } ${
+    darkMode
+      ? 'border-slate-600 bg-[#302338] text-white'
+      : 'border-gray-200 bg-gray-100 text-gray-800'
+  }`;
+
+  return (
+    <div className="relative" ref={pickerRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={`inline-flex items-center justify-between rounded-xl border font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300 ${
+          compact ? 'min-h-9 min-w-0 gap-1.5 px-2 py-1.5 text-[10px]' : 'min-h-11 min-w-40 gap-3 px-3 py-2 text-sm'
+        } ${
+          darkMode
+            ? 'border-[#67445F] bg-[#302338] text-[#FCE7F3]'
+            : 'border-gray-300 bg-white text-gray-800'
+        }`}
+        aria-label={label}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+      >
+        <span className={compact ? 'whitespace-nowrap' : ''}>
+          {new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString('en', { month: compact ? 'short' : 'long', year: 'numeric' })}
+        </span>
+        <ChevronDown size={compact ? 13 : 16} aria-hidden="true" />
+      </button>
+      {open && (
+        <div
+          className={`absolute right-0 z-[100] mt-2 rounded-xl border p-3 shadow-xl ${
+            compact ? 'w-56' : 'w-64'
+          } ${
+            darkMode ? 'border-[#67445F] bg-[#26263B]' : 'border-gray-200 bg-white'
+          }`}
+          role="dialog"
+          aria-label={label}
+        >
+          <label className="relative mb-2 block">
+            <span className="sr-only">Choose year</span>
+            <select
+              value={selectedYear}
+              onChange={(event) => {
+                const year = Number(event.target.value);
+                let month = Math.min(selectedMonth, 12);
+                let candidate = formatMonthValue(year, month);
+                if (min && candidate < min) {
+                  month = year === minYear ? Number(min.slice(5, 7)) : 1;
+                  candidate = formatMonthValue(year, month);
+                }
+                if (max && candidate > max) {
+                  month = year === maxYear ? Number(max.slice(5, 7)) : 12;
+                  candidate = formatMonthValue(year, month);
+                }
+                if ((!min || candidate >= min) && (!max || candidate <= max)) onChange(candidate);
+              }}
+              className={yearSelectClass}
+            >
+              {years.map((year) => <option key={year} value={year}>{year}</option>)}
+            </select>
+            <ChevronDown
+              size={compact ? 14 : 16}
+              className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-300' : 'text-gray-600'}`}
+              aria-hidden="true"
+            />
+          </label>
+          <div className={`grid grid-cols-3 ${compact ? 'gap-1' : 'gap-1.5'}`}>
+            {monthNames.map((name, index) => {
+              const month = index + 1;
+              const monthValue = formatMonthValue(selectedYear, month);
+              const disabled = Boolean((min && monthValue < min) || (max && monthValue > max));
+              const selectedMonthValue = formatMonthValue(selectedYear, selectedMonth);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    onChange(monthValue);
+                    setOpen(false);
+                  }}
+                  className={`rounded-lg px-2 font-medium disabled:cursor-not-allowed disabled:opacity-35 ${
+                    compact ? 'py-1.5 text-xs' : 'py-2 text-sm'
+                  } ${
+                    monthValue === selectedMonthValue
+                      ? 'bg-[#8F65FF] text-white'
+                      : darkMode
+                        ? 'text-slate-200 hover:bg-white/10'
+                        : 'text-gray-700 hover:bg-violet-50'
+                  }`}
+                >
+                  {name.slice(0, 3)}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', currentUserId }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [hasOpenedTasks, setHasOpenedTasks] = useState(false);
-  const [purokPeriod, setPurokPeriod] = useState('this-month');
-  const [monthlyTrendView, setMonthlyTrendView] = useState('new-repeat');
+  const [purokPeriod, setPurokPeriod] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [monthlyTrendEndMonth, setMonthlyTrendEndMonth] = useState(() => {
     const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
     if (!reportMonthMatch) {
@@ -489,6 +820,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [selectedTaskFilter, setSelectedTaskFilter] = useState(null);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [showActivityLogs, setShowActivityLogs] = useState(false);
+  const [activityLogs, setActivityLogs] = useState([]);
+  const [activityLogLoading, setActivityLogLoading] = useState(true);
+  const [activityLogError, setActivityLogError] = useState('');
+  const [showOnlyMyActivity, setShowOnlyMyActivity] = useState(false);
+  const [selectedActivityId, setSelectedActivityId] = useState(null);
   const [readNotificationIds, setReadNotificationIds] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(`${READ_NOTIFICATIONS_KEY}:${currentUserId || 'shared'}`) || '[]');
@@ -507,6 +844,33 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [residentPurokFilter, setResidentPurokFilter] = useState('');
   const [scheduledVisitPurok, setScheduledVisitPurok] = useState('');
   const notifRef = useRef(null);
+
+  const refreshActivityLogs = useCallback(async () => {
+    try {
+      const logs = await loadRecordActivityLogs();
+      setActivityLogs(logs);
+      setActivityLogError('');
+    } catch (error) {
+      console.error('Could not load record activity logs:', error);
+      setActivityLogError(
+        error.message.includes('record_activity_logs')
+          ? 'Activity Logs need Supabase setup. Run supabase-record-activity-logs.sql in the Supabase SQL Editor.'
+          : `Could not load Activity Logs: ${error.message}`
+      );
+    } finally {
+      setActivityLogLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshActivityLogs();
+    const interval = window.setInterval(() => void refreshActivityLogs(), 30000);
+    window.addEventListener('nutrigrid-activity-logs-changed', refreshActivityLogs);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('nutrigrid-activity-logs-changed', refreshActivityLogs);
+    };
+  }, [refreshActivityLogs]);
 
   useEffect(() => {
     localStorage.setItem(DARK_MODE_KEY, String(darkMode));
@@ -532,7 +896,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const handleNotificationClick = (item) => {
     markNotificationsRead(item.notificationIds || [item.id]);
     setShowNotifications(false);
-    setActiveTab(item.mapAlert ? 'dashboard' : item.tab || 'dashboard');
+    if (item.activityId) {
+      setSelectedActivityId(item.activityId);
+      const selectedLog = activityLogs.find((log) => log.id === item.activityId);
+      setShowOnlyMyActivity(selectedLog?.actor_user_id === currentUserId);
+      setShowActivityLogs(true);
+    }
+    setActiveTab(item.mapAlert || item.activityId ? 'dashboard' : item.tab || 'dashboard');
     if (item.mapAlert) {
       setAlertPuroks(item.affectedPuroks || []);
       setPendingMapScroll(true);
@@ -869,8 +1239,18 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         mapAlert: true,
       });
     }
+    activityLogs.forEach((log) => {
+      items.push({
+        id: `record-activity:${log.id}`,
+        notificationIds: [`record-activity:${log.id}`],
+        activityId: log.id,
+        label: `BHW ${getActivityActorDisplayName(log.actor_name)} updated information`,
+        detail: 'Tap this to see details in Activity Logs.',
+        tab: 'activityLogs',
+      });
+    });
     return items;
-  }, [households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, readNotificationIds]);
+  }, [households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, readNotificationIds, activityLogs]);
 
   const visibleNotificationItems = notificationItems.filter(
     (item) =>
@@ -924,23 +1304,29 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   // Top puroks, counted from saved household records for the selected period.
   const purokData = useMemo(() => {
-    const now = new Date();
-    const currentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
-    const periodStart = new Date(currentMonth);
-    const periodEnd = new Date(currentMonth);
-    periodEnd.setMonth(periodEnd.getMonth() + 1);
-    if (purokPeriod === 'last-month') periodStart.setMonth(periodStart.getMonth() - 1);
-    if (purokPeriod === 'last-month') periodEnd.setTime(currentMonth.getTime());
-    if (purokPeriod === 'last-3-months') periodStart.setMonth(periodStart.getMonth() - 2);
+    if (!/^\d{4}-\d{2}$/.test(purokPeriod)) return [];
+    const [year, month] = purokPeriod.split('-').map(Number);
+    const periodStart = new Date(year, month - 1, 1);
+    const periodEnd = new Date(year, month, 1);
 
     const counts = new Map();
     households.forEach((h) => {
-      if (purokPeriod !== 'all-time') {
-        const dateValue = h.visit_date || h.created_at || h.updated_at;
-        const recordDate = dateValue ? new Date(dateValue) : null;
-        if (!recordDate || Number.isNaN(recordDate.getTime())) return;
-        if (recordDate < periodStart || recordDate >= periodEnd) return;
-      }
+      const raw = h._raw || h;
+      const dateValue =
+        raw.visit_date ||
+        h.visit_date ||
+        h.lastVisit ||
+        raw.created_at ||
+        h.created_at ||
+        raw.updated_at ||
+        h.updated_at;
+      const dateString = String(dateValue || '');
+      const dateOnly = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      const recordDate = dateOnly
+        ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+        : dateValue ? new Date(dateValue) : null;
+      if (!recordDate || Number.isNaN(recordDate.getTime())) return;
+      if (recordDate < periodStart || recordDate >= periodEnd) return;
       const name = normalizePurokName(h.purok);
       if (name) counts.set(name, (counts.get(name) || 0) + 1);
     });
@@ -972,15 +1358,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         month: date.toLocaleDateString('en', { month: 'short' }),
         startDate: date,
         endDate: new Date(date.getFullYear(), date.getMonth() + 1, 0),
-        newCases: 0,
-        repeatCases: 0,
         vulnerableCases: 0,
         pregnantAndLactating: 0,
         infants: 0,
       };
     });
     const malnutritionByMonth = new Map(months.map((month) => [month.key, new Set()]));
-    const firstMalnutritionMonthByChild = new Map();
     natalityData.forEach((record) => {
       const raw = record._raw || record;
       const weighingDate = parseDate(raw.dow || record.dow);
@@ -999,10 +1382,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         status.includes('wasted')
       );
       if (!isMalnourished || !weighingDate) return;
-      const firstMonth = firstMalnutritionMonthByChild.get(childKey);
-      if (!firstMonth || weighingMonth < firstMonth) {
-        firstMalnutritionMonthByChild.set(childKey, weighingMonth);
-      }
       if (malnutritionByMonth.has(weighingMonth)) {
         malnutritionByMonth.get(weighingMonth).add(childKey);
       }
@@ -1011,9 +1390,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     months.forEach((month) => {
       const malnourishedChildren = malnutritionByMonth.get(month.key);
       month.vulnerableCases = malnourishedChildren.size;
-      month.newCases = Array.from(malnourishedChildren)
-        .filter((childKey) => firstMalnutritionMonthByChild.get(childKey) === month.key).length;
-      month.repeatCases = month.vulnerableCases - month.newCases;
     });
 
     const countActiveRecords = (records, category) => months.map((month) => {
@@ -1092,23 +1468,52 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       };
     });
   }, []);
-  const activeMonthlyTrend = monthlyTrendView === 'new-repeat'
-    ? monthlyTrendData.some((month) => month.newCases > 0 || month.repeatCases > 0)
-    : monthlyTrendData.some((month) =>
-      month.vulnerableCases > 0 ||
-      month.pregnantAndLactating > 0 ||
-      month.infants > 0
-    );
+  const activeMonthlyTrend = monthlyTrendData.some((month) =>
+    month.vulnerableCases > 0 ||
+    month.pregnantAndLactating > 0 ||
+    month.infants > 0
+  );
 
-  const syncedPct = stats.synced + stats.pending
-    ? Math.round((stats.synced / (stats.synced + stats.pending)) * 100)
-    : 0;
-  const pendingPct = stats.synced + stats.pending ? 100 - syncedPct : 0;
+  const malnutritionStatusData = (() => {
+    const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const malnutritionByMonth = new Map();
+    const firstMalnutritionMonthByChild = new Map();
 
-  const householdStatusData = [
-    { name: 'Synced', value: stats.synced, color: THEME.accentPurple, pct: syncedPct },
-    { name: 'Pending', value: stats.pending, color: THEME.accentPink, pct: pendingPct },
-  ];
+    natalityData.forEach((record) => {
+      const raw = record._raw || record;
+      const dateValue = raw.dow || record.dow;
+      const dateString = String(dateValue || '');
+      const dateOnly = dateString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      const weighingDate = dateOnly
+        ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+        : dateValue ? new Date(dateValue) : null;
+      if (!weighingDate || Number.isNaN(weighingDate.getTime())) return;
+      const month = `${weighingDate.getFullYear()}-${String(weighingDate.getMonth() + 1).padStart(2, '0')}`;
+      const statuses = [raw.w_a || record.wA, raw.h_a || record.hA, raw.w_l_h || record.wLH]
+        .map((status) => String(status || '').toLowerCase());
+      const isMalnourished = statuses.some((status) =>
+        status.includes('underweight') || status.includes('stunted') || status.includes('wasted')
+      );
+      if (!isMalnourished) return;
+
+      const childName = String(raw.child_name || raw.name_of_child || record.childName || '').trim().toLowerCase();
+      const childKey = `${raw.dob || record.dob || ''}:${childName || raw.id || record.id || ''}`;
+      const firstMonth = firstMalnutritionMonthByChild.get(childKey);
+      if (!firstMonth || month < firstMonth) firstMalnutritionMonthByChild.set(childKey, month);
+      if (!malnutritionByMonth.has(month)) malnutritionByMonth.set(month, new Set());
+      malnutritionByMonth.get(month).add(childKey);
+    });
+
+    const currentCases = malnutritionByMonth.get(currentMonth) || new Set();
+    const newCases = Array.from(currentCases)
+      .filter((childKey) => firstMalnutritionMonthByChild.get(childKey) === currentMonth).length;
+    const repeatCases = currentCases.size - newCases;
+    const total = newCases + repeatCases;
+    return [
+      { name: 'New Cases', value: newCases, color: THEME.accentPink, pct: total ? Math.round((newCases / total) * 100) : 0 },
+      { name: 'Repeat Cases', value: repeatCases, color: THEME.accentPurple, pct: total ? 100 - Math.round((newCases / total) * 100) : 0 },
+    ];
+  })();
 
   const requestAdminConfirmation = (message, action, options = {}) => {
     setAdminConfirmation({ message, action, ...options });
@@ -1570,11 +1975,17 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                         >
                           {row[getColumnKey(col)]}
                         </span>
+                      ) : ['notes', 'remarks'].includes(getColumnKey(col).toLowerCase()) ? (
+                        <ExpandableNote value={row[getColumnKey(col)]} darkMode={darkMode} />
                       ) : (
-                        <span className="inline-flex max-w-full items-center justify-center gap-1">
-                          <span className="truncate">{row[getColumnKey(col)]}</span>
+                        <span className="inline-flex max-w-full flex-wrap items-center justify-center gap-1">
+                          <span className={`min-w-0 ${
+                            getColumnKey(col).toLowerCase() === updatedColumn
+                              ? 'whitespace-normal break-words'
+                              : 'truncate'
+                          }`}>{row[getColumnKey(col)]}</span>
                           {getColumnKey(col).toLowerCase() === updatedColumn && row._raw?.updated_at && (
-                            <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-semibold text-pink-700">
+                            <span className="inline-flex max-w-full items-center justify-center rounded-full bg-pink-100 px-1.5 py-0.5 text-center text-[9px] font-semibold text-pink-700">
                               Updated
                             </span>
                           )}
@@ -1774,14 +2185,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-6 min-h-[250px] rounded-3xl p-4" style={dashCardStyle}>
           <p className="text-base font-bold mb-2" style={{ color: titleColor }}>
-            Household Status
+            New vs. Repeat Malnutrition Cases
           </p>
           <div className="flex min-h-[195px] items-center justify-center gap-6">
             <div className="h-[190px] w-[190px] shrink-0">
               <ResponsiveContainer width="100%" height="100%">
                 <PieChart>
                   <Pie
-                    data={householdStatusData.filter((d) => d.value > 0)}
+                    data={malnutritionStatusData.filter((d) => d.value > 0)}
                     cx="50%"
                     cy="50%"
                     innerRadius={58}
@@ -1790,12 +2201,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                     dataKey="value"
                     strokeWidth={0}
                   >
-                    {householdStatusData
+                    {malnutritionStatusData
                       .filter((d) => d.value > 0)
                       .map((entry) => <Cell key={entry.name} fill={entry.color} />)}
                   </Pie>
                   <Tooltip
-                    formatter={(v) => [v, 'Households']}
+                    formatter={(v) => [v, 'Cases']}
                     contentStyle={{
                       borderRadius: '12px',
                       border: `1px solid ${darkMode ? THEME.dark.border : THEME.light.border}`,
@@ -1808,7 +2219,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               </ResponsiveContainer>
             </div>
             <div className="flex min-w-[130px] flex-1 flex-col justify-center gap-4">
-              {householdStatusData.map((item) => (
+              {malnutritionStatusData.map((item) => (
                 <div key={item.name} className="border-b pb-3 last:border-b-0 last:pb-0" style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}>
                   <div className="flex items-center gap-2">
                     <div className="h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: item.color }} />
@@ -1819,7 +2230,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                       {item.value}
                     </span>
                   </div>
-                  <p className="ml-5 mt-1 text-xs font-medium" style={{ color: chartMutedColor }}>{item.pct}% of households</p>
+                  <p className="ml-5 mt-1 text-xs font-medium" style={{ color: chartMutedColor }}>{item.pct}% of cases</p>
                 </div>
               ))}
             </div>
@@ -1831,25 +2242,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             <p className="text-base font-bold" style={{ color: titleColor }}>
               Top 10 Puroks by Households
             </p>
-            <label className="relative block shrink-0">
-              <span className="sr-only">Filter Top 10 Puroks by date</span>
-              <select
-                value={purokPeriod}
-                onChange={(event) => setPurokPeriod(event.target.value)}
-                className="appearance-none rounded-xl border py-1.5 pl-3 pr-8 text-xs font-semibold shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200"
-                style={{
-                  backgroundColor: darkMode ? '#302338' : '#FFFFFF',
-                  borderColor: darkMode ? '#67445F' : '#E5E7EB',
-                  color: darkMode ? '#FCE7F3' : '#374151',
-                }}
-              >
-                <option value="this-month">This Month</option>
-                <option value="last-month">Last Month</option>
-                <option value="last-3-months">Last 3 Months</option>
-                <option value="all-time">All Time</option>
-              </select>
-              <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-300' : 'text-gray-500'}`} aria-hidden="true" />
-            </label>
+            <MonthYearPicker
+              value={purokPeriod}
+              onChange={setPurokPeriod}
+              max={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`}
+              darkMode={darkMode}
+              label="Filter Top 10 Puroks by month and year"
+            />
           </div>
           {purokData.length === 0 ? (
             <div className="min-h-[150px]">
@@ -1881,39 +2280,19 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
       <div className={`${dashCardClass} p-6`} style={dashCardStyle}>
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <label className="relative block">
-            <span className="sr-only">Choose monthly trend chart</span>
-            <select
-              value={monthlyTrendView}
-              onChange={(event) => setMonthlyTrendView(event.target.value)}
-              className={`max-w-[min(60vw,28rem)] appearance-none rounded-xl border py-1.5 pl-3 pr-8 text-xs font-semibold shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 ${
-                darkMode
-                  ? 'border-[#67445F] bg-[#302338] text-[#FCE7F3]'
-                  : 'border-gray-300 bg-white text-gray-800'
-              }`}
-            >
-              <option value="new-repeat">New vs. Repeat Malnutrition Cases</option>
-              <option value="vulnerable">Total Vulnerable Demographics Trend</option>
-            </select>
-            <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-300' : 'text-gray-500'}`} aria-hidden="true" />
-          </label>
-          <label className="relative ml-auto block">
-            <span className="sr-only">Choose the last month in the trend window</span>
-            <select
+          <p className="text-sm font-bold" style={{ color: titleColor }}>
+            Total Vulnerable Demographics Trend
+          </p>
+          <div className="ml-auto">
+            <MonthYearPicker
               value={monthlyTrendEndMonth}
-              onChange={(event) => setMonthlyTrendEndMonth(event.target.value)}
-              className={`appearance-none rounded-xl border py-1.5 pl-3 pr-8 text-xs font-semibold shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 ${
-                darkMode
-                  ? 'border-[#67445F] bg-[#302338] text-[#FCE7F3]'
-                  : 'border-gray-300 bg-white text-gray-800'
-              }`}
-            >
-              {monthlyTrendMonthOptions.map((month) => (
-                <option key={month.value} value={month.value}>{month.label}</option>
-              ))}
-            </select>
-            <ChevronDown size={14} className={`pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-300' : 'text-gray-500'}`} aria-hidden="true" />
-          </label>
+              onChange={setMonthlyTrendEndMonth}
+              min={monthlyTrendMonthOptions[0]?.value}
+              max={monthlyTrendMonthOptions[monthlyTrendMonthOptions.length - 1]?.value}
+              darkMode={darkMode}
+              label="Choose the last month in the trend window"
+            />
+          </div>
           <span
             className="text-xs px-3 py-1 rounded-full"
             style={{
@@ -1925,9 +2304,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           </span>
         </div>
         <p className="mb-3 text-xs" style={{ color: mutedColor }}>
-          {monthlyTrendView === 'new-repeat'
-            ? 'New cases are children first flagged as underweight, stunted, or wasted in available weighing records. Repeat cases were flagged in an earlier month and remain flagged.'
-            : 'Barangay-wide counts: children with recorded underweight, stunted, or wasted status; pregnancy registrations not past any recorded due date; lactating women within 24 months after delivery; and infants aged 0–11 months based on date of birth.'}
+          Barangay-wide counts: children with recorded underweight, stunted, or wasted status; pregnancy registrations not past any recorded due date; lactating women within 24 months after delivery; and infants aged 0–11 months based on date of birth.
         </p>
         <div className="h-[280px]">
           {!activeMonthlyTrend ? (
@@ -1949,18 +2326,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                   }}
                 />
                 <Legend wrapperStyle={{ color: titleColor }} />
-                {monthlyTrendView === 'new-repeat' ? (
-                  <>
-                    <Line type="monotone" dataKey="newCases" stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4 }} name="New Cases" />
-                    <Line type="monotone" dataKey="repeatCases" stroke={THEME.accentPurple} strokeWidth={2.5} dot={{ r: 4 }} name="Ongoing / Repeat Cases" />
-                  </>
-                ) : (
-                  <>
-                    <Line type="monotone" dataKey="vulnerableCases" stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4 }} name="Total Underweight / Stunted / Wasted Cases" />
-                    <Line type="monotone" dataKey="pregnantAndLactating" stroke={THEME.accentPurple} strokeWidth={2.5} dot={{ r: 4 }} name="Pregnant & Lactating Women" />
-                    <Line type="monotone" dataKey="infants" stroke="#2B9A8F" strokeWidth={2.5} dot={{ r: 4 }} name="Infants (0–11 months)" />
-                  </>
-                )}
+                <Line type="monotone" dataKey="vulnerableCases" stroke={THEME.accentPink} strokeWidth={2.5} dot={{ r: 4 }} name="Total Underweight / Stunted / Wasted Cases" />
+                <Line type="monotone" dataKey="pregnantAndLactating" stroke={THEME.accentPurple} strokeWidth={2.5} dot={{ r: 4 }} name="Pregnant & Lactating Women" />
+                <Line type="monotone" dataKey="infants" stroke="#2B9A8F" strokeWidth={2.5} dot={{ r: 4 }} name="Infants (0–11 months)" />
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -2758,6 +3126,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     monthlyReport: 'Monthly Report',
     documents: 'Documents',
     tasks: 'Tasks',
+    activityLogs: 'Activity Logs',
     users: 'Settings',
   };
 
@@ -2808,6 +3177,15 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             setSelectedTaskFilter={setSelectedTaskFilter}
             adminEmail={adminEmail}
             onLogout={onLogout}
+            showActivityLogs={showActivityLogs}
+            setShowActivityLogs={setShowActivityLogs}
+            activityLogs={activityLogs}
+            activityLogLoading={activityLogLoading}
+            activityLogError={activityLogError}
+            currentUserId={currentUserId}
+            showOnlyMyActivity={showOnlyMyActivity}
+            setShowOnlyMyActivity={setShowOnlyMyActivity}
+            selectedActivityId={selectedActivityId}
           />
           <div className="min-w-0 flex-1 overflow-y-auto px-3 pb-5 sm:px-5 sm:pb-6 lg:px-8 lg:pb-8">
             {adminDataStatus === 'loading' && (
@@ -2903,6 +3281,15 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                     status: 'pending',
                   };
                   await upsertRecord(key, pending);
+                  if (adminEditingRecord) {
+                    void recordInformationEdit({
+                      category: record.category,
+                      recordId: pending.id,
+                      before: adminEditingRecord,
+                      after: record,
+                      actorRole: 'admin',
+                    });
+                  }
                   refreshData();
                   closeCategoryForm();
                   setAdminDataStatus('loaded');

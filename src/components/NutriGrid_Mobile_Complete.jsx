@@ -22,6 +22,7 @@ import {
   TrendingDown,
   TrendingUp,
   ChevronLeft,
+  ChevronDown,
   FileText,
   Edit,
   Trash2,
@@ -47,7 +48,7 @@ import {
   signOutSupabase,
 } from '../utils/supabaseAuth';
 import {
-  getSharedHouseholdCountsByPurok,
+  getSharedHouseholdCountsByPurokForMonth,
   pullUserRecordsFromSupabase,
   syncPendingRecords,
   syncSingleRecord,
@@ -60,9 +61,11 @@ import {
   syncPendingTasks,
 } from '../utils/taskSyncService';
 import ReportRowActions from './ReportRowActions';
+import { ExpandableNote } from './AdminReportTable';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
-import { sortPurokCounts, PUROK_OPTIONS } from '../utils/purok';
+import { PUROK_OPTIONS } from '../utils/purok';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
+import { recordInformationEdit, syncPendingActivityLogs } from '../utils/activityLogService';
 import BnsSearchBar from './BnsSearchBar';
 import WelcomePage from './WelcomePage';
 import SignInPage from './SignInPage';
@@ -99,6 +102,31 @@ const LEGACY_RECORD_KEYS = {
   pregnantwoman: 'records_pregnant_woman',
 };
 const PWA_READ_NOTIFICATIONS_KEY = 'nutrigrid_pwa_read_notifications';
+const SHARED_PUROK_CACHE_KEY = 'nutrigrid_shared_purok_counts_v1';
+
+function readSharedPurokCache(monthKey) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SHARED_PUROK_CACHE_KEY) || '{}');
+    return Object.prototype.hasOwnProperty.call(stored, monthKey)
+      ? stored[monthKey]
+      : null;
+  } catch (error) {
+    console.error('Could not read cached Purok totals:', error);
+    return null;
+  }
+}
+
+function saveSharedPurokCache(monthKey, counts) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SHARED_PUROK_CACHE_KEY) || '{}');
+    localStorage.setItem(
+      SHARED_PUROK_CACHE_KEY,
+      JSON.stringify({ ...stored, [monthKey]: counts })
+    );
+  } catch (error) {
+    console.error('Could not cache shared Purok totals:', error);
+  }
+}
 
 function getReadNotificationIds() {
   try {
@@ -396,10 +424,10 @@ const RecordsList = ({
   };
 
   const updatedName = (value, record) => (
-    <span className="inline-flex max-w-full items-center gap-1">
-      <span className="truncate">{value || '—'}</span>
+    <span className="flex w-full min-w-0 flex-col items-center gap-1">
+      <span className="block w-full min-w-0 whitespace-normal break-words">{value || '—'}</span>
       {record.updated_at && (
-        <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-semibold text-pink-700">
+        <span className="inline-flex max-w-full items-center justify-center rounded-full bg-pink-100 px-1.5 py-0.5 text-center text-[9px] font-semibold text-pink-700">
           Updated
         </span>
       )}
@@ -456,7 +484,7 @@ const RecordsList = ({
                         {statusLabel(record)}
                       </span>
                       <span className="text-xs text-gray-600">{formatLastVisit(record)}</span>
-                      <span className="truncate text-xs" title={record.notes || ''}>{record.notes || '—'}</span>
+                      <ExpandableNote value={record.notes} />
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -545,17 +573,25 @@ const RecordsList = ({
                       className="grid grid-cols-[repeat(31,minmax(4.5rem,1fr))] items-center gap-1 border-b border-gray-100 px-3 py-2.5 text-center text-[11px] text-gray-800"
                     >
                       {environmentalColumns.map(([key]) => (
-                        <span key={key} className="truncate" title={String(record[key] ?? '')}>
-                          {key === 'visited_by'
-                            ? updatedName(record.visited_by, record)
-                            : typeof record[key] === 'boolean'
-                            ? yesNo(record[key])
-                            : key === 'visit_date'
-                              ? formatTableDate(record[key])
-                              : key === 'status'
-                                ? statusLabel(record)
-                                : record[key] || '—'}
-                        </span>
+                        key === 'notes' ? (
+                          <ExpandableNote key={key} value={record.notes} />
+                        ) : (
+                          <span
+                            key={key}
+                            className={key === 'visited_by' ? 'min-w-0' : 'truncate'}
+                            title={String(record[key] ?? '')}
+                          >
+                            {key === 'visited_by'
+                              ? updatedName(record.visited_by, record)
+                              : typeof record[key] === 'boolean'
+                              ? yesNo(record[key])
+                              : key === 'visit_date'
+                                ? formatTableDate(record[key])
+                                : key === 'status'
+                                  ? statusLabel(record)
+                                  : record[key] || '—'}
+                          </span>
+                        )
                       ))}
                       <RecordActions record={record} />
                     </div>
@@ -655,7 +691,7 @@ const RecordsList = ({
                       <span>{record.height ?? '—'}</span>
                       <span>{record.bmi ?? '—'}</span>
                       <span>{record.muac ?? '—'}</span>
-                      <span className="truncate" title={record.notes || ''}>{record.notes || '—'}</span>
+                      <ExpandableNote value={record.notes} />
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -754,7 +790,7 @@ const RecordsList = ({
                       <span>{record.bmi ?? '—'}</span>
                       <span>{record.muac ?? '—'}</span>
                       <span>{formatTableDate(record.date_delivered)}</span>
-                      <span className="truncate" title={record.notes || ''}>{record.notes || '—'}</span>
+                      <ExpandableNote value={record.notes} />
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -845,7 +881,7 @@ const RecordsList = ({
                       <span>{record.h_a || '—'}</span>
                       <span>{record.w_l_h || '—'}</span>
                       <span className="truncate">{record.iron_status || record.iron_given || '—'}</span>
-                      <span className="truncate">{record.remarks || record.notes || '—'}</span>
+                      <ExpandableNote value={record.remarks || record.notes} />
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -924,7 +960,7 @@ const RecordsList = ({
                       <span>{record.feeding_3_month || '—'}</span>
                       <span>{record.feeding_4_month || '—'}</span>
                       <span>{record.feeding_5_month || '—'}</span>
-                      <span className="truncate" title={record.notes || ''}>{record.notes || '—'}</span>
+                      <ExpandableNote value={record.notes} />
                       <RecordActions record={record} />
                     </div>
                   ))
@@ -1164,8 +1200,39 @@ const HomeScreen = ({
     }
   };
   const q = searchQuery.trim().toLowerCase();
-  const [sharedHouseholdsByPurok, setSharedHouseholdsByPurok] = useState([]);
-  const [sharedPurokStatus, setSharedPurokStatus] = useState('loading');
+  const [sharedPurokMonth, setSharedPurokMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [initialSharedPurokCache] = useState(() => readSharedPurokCache(sharedPurokMonth));
+  const [sharedHouseholdsByPurok, setSharedHouseholdsByPurok] = useState(
+    () => initialSharedPurokCache || []
+  );
+  const [sharedPurokStatus, setSharedPurokStatus] = useState(
+    () => initialSharedPurokCache ? 'loaded' : 'loading'
+  );
+  const [showSharedPurokPicker, setShowSharedPurokPicker] = useState(false);
+  const sharedPurokPickerRef = useRef(null);
+
+  useEffect(() => {
+    if (!showSharedPurokPicker) return undefined;
+    const handlePointerDown = (event) => {
+      if (!sharedPurokPickerRef.current?.contains(event.target)) {
+        setShowSharedPurokPicker(false);
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setShowSharedPurokPicker(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [showSharedPurokPicker]);
 
   useEffect(() => {
     if (!currentUserId) {
@@ -1232,34 +1299,47 @@ const HomeScreen = ({
 
   useEffect(() => {
     let active = true;
+    const cachedCounts = readSharedPurokCache(sharedPurokMonth);
+    if (cachedCounts) {
+      setSharedHouseholdsByPurok(cachedCounts);
+      setSharedPurokStatus('loaded');
+    } else {
+      setSharedHouseholdsByPurok([]);
+      setSharedPurokStatus('loading');
+    }
+
     const loadSharedPurokCounts = async () => {
       if (!navigator.onLine) {
-        if (active) setSharedPurokStatus('offline');
+        if (active && !cachedCounts) setSharedPurokStatus('offline');
         return;
       }
 
       try {
-        const counts = await getSharedHouseholdCountsByPurok();
+        const counts = await getSharedHouseholdCountsByPurokForMonth(sharedPurokMonth);
         if (active) {
-          setSharedHouseholdsByPurok(sortPurokCounts(counts));
+          setSharedHouseholdsByPurok(counts);
           setSharedPurokStatus('loaded');
+          saveSharedPurokCache(sharedPurokMonth, counts);
         }
       } catch (error) {
         console.error('Could not load shared Purok totals from Supabase:', error);
-        if (active) setSharedPurokStatus('error');
+        if (active && !cachedCounts) setSharedPurokStatus('error');
       }
     };
 
     void loadSharedPurokCounts();
-    const interval = window.setInterval(loadSharedPurokCounts, 60000);
     window.addEventListener('online', loadSharedPurokCounts);
+    const channel = supabase
+      .channel('pwa-shared-purok-counts')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, loadSharedPurokCounts)
+      .subscribe();
 
     return () => {
       active = false;
-      window.clearInterval(interval);
       window.removeEventListener('online', loadSharedPurokCounts);
+      void supabase.removeChannel(channel);
     };
-  }, []);
+  }, [sharedPurokMonth]);
 
   const categoriesWithCounts = userCategoryRecords.map((cat) => ({
     ...cat,
@@ -1290,6 +1370,7 @@ const HomeScreen = ({
     ? Math.round((syncedHouseholds / residentRecords.length) * 100)
     : 0;
   const maxPurokCount = Math.max(1, ...sharedHouseholdsByPurok.map(({ count }) => count));
+  const [sharedPurokYear, sharedPurokMonthNumber] = sharedPurokMonth.split('-').map(Number);
   const selectedCategoryIcon = {
     residents: Users,
     environmental: MapPin,
@@ -1579,7 +1660,78 @@ const HomeScreen = ({
             </section>
 
             <section className="min-w-0 rounded-xl border border-[#E8DCEF] bg-white p-2.5 shadow-sm" aria-labelledby="purok-households-heading">
-              <h3 id="purok-households-heading" className="mb-2 truncate text-[11px] font-bold text-gray-800">Top 10 Puroks</h3>
+              <div className="mb-2 flex min-w-0 items-center justify-between gap-1">
+                <h3 id="purok-households-heading" className="min-w-0 flex-1 text-[9px] font-bold leading-tight text-gray-800">Top 10 Puroks</h3>
+                <div className="relative shrink-0" ref={sharedPurokPickerRef}>
+                  <button
+                    type="button"
+                    onClick={() => setShowSharedPurokPicker((open) => !open)}
+                    className="inline-flex min-h-7 max-w-[76px] items-center justify-between gap-0.5 rounded-lg border border-[#E8DCEF] bg-white px-1 py-1 text-[8px] font-semibold text-gray-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
+                    aria-label="Filter Top 10 Puroks by month and year"
+                    aria-haspopup="dialog"
+                    aria-expanded={showSharedPurokPicker}
+                  >
+                    <span className="truncate">
+                      {new Date(sharedPurokYear, sharedPurokMonthNumber - 1, 1)
+                        .toLocaleDateString('en', { month: 'short', year: 'numeric' })}
+                    </span>
+                    <ChevronDown size={10} className="shrink-0" aria-hidden="true" />
+                  </button>
+                  {showSharedPurokPicker && (
+                    <div
+                      className="absolute right-0 z-[100] mt-2 w-64 rounded-xl border border-gray-200 bg-white p-3 shadow-xl"
+                      role="dialog"
+                      aria-label="Filter Top 10 Puroks by month and year"
+                    >
+                      <label className="relative mb-2 block">
+                        <span className="sr-only">Choose year</span>
+                        <select
+                          value={sharedPurokYear}
+                          onChange={(event) => {
+                            const year = Number(event.target.value);
+                            const month = Math.min(
+                              sharedPurokMonthNumber,
+                              year === new Date().getFullYear() ? new Date().getMonth() + 1 : 12
+                            );
+                            setSharedPurokMonth(`${year}-${String(month).padStart(2, '0')}`);
+                          }}
+                          className="w-full appearance-none rounded-md border border-gray-200 bg-gray-100 py-2 pl-3 pr-9 text-sm font-bold text-gray-800 focus:outline-none focus:ring-2 focus:ring-violet-300"
+                        >
+                          {Array.from({ length: new Date().getFullYear() - 1999 }, (_, index) => 2000 + index)
+                            .reverse()
+                            .map((year) => <option key={year} value={year}>{year}</option>)}
+                        </select>
+                        <ChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-600" aria-hidden="true" />
+                      </label>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {Array.from({ length: 12 }, (_, index) => {
+                          const month = index + 1;
+                          const monthKey = `${sharedPurokYear}-${String(month).padStart(2, '0')}`;
+                          const isFutureMonth = monthKey > currentMonth;
+                          return (
+                            <button
+                              key={monthKey}
+                              type="button"
+                              disabled={isFutureMonth}
+                              onClick={() => {
+                                setSharedPurokMonth(monthKey);
+                                setShowSharedPurokPicker(false);
+                              }}
+                              className={`rounded-lg px-2 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-35 ${
+                                monthKey === sharedPurokMonth
+                                  ? 'bg-[#8F65FF] text-white'
+                                  : 'text-gray-700 hover:bg-violet-50'
+                              }`}
+                            >
+                              {new Date(sharedPurokYear, index, 1).toLocaleDateString('en', { month: 'short' })}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
               {sharedHouseholdsByPurok.length ? (
                 <div className="space-y-[5px]">
                   {sharedHouseholdsByPurok.map(({ purok, count }) => (
@@ -1596,11 +1748,11 @@ const HomeScreen = ({
                   ))}
                 </div>
               ) : sharedPurokStatus === 'loading' ? (
-                <p className="py-5 text-center text-[9px] leading-tight text-gray-500">Loading shared data...</p>
+                <p className="py-5 text-center text-[9px] leading-tight text-gray-500">Loading Purok data…</p>
               ) : sharedPurokStatus === 'error' ? (
-                <p className="py-5 text-center text-[9px] leading-tight text-red-600">Shared data unavailable. Check Supabase read access.</p>
+                <p className="py-5 text-center text-[9px] leading-tight text-red-600">Shared data unavailable for this month.</p>
               ) : (
-                <p className="py-5 text-center text-[9px] leading-tight text-gray-500">No household records yet.</p>
+                <p className="py-5 text-center text-[9px] leading-tight text-gray-500">No household records for this month.</p>
               )}
             </section>
           </div>
@@ -1838,6 +1990,29 @@ const NutriGridMobile = () => {
   const [pendingConfirmation, setPendingConfirmation] = useState(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const lastBackgroundSyncError = useRef('');
+  const locationWatchId = useRef(null);
+
+  const startLocationUpdates = (userId) => {
+    if (!navigator.geolocation || locationWatchId.current !== null) return;
+    const requestKey = `nutrigrid_location_requested:${userId}`;
+    try {
+      if (localStorage.getItem(requestKey)) return;
+      localStorage.setItem(requestKey, 'true');
+    } catch (error) {
+      console.error('Could not save the location prompt preference:', error);
+    }
+    locationWatchId.current = navigator.geolocation.watchPosition(
+      (position) => {
+        setCurrentLocation({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+        });
+      },
+      (error) => console.error('Location error:', error),
+      { maximumAge: 60000, timeout: 15000 }
+    );
+  };
 
   const requestConfirmation = (message, action, options = {}) => {
     setPendingConfirmation({ message, action, ...options });
@@ -1874,23 +2049,14 @@ const NutriGridMobile = () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Get location
-    if (navigator.geolocation) {
-      navigator.geolocation.watchPosition(
-        (position) => {
-          setCurrentLocation({
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-            accuracy: position.coords.accuracy
-          });
-        },
-        (error) => console.error('Location error:', error)
-      );
-    }
-
     supabase.auth.getSession()
       .then(({ data: { session }, error }) => {
-        if (error) throw new Error(`Could not restore sign-in session: ${error.message}`);
+        if (error && !(session && !navigator.onLine)) {
+          throw new Error(`Could not restore sign-in session: ${error.message}`);
+        }
+        if (error) {
+          console.warn('Restoring the saved sign-in session while offline:', error.message);
+        }
         if (!session) {
           setAppState('welcome');
           return null;
@@ -1912,6 +2078,9 @@ const NutriGridMobile = () => {
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      if (locationWatchId.current !== null) {
+        navigator.geolocation?.clearWatch(locationWatchId.current);
+      }
     };
   }, []);
 
@@ -1924,6 +2093,7 @@ const NutriGridMobile = () => {
   };
 
   const completeSignIn = (userData) => {
+    startLocationUpdates(userData.id);
     setCurrentUser(userData);
     setSearchQuery('');
     setSearchResults([]);
@@ -1960,6 +2130,18 @@ const NutriGridMobile = () => {
     try {
       await signOutSupabase();
     } finally {
+      if (currentUser?.id) {
+        try {
+          localStorage.removeItem(`nutrigrid_location_requested:${currentUser.id}`);
+        } catch (error) {
+          console.error('Could not clear the location prompt preference:', error);
+        }
+      }
+      if (locationWatchId.current !== null) {
+        navigator.geolocation?.clearWatch(locationWatchId.current);
+        locationWatchId.current = null;
+      }
+      setCurrentLocation(null);
       setIsAuthenticated(false);
       setCurrentUser(null);
       setSelectedCategory(null);
@@ -2064,6 +2246,11 @@ const NutriGridMobile = () => {
     const syncWhenOnline = ({ notify = false } = {}) => {
       if (navigator.onLine) {
         void syncData({ notify });
+        void syncPendingActivityLogs().then((result) => {
+          if (result.errors.length) {
+            console.error('Some record activity logs are waiting to sync:', result.errors);
+          }
+        }).catch((error) => console.error('Could not sync pending record activity logs:', error));
         void syncPendingTasks().then((result) => {
           if (result.errors?.length) {
             console.error('Some tasks are waiting to sync:', result.errors);
@@ -2109,6 +2296,7 @@ const NutriGridMobile = () => {
   }, []);
 
   const saveCategoryForm = async (formData) => {
+    const wasEditingRecord = Boolean(editingRecord);
     const key = storageKeyForCategory(formData.category);
     const pending = {
       ...formData,
@@ -2125,9 +2313,19 @@ const NutriGridMobile = () => {
       showSyncNotification('Could not save the record on this device. Check device storage and try again.');
       throw error;
     }
+    if (editingRecord) {
+      void recordInformationEdit({
+        category: formData.category,
+        recordId: ownedPending.id,
+        before: editingRecord,
+        after: formData,
+        actorRole: currentUser?.role,
+      });
+    }
     removeLegacyRecord(formData.category, ownedPending.id);
     setEditingRecord(null);
     setShowCategoryForm(false);
+    if (wasEditingRecord) setActiveView('records');
     setRecordsRefresh((v) => v + 1);
     showSyncNotification('Record saved on this device. Syncing to Supabase…');
 
@@ -2203,8 +2401,10 @@ const NutriGridMobile = () => {
   };
 
   const closeCategoryForm = () => {
+    const wasEditingRecord = Boolean(editingRecord);
     setShowCategoryForm(false);
     setEditingRecord(null);
+    if (wasEditingRecord) setActiveView('records');
   };
 
   const DASHBOARD_CATEGORIES = [

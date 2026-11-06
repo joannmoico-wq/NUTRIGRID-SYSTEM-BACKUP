@@ -123,25 +123,7 @@ function buildIllustrativePurokBoundaries() {
       });
       polygon = clipped;
     });
-    const inset = polygon.map(([lng, lat]) => [
-      x + (lng - x) * 0.78,
-      y + (lat - y) * 0.78,
-    ]);
-    const irregular = inset.flatMap((point, edgeIndex) => {
-      const next = inset[(edgeIndex + 1) % inset.length];
-      const middleLng = (point[0] + next[0]) / 2;
-      const middleLat = (point[1] + next[1]) / 2;
-      const distance = Math.hypot(middleLng - x, middleLat - y) || 1;
-      const offset = (edgeIndex % 2 === index % 2 ? 1 : -1) * 0.000035;
-      return [
-        point,
-        [
-          middleLng + ((middleLng - x) / distance) * offset,
-          middleLat + ((middleLat - y) / distance) * offset,
-        ],
-      ];
-    });
-    return irregular.map(([lng, lat]) => [lat, lng]);
+    return polygon.map(([lng, lat]) => [lat, lng]);
   });
 }
 

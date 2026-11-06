@@ -174,3 +174,18 @@ For production, run `npm run email-api` as a separate Node service with
 configured as server secrets. Set `REPORT_EMAIL_ALLOWED_ORIGINS` to the exact
 frontend origin(s), and set `VITE_REPORT_EMAIL_API_URL` at frontend build time to
 `https://<api-host>/api/reports/email`. Static hosting alone cannot run the SMTP API.
+
+## Record edit activity logs
+
+Run `supabase-record-activity-logs.sql` in the Supabase SQL Editor to enable the
+Admin Activity Logs and BHW edit notifications. Re-run the script after updates
+to apply schema additions such as the editor role. The app keeps unsynced edit-log
+entries on the device and retries them when the BHW is online. Activity logs
+include before-and-after values for changed fields and are readable only by approved
+admins. Only edits made after this feature is deployed are recorded.
+
+Admin record edits submitted offline are saved on the device and marked as drafts.
+When the connection returns, they are highlighted as ready to reopen and save.
+PWA sign-in can restore an existing Supabase session offline after that account's
+approved profile has been cached on the device. Location is requested after sign-in
+and once per account until the user signs out.

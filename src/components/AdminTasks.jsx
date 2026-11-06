@@ -15,6 +15,7 @@ import {
 import { Plus, Trash2, Calendar, MapPin, Flag, X, Edit } from 'lucide-react';
 import TaskIcon from './TaskIcon';
 import ConfirmActionDialog from './ConfirmActionDialog';
+import { TASK_PUROK_OPTIONS } from '../utils/purok';
 
 const PRIORITIES = ['High', 'Normal', 'Low'];
 const FILTERS = ['All', 'Overdue', 'Pending', 'In Progress', 'Completed'];
@@ -255,6 +256,10 @@ export default function AdminTasks({
       setMessage('Choose a BHW to assign this task to.');
       return;
     }
+    if (!editingTask && form.due_date && form.due_date < localDateInputValue()) {
+      setMessage('Choose today or a future date for a new task.');
+      return;
+    }
     const task = {
       ...(editingTask || {}),
       task_id: editingTask?.task_id ?? createLocalTaskId(),
@@ -334,6 +339,10 @@ export default function AdminTasks({
   const saveReschedule = async (event) => {
     event.preventDefault();
     if (!reschedulingTask || !rescheduleDate) return;
+    if (rescheduleDate < localDateInputValue()) {
+      setMessage('Choose today or a future date.');
+      return;
+    }
 
     const updatedTask = { ...reschedulingTask, due_date: rescheduleDate };
     setConfirmation({
@@ -616,13 +625,18 @@ export default function AdminTasks({
               </label>
               <label className={`block min-w-0 text-xs font-semibold ${mutedTextClass}`}>
                 Purok
-                <input
-                  type="text"
+                <select
                   className={`${inputClass} mt-1`}
-                  placeholder="Purok"
                   value={form.purok}
                   onChange={(e) => setForm({ ...form, purok: e.target.value })}
-                />
+                >
+                  <option value="">Select a purok…</option>
+                  {form.purok && !TASK_PUROK_OPTIONS.includes(form.purok) && (
+                    <option value={form.purok}>{form.purok}</option>
+                  )}
+                  {TASK_PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+                </select>
+                <span className={`mt-1 block text-[10px] font-normal ${mutedTextClass}`}>Purok 1 through Purok 10</span>
               </label>
               <label className={`block min-w-0 text-xs font-semibold ${mutedTextClass}`}>
                 Priority
@@ -639,6 +653,7 @@ export default function AdminTasks({
                 <input
                   type="date"
                   className={`${inputClass} mt-1`}
+                  min={!editingTask ? localDateInputValue() : undefined}
                   value={form.due_date}
                   onChange={(e) => setForm({ ...form, due_date: e.target.value })}
                 />

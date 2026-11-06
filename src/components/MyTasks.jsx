@@ -10,7 +10,7 @@ import {
   notifyTaskOnce,
 } from '../utils/taskSyncService';
 import { registerPushToken } from '../utils/pushNotifications';
-import { Calendar, MapPin, Bell, CheckCircle2, Circle, Clock } from 'lucide-react';
+import { Calendar, MapPin, Bell, CheckCircle2, Circle, Clock, PartyPopper, X } from 'lucide-react';
 import BnsSearchBar from './BnsSearchBar';
 import TaskIcon from './TaskIcon';
 import ConfirmActionDialog from './ConfirmActionDialog';
@@ -25,7 +25,10 @@ const STEP_ICON = {
 
 export default function MyTasks() {
   const [tasks, setTasks] = useState([]);
+  const [taskStatusFilter, setTaskStatusFilter] = useState(null);
   const [banner, setBanner] = useState(null);
+  const [completionCelebration, setCompletionCelebration] = useState(false);
+  const [completionTaskId, setCompletionTaskId] = useState(null);
   const [pendingTaskChange, setPendingTaskChange] = useState(null);
   const [taskChangeBusy, setTaskChangeBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
@@ -35,6 +38,7 @@ export default function MyTasks() {
   const [taskSearch, setTaskSearch] = useState('');
   const [showTaskSuggestions, setShowTaskSuggestions] = useState(false);
   const pushRegistrationAttempted = useRef(false);
+  const completionTaskIdRef = useRef(null);
   const [permission, setPermission] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
   );
@@ -49,10 +53,16 @@ export default function MyTasks() {
       return;
     }
     try {
-      setTasks(await loadTasks({ assignedToUserId: user.id }));
+      const assignedTasks = await loadTasks({ assignedToUserId: user.id });
+      setTasks(assignedTasks.filter((task) =>
+        task.status !== 'Completed' || task.task_id === completionTaskIdRef.current
+      ));
     } catch (error) {
       console.error('Could not load assigned tasks:', error);
-      setTasks(deduplicateTasks(getLocalTasks()).filter((task) => task.assigned_to_user_id === user.id));
+      setTasks(deduplicateTasks(getLocalTasks()).filter(
+        (task) => task.assigned_to_user_id === user.id &&
+          (task.status !== 'Completed' || task.task_id === completionTaskIdRef.current)
+      ));
     }
   }, []);
 
@@ -144,6 +154,19 @@ export default function MyTasks() {
     return () => clearTimeout(timer);
   }, [banner]);
 
+  const finishCompletionCelebration = () => {
+    completionTaskIdRef.current = null;
+    setTasks((current) => current.filter((task) => task.task_id !== completionTaskId));
+    setCompletionTaskId(null);
+    setCompletionCelebration(false);
+  };
+
+  useEffect(() => {
+    if (!completionCelebration || !completionTaskId) return undefined;
+    const timer = window.setTimeout(finishCompletionCelebration, 4000);
+    return () => window.clearTimeout(timer);
+  }, [completionCelebration, completionTaskId]);
+
   const advance = async (t) => {
     const next = NEXT_STATUS[t.status] || 'Pending';
     setPendingTaskChange({
@@ -155,11 +178,16 @@ export default function MyTasks() {
       status: next,
       completed_at: next === 'Completed' ? new Date().toISOString() : null,
     }, ['status', 'completed_at']);
-    setTasks(
-      deduplicateTasks(getLocalTasks()).filter(
-        (task) => task.assigned_to_user_id === t.assigned_to_user_id
-      )
-    );
+    if (next === 'Completed') {
+      completionTaskIdRef.current = t.task_id;
+      setCompletionTaskId(t.task_id);
+      setCompletionCelebration(true);
+      setTaskStatusFilter(null);
+    }
+    setTasks(deduplicateTasks(getLocalTasks()).filter(
+      (task) => task.assigned_to_user_id === t.assigned_to_user_id &&
+        (task.status !== 'Completed' || task.task_id === (next === 'Completed' ? t.task_id : completionTaskIdRef.current))
+    ));
     try {
       const result = await syncPendingTasks();
       if (result.errors?.length) {
@@ -239,16 +267,79 @@ export default function MyTasks() {
           .some((value) => String(value || '').toLowerCase().includes(query))
       )
     : tasks;
-  const open = filteredTasks
-    .filter((t) => t.status !== 'Completed')
+  const activeTasks = filteredTasks.filter((task) =>
+    task.status !== 'Completed' || task.task_id === completionTaskId
+  );
+  const taskStatusCounts = {
+    Pending: activeTasks.filter((task) => task.status === 'Pending').length,
+    'In Progress': activeTasks.filter((task) => task.status === 'In Progress').length,
+  };
+  const visibleTasks = taskStatusFilter
+    ? activeTasks.filter((task) => task.status === taskStatusFilter)
+    : activeTasks;
+  const orderedTasks = visibleTasks
     .sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
-  const orderedTasks = [
-    ...open,
-    ...filteredTasks.filter((task) => task.status === 'Completed'),
-  ];
 
   return (
     <section className="space-y-3">
+      {completionCelebration && (
+        <div
+          className="fixed inset-0 z-[5000] flex items-center justify-center bg-slate-950/45 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) finishCompletionCelebration();
+          }}
+        >
+          <style>{`
+            @keyframes nutrigrid-confetti-fall {
+              0% { transform: translateY(-12vh) rotate(0deg); opacity: 1; }
+              100% { transform: translateY(75vh) rotate(640deg); opacity: 0; }
+            }
+          `}</style>
+          <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+            {Array.from({ length: 32 }, (_, index) => (
+              <span
+                key={index}
+                className="absolute top-0 h-3 w-2 rounded-sm"
+                style={{
+                  left: `${(index * 37) % 100}%`,
+                  backgroundColor: ['#8F65FF', '#FF75C3', '#34D399', '#FBBF24', '#60A5FA'][index % 5],
+                  animation: `nutrigrid-confetti-fall ${2.4 + (index % 5) * 0.3}s ease-in ${(index % 8) * 0.17}s both`,
+                }}
+              />
+            ))}
+          </div>
+          <section
+            className="relative w-full max-w-sm rounded-3xl bg-white p-7 text-center shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="task-complete-title"
+          >
+            <button
+              type="button"
+              onClick={finishCompletionCelebration}
+              className="absolute right-3 top-3 rounded-full p-2 text-slate-400 hover:bg-slate-100"
+              aria-label="Close congratulations"
+            >
+              <X size={18} />
+            </button>
+            <span className="mx-auto grid h-16 w-16 place-items-center rounded-full bg-emerald-100 text-emerald-700">
+              <PartyPopper size={34} aria-hidden="true" />
+            </span>
+            <h2 id="task-complete-title" className="mt-4 text-xl font-extrabold text-slate-900">
+              You completed your task. Congratulations!
+            </h2>
+            <p className="mt-2 text-sm text-slate-600">This task will leave your PWA list after the celebration.</p>
+            <button
+              type="button"
+              onClick={finishCompletionCelebration}
+              className="mt-5 rounded-full bg-gradient-to-r from-[#8F65FF] to-[#FF75C3] px-6 py-2.5 text-sm font-bold text-white"
+            >
+              Done
+            </button>
+          </section>
+        </div>
+      )}
       {/* New-task banner */}
       {banner && (
         <div className="flex items-center gap-3 rounded-2xl bg-gradient-to-r from-[#8F65FF] to-[#FF75C3] p-4 text-white shadow-lg animate-pulse">
@@ -322,44 +413,75 @@ export default function MyTasks() {
         </p>
       )}
 
-      {filteredTasks.length === 0 ? (
+      <div className="flex gap-2 overflow-x-auto pb-1" role="group" aria-label="Filter tasks by status">
+        {['Pending', 'In Progress'].map((status) => (
+          <button
+            key={status}
+            type="button"
+            aria-pressed={taskStatusFilter === status}
+            onClick={() => setTaskStatusFilter((current) => current === status ? null : status)}
+            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+              taskStatusFilter === status
+                ? 'border-transparent bg-gradient-to-r from-[#8F65FF] to-[#FF75C3] text-white shadow'
+                : 'border-[#E8DCEF] bg-white text-gray-700 hover:bg-purple-50'
+            }`}
+          >
+            {status} <span className="opacity-75">· {taskStatusCounts[status]}</span>
+          </button>
+        ))}
+      </div>
+
+      {orderedTasks.length === 0 ? (
         <div className="rounded-2xl border-2 border-dashed border-[#E8C4F0] bg-white/70 p-6 text-center">
           <TaskIcon size={44} className="mx-auto text-[#8F65FF]/70" />
           <p className="mt-2 text-sm text-gray-600">
-            {query ? 'No tasks match your search.' : 'No tasks assigned to you yet.'}
+            {query
+              ? 'No tasks match your search.'
+              : taskStatusFilter
+                ? `No ${taskStatusFilter.toLowerCase()} tasks right now.`
+                : 'No tasks assigned to you yet.'}
           </p>
         </div>
       ) : (
         <ul className="space-y-3">
           {orderedTasks.map((t) => {
             const Icon = STEP_ICON[t.status] || Circle;
-            const done = t.status === 'Completed';
             const overdue = isTaskOverdue(t);
             const notes = (Array.isArray(t.task_notes) ? t.task_notes : [])
               .filter(
                 (note) => !String(note?.message || note).includes('Automatically rescheduled from')
               );
+            const isCelebratingCompletion = t.task_id === completionTaskId && t.status === 'Completed';
             return (
               <li
                 key={t.task_id}
-                className={`rounded-2xl border bg-white p-4 shadow-sm ${
-                  done ? 'border-emerald-200 opacity-70' : 'border-[#E8C4F0]'
+                className={`rounded-2xl border p-4 shadow-sm ${
+                  isCelebratingCompletion
+                    ? 'border-emerald-300 bg-emerald-50'
+                    : 'border-[#E8C4F0] bg-white'
                 }`}
               >
                 <div className="flex items-start gap-3">
                   <button
                     type="button"
                     onClick={() => advance(t)}
-                    className="mt-0.5 shrink-0"
+                    disabled={t.status === 'Completed'}
+                    className="mt-0.5 shrink-0 disabled:cursor-default"
                     aria-label={`Mark as ${NEXT_STATUS[t.status]}`}
                   >
                     <Icon
                       size={24}
-                      className={done ? 'text-emerald-500' : t.status === 'In Progress' ? 'text-blue-500' : 'text-gray-300'}
+                      className={
+                        t.status === 'Completed'
+                          ? 'text-emerald-600'
+                          : t.status === 'In Progress'
+                            ? 'text-blue-500'
+                            : 'text-gray-300'
+                      }
                     />
                   </button>
                   <div className="min-w-0 flex-1">
-                    <p className={`font-bold text-gray-900 ${done ? 'line-through' : ''}`}>{t.title}</p>
+                    <p className={`font-bold ${isCelebratingCompletion ? 'text-gray-500 line-through' : 'text-gray-900'}`}>{t.title}</p>
                     {t.description && <p className="mt-0.5 text-sm text-gray-600">{t.description}</p>}
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
                       {t.purok && (
@@ -404,8 +526,8 @@ export default function MyTasks() {
                     <span
                       key={s}
                       className={`flex-1 rounded-full py-1 text-center transition ${
-                        (s === 'Pending' && overdue) || t.status === s
-                          ? overdue && s === 'Pending'
+                        t.status === s
+                          ? s === 'Pending' && overdue
                             ? 'bg-rose-100 text-rose-700 shadow'
                             : 'bg-gradient-to-r from-[#8F65FF] to-[#FF75C3] text-white shadow'
                           : 'text-gray-500'

@@ -1,4 +1,5 @@
 export const PUROK_OPTIONS = Array.from({ length: 10 }, (_, index) => `Purok ${index + 1}`);
+export const TASK_PUROK_OPTIONS = PUROK_OPTIONS;
 
 export function getPurokNumber(value) {
   const match = String(value || '').trim().match(/^(?:purok\s*)?0*(\d+)$/i);

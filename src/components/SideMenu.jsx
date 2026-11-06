@@ -82,6 +82,30 @@ export default function SideMenu({ open, onClose, onLogout, taskNavigationDate }
   }, [open, load]);
 
   useEffect(() => {
+    const handleTaskChange = (event) => {
+      const changedTask = event.detail?.task;
+      if (event.detail?.operation === 'upsert' && changedTask?.status === 'Completed') {
+        setTasks((current) => current.filter(
+          (task) => String(task.task_id) !== String(changedTask.task_id)
+        ));
+        return;
+      }
+      if (open) void load();
+    };
+    const handleStorage = (event) => {
+      if (open && (!event.key || event.key === 'nutrigrid_tasks' || event.key === 'nutrigrid_pending_task_changes')) {
+        void load();
+      }
+    };
+    window.addEventListener('bns-tasks-changed', handleTaskChange);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener('bns-tasks-changed', handleTaskChange);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, [open, load]);
+
+  useEffect(() => {
     if (!open) return undefined;
     const onKey = (e) => e.key === 'Escape' && onClose();
     window.addEventListener('keydown', onKey);

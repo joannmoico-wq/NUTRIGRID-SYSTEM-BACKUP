@@ -1,4 +1,5 @@
-import { Download, Plus } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Download, FileText, Plus, X } from 'lucide-react';
 import ReportRowActions from './ReportRowActions';
 
 export const REPORT_META = {
@@ -20,6 +21,61 @@ const thClass =
   'border border-gray-200 bg-[#F3EEF9] px-2 py-2.5 text-[10px] font-bold uppercase leading-tight text-gray-700 dark:border-gray-600 dark:bg-gray-700/60 dark:text-gray-200';
 const tdClass =
   'border border-gray-200 px-2 py-2 text-xs font-semibold text-gray-800 dark:border-gray-600 dark:text-gray-200';
+
+export function ExpandableNote({ value, darkMode = false }) {
+  const [open, setOpen] = useState(false);
+  const text = String(value ?? '');
+  if (text.length <= 56) {
+    return <span className="block min-w-0 max-w-full whitespace-pre-wrap break-words">{text || '—'}</span>;
+  }
+
+  return (
+    <>
+      <span className="flex w-full min-w-0 max-w-full flex-col items-center gap-0.5">
+        <span className="block w-full min-w-0 max-w-[10rem] truncate" title={text}>{text}</span>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="max-w-full truncate text-center font-bold text-violet-700 hover:underline dark:text-violet-300"
+          aria-label="Show full note"
+        >
+          … Show more
+        </button>
+      </span>
+      {open && (
+        <div
+          className="fixed inset-0 z-[5000] flex items-center justify-center bg-slate-950/60 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setOpen(false);
+          }}
+        >
+          <section
+            className={`relative max-h-[80vh] w-full max-w-xl overflow-y-auto rounded-2xl p-5 shadow-2xl ${
+              darkMode ? 'bg-[#26263B] text-slate-100' : 'bg-white text-slate-800'
+            }`}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="full-note-title"
+          >
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 id="full-note-title" className="font-bold">Full note</h2>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 dark:hover:bg-white/10"
+                aria-label="Close note"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{text}</p>
+          </section>
+        </div>
+      )}
+    </>
+  );
+}
 
 export function ReportHeader({ title, subtitle, fields = [] }) {
   return (
@@ -60,6 +116,18 @@ export default function AdminReportTable({
   emptyMessage = 'No records yet.',
   minTableWidth = 720,
 }) {
+  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
+  useEffect(() => {
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
+
   const showActions = Boolean(onEdit || onDelete);
   const totalColumns = columnKeys.length + (showActions ? 1 : 0);
   const nameColumnNames = new Set([
@@ -193,21 +261,59 @@ export default function AdminReportTable({
                 </td>
               </tr>
             ) : (
-              data.map((row) => (
-                <tr key={row.id} className="hover:bg-violet-50/40 dark:hover:bg-violet-900/10">
+              data.map((row) => {
+                const hasSyncFlag = typeof row.synced === 'boolean' || typeof row._raw?.synced === 'boolean';
+                const status = String(row.status || row._raw?.status || '').toLowerCase();
+                const isDraft = row.synced === false ||
+                  row._raw?.synced === false ||
+                  (!hasSyncFlag && status === 'pending');
+                return (
+                <tr
+                  key={row.id}
+                  className={`hover:bg-violet-50/40 dark:hover:bg-violet-900/10 ${
+                    isDraft
+                      ? isOnline
+                        ? 'border-l-4 border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/20'
+                        : 'border-l-4 border-red-500 bg-red-50/70 dark:bg-red-950/20'
+                      : ''
+                  }`}
+                >
                   {columnKeys.map((key) => (
                     <td
                       key={key}
                       className={`${tdClass} text-center`}
                     >
-                      <span className="inline-flex max-w-full items-center justify-center gap-1">
-                        <span className="truncate">{cellValue(row, key)}</span>
-                        {key === updatedColumn && (row._raw?.updated_at || row.updated_at) && (
-                          <span className="shrink-0 rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-semibold text-pink-700">
-                            Updated
+                      {['notes', 'remarks'].includes(key.toLowerCase()) ? (
+                        <ExpandableNote value={cellValue(row, key)} darkMode={darkMode} />
+                      ) : (
+                        <span className="inline-flex max-w-full flex-wrap items-center justify-center gap-1">
+                          <span className={`min-w-0 ${
+                            key === updatedColumn ? 'whitespace-normal break-words' : 'truncate'
+                          }`}>{cellValue(row, key)}</span>
+                          <span className="flex max-w-full flex-wrap items-center justify-center gap-1">
+                            {key === columnKeys[0] && isDraft && (
+                              <span
+                                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
+                                  isOnline
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-red-100 text-red-800'
+                                }`}
+                                title={isOnline
+                                  ? 'This offline draft is ready to open, finish, and save.'
+                                  : 'This record is saved as a draft on this device.'}
+                              >
+                                <FileText size={10} aria-hidden="true" />
+                                {isOnline ? 'Ready to save' : 'Draft'}
+                              </span>
+                            )}
+                            {key === updatedColumn && (row._raw?.updated_at || row.updated_at) && (
+                              <span className="inline-flex shrink-0 items-center justify-center rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-semibold text-pink-700">
+                                Updated
+                              </span>
+                            )}
                           </span>
-                        )}
-                      </span>
+                        </span>
+                      )}
                     </td>
                   ))}
                   {showActions && (
@@ -220,7 +326,8 @@ export default function AdminReportTable({
                     </td>
                   )}
                 </tr>
-              ))
+                );
+              })
             )}
           </tbody>
         </table>
