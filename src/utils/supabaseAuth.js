@@ -2,6 +2,7 @@ import { supabase } from './supabaseClient';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const APPROVED_PROFILE_CACHE_PREFIX = 'nutrigrid_approved_profile:';
+const ACTIVE_PROFILE_CACHE_KEY = 'nutrigrid_active_approved_profile';
 
 function cacheApprovedProfile(user, profile) {
   const cachedProfile = {
@@ -17,9 +18,31 @@ function cacheApprovedProfile(user, profile) {
       `${APPROVED_PROFILE_CACHE_PREFIX}${user.id}`,
       JSON.stringify(cachedProfile)
     );
+    localStorage.setItem(ACTIVE_PROFILE_CACHE_KEY, user.id);
   } catch (error) {
     console.error('Could not cache the approved profile for offline sign-in restoration:', error);
   }
+}
+
+function readCachedActiveProfile() {
+  try {
+    const userId = localStorage.getItem(ACTIVE_PROFILE_CACHE_KEY);
+    return userId ? readCachedApprovedProfile(userId) : null;
+  } catch (error) {
+    console.error('Could not read the active offline profile:', error);
+    return null;
+  }
+}
+
+function toCachedUserData(profile) {
+  if (!profile?.approved || !profile.id) return null;
+  return {
+    id: profile.id,
+    email: profile.email || '',
+    fullName: profile.fullName || '',
+    age: profile.age ?? null,
+    role: profile.role,
+  };
 }
 
 function readCachedApprovedProfile(userId) {
@@ -112,14 +135,18 @@ export async function signInWithSupabaseOAuth(provider) {
   }
 }
 
-export async function restoreSupabaseSession(existingSession) {
+export async function restoreSupabaseSession(existingSession, { allowCachedProfile = false } = {}) {
   let session = existingSession;
   if (existingSession === undefined) {
     const { data: sessionData, error } = await supabase.auth.getSession();
     if (error) throw new Error(`Could not restore sign-in session: ${error.message}`);
     session = sessionData.session;
   }
-  if (!session) return null;
+  if (!session) {
+    return navigator.onLine && !allowCachedProfile
+      ? null
+      : toCachedUserData(readCachedActiveProfile());
+  }
 
   let profile;
   try {
@@ -151,6 +178,60 @@ export async function restoreSupabaseSession(existingSession) {
   return toUserData(session.user, profile);
 }
 
-export async function signOutSupabase() {
-  await supabase.auth.signOut();
+export async function updateSupabaseProfile(currentUser, { fullName, age }) {
+  const normalizedName = String(fullName || '').trim();
+  const normalizedAge = Number(age);
+  if (!normalizedName) throw new Error('Enter your name before saving.');
+  if (!Number.isInteger(normalizedAge) || normalizedAge < 1 || normalizedAge > 120) {
+    throw new Error('Enter an age from 1 to 120.');
+  }
+  if (!currentUser?.id) throw new Error('Sign in before updating your profile.');
+
+  const { error: updateError } = await supabase.rpc('update_own_profile', {
+    p_full_name: normalizedName,
+    p_age: normalizedAge,
+  });
+  if (updateError) {
+    if (updateError.code === 'PGRST202' || updateError.code === '42883') {
+      throw new Error('Profile updates are not enabled in Supabase yet. Run supabase-profile-update-function.sql in the Supabase SQL Editor.');
+    }
+    throw new Error(`Could not update your profile: ${updateError.message}`);
+  }
+
+  const { data, error: readError } = await supabase
+    .from('profiles')
+    .select('email, full_name, age, role, approved')
+    .eq('id', currentUser.id)
+    .maybeSingle();
+  if (readError) throw new Error(`Could not verify your profile update: ${readError.message}`);
+  if (!data) {
+    throw new Error('Could not find your profile after saving. Check your profile access settings.');
+  }
+  if (data.full_name !== normalizedName || Number(data.age) !== normalizedAge) {
+    throw new Error('Your profile was not updated. Check that Supabase allows you to update your own profile.');
+  }
+  if (!data?.approved) throw new Error('Your account is not approved to update its profile.');
+
+  const updatedUser = toUserData({ id: currentUser.id, email: data.email || currentUser.email }, data);
+  try {
+    localStorage.setItem(
+      `${APPROVED_PROFILE_CACHE_PREFIX}${currentUser.id}`,
+      JSON.stringify({ ...updatedUser, approved: true })
+    );
+    localStorage.setItem(ACTIVE_PROFILE_CACHE_KEY, currentUser.id);
+  } catch (cacheError) {
+    console.error('Could not update the cached profile after saving:', cacheError);
+  }
+  return updatedUser;
+}
+
+export async function signOutSupabase(userId) {
+  try {
+    localStorage.removeItem(ACTIVE_PROFILE_CACHE_KEY);
+    if (userId) localStorage.removeItem(`${APPROVED_PROFILE_CACHE_PREFIX}${userId}`);
+  } catch (cacheError) {
+    console.error('Could not clear offline profile restoration state:', cacheError);
+  }
+  const { error } = await supabase.auth.signOut();
+  if (error) throw new Error(`Could not sign out: ${error.message}`);
 }

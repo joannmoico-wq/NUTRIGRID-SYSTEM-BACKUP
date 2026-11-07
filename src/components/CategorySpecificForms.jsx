@@ -1226,6 +1226,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
       month: new Date().toISOString().slice(0, 7),
       mother_name: '',
       mother_age: '',
+      mother_birthday: '',
       child_name: '',
       sex: '',
       dob: '',
@@ -1246,6 +1247,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
     return {
       ...initial,
       aim: getCompletedAgeInMonths(initial.dob, initial.dow),
+      mother_age: calculateAgeInYears(initial.mother_birthday) || initial.mother_age,
       remarks: initialData?.remarks || initialData?.notes || '',
       notes: undefined,
     };
@@ -1261,6 +1263,9 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
           key === 'dob' ? value : prev.dob,
           key === 'dow' ? value : prev.dow
         );
+      }
+      if (key === 'mother_birthday') {
+        next.mother_age = calculateAgeInYears(value);
       }
       return next;
     });
@@ -1282,6 +1287,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
     onSubmit({
       ...formData,
       aim: getCompletedAgeInMonths(formData.dob, formData.dow),
+      mother_age: calculateAgeInYears(formData.mother_birthday) || formData.mother_age,
       ...growthStatuses,
       category: 'monthlynatal',
       id: initialData?.id || Date.now(),
@@ -1322,14 +1328,18 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Mother *</label>
           <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} />
         </div>
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Age *</label>
-          <input type="number" required min="10" max="60" value={formData.mother_age} onChange={(e) => updateField('mother_age', e.target.value)} className={fieldClass} />
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Mother Birthday *</label>
+          <input type="date" required max={new Date().toISOString().split('T')[0]} value={formData.mother_birthday} onChange={(e) => updateField('mother_birthday', e.target.value)} className={fieldClass} />
+        </div>
+        <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Mother Age</label>
+          <input type="number" readOnly value={formData.mother_age} className={`${fieldClass} bg-gray-50`} placeholder="Auto-calculated" />
         </div>
       </div>
 

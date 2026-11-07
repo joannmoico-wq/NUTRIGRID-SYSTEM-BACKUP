@@ -1,5 +1,6 @@
 import Dexie from 'dexie';
 import { DEFAULT_MONTHLY_REPORT_LINES, mergeMonthlyReportLines } from './monthlyReportTemplate';
+import { calculateAgeInYears } from './childGrowth';
 
 /** Shared localStorage keys (Field Worker + Admin) */
 export const STORAGE_KEYS = {
@@ -472,7 +473,7 @@ const SEARCH_FIELDS_BY_CATEGORY = {
     'wt', 'ht',
   ],
   monthlynatal: [
-    'purok', 'mother_name', 'child_name', 'sex', 'dob', 'birth_weight', 'birth_weight_kg',
+    'purok', 'mother_name', 'mother_birthday', 'mother_age', 'child_name', 'sex', 'dob', 'birth_weight', 'birth_weight_kg',
     'dow', 'weight_kg', 'length_cm', 'height_cm', 'aim', 'w_a', 'h_a', 'w_l_h',
     'iron_status', 'iron_given', 'remarks', 'notes', 'month', 'motherName', 'childName',
     'birthWeight', 'weight', 'length', 'height', 'wA', 'hA', 'wLH', 'ironStatus',
@@ -839,6 +840,8 @@ export function toAdminNatality(records) {
     no: i + 1,
     purok: r.purok || '—',
     motherName: r.mother_name || '—',
+    motherBirthday: r.mother_birthday || '—',
+    motherAge: calculateAgeInYears(r.mother_birthday) || r.mother_age || '—',
     childName: r.child_name || '—',
     sex: r.sex === 'boys' ? 'Male' : r.sex === 'girls' ? 'Female' : '—',
     dob: r.dob || '—',
@@ -866,6 +869,8 @@ export function fromAdminNatality(row) {
     id: row.id || nextRecordId(),
     category: 'monthlynatal',
     purok: row.purok,
+    mother_birthday: row.motherBirthday === '—' ? '' : row.motherBirthday,
+    mother_age: row.motherAge === '—' ? '' : row.motherAge,
     birth_weight: row.birthWeight,
     mother_name: row.motherName,
     child_name: row.childName,

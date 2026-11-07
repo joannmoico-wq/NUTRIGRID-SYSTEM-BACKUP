@@ -14,7 +14,6 @@ import {
   CheckCircle,
   Bell,
   UserCircle,
-  KeyRound,
   Baby,
   Heart,
   Users,
@@ -37,6 +36,7 @@ import {
   recordMatchesSearch,
   buildSavedRecords,
   performRecordSearch,
+  getRecordDisplayTitle,
   queueRecordDeletion,
   sortRecordsNewestFirst,
 } from '../utils/bnsStorage';
@@ -46,6 +46,7 @@ import {
   signInWithSupabaseOAuth,
   restoreSupabaseSession,
   signOutSupabase,
+  updateSupabaseProfile,
 } from '../utils/supabaseAuth';
 import {
   getSharedHouseholdCountsByPurokForMonth,
@@ -63,8 +64,9 @@ import {
 import ReportRowActions from './ReportRowActions';
 import { ExpandableNote } from './AdminReportTable';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
-import { PUROK_OPTIONS } from '../utils/purok';
+import { normalizePurokName, PUROK_OPTIONS } from '../utils/purok';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
+import { calculateAgeInYears } from '../utils/childGrowth';
 import { recordInformationEdit, syncPendingActivityLogs } from '../utils/activityLogService';
 import BnsSearchBar from './BnsSearchBar';
 import WelcomePage from './WelcomePage';
@@ -272,6 +274,8 @@ const PageHeader = ({
   setShowSearchSuggestions,
   setSelectedCategory,
   setActiveView,
+  purokFilter,
+  setPurokFilter,
 }) => (
   <div className="px-5 pt-5 pb-8 rounded-b-[2rem] shadow-md" style={fieldHeaderStyle}>
     {onBack && (
@@ -297,6 +301,22 @@ const PageHeader = ({
         className="mt-4"
       />
     )}
+    {setPurokFilter && (
+      <label className="mt-3 flex items-center gap-2 text-sm font-medium text-slate-700">
+        <span>Filter:</span>
+        <select
+          value={purokFilter || ''}
+          onChange={(event) => setPurokFilter(event.target.value)}
+          className="min-w-36 rounded-xl border border-[#E8DCEF] bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100"
+          aria-label="Filter records by Purok"
+        >
+          <option value="">All Puroks</option>
+          {PUROK_OPTIONS.map((purok) => (
+            <option key={purok} value={purok}>{purok}</option>
+          ))}
+        </select>
+      </label>
+    )}
   </div>
 );
 
@@ -320,15 +340,19 @@ const RecordsList = ({
   requestConfirmation,
 }) => {
   const [filter, setFilter] = useState('all');
+  const [purokFilter, setPurokFilter] = useState('');
 
   const categoryMeta = DASHBOARD_CATEGORIES.find((c) => c.id === selectedCategory);
   const categoryRecords = useMemo(() => {
     if (!selectedCategory) return [];
-    return filterRecordsBySearch(
+    const records = filterRecordsBySearch(
       getUserRecords(storageKeyForCategory(selectedCategory), currentUserId),
       searchQuery
     );
-  }, [selectedCategory, recordsRefresh, searchQuery, currentUserId]);
+    return purokFilter
+      ? records.filter((record) => normalizePurokName(record.purok) === purokFilter)
+      : records;
+  }, [selectedCategory, recordsRefresh, searchQuery, currentUserId, purokFilter]);
 
   const mergeWithLegacyFiltered = (canonicalRecords, legacyKey) => {
     let legacy = [];
@@ -340,6 +364,8 @@ const RecordsList = ({
     const filteredLegacy = filterRecordsBySearch(
       legacy.filter((record) => isOwnedByUser(record, currentUserId)),
       searchQuery
+    ).filter((record) =>
+      !purokFilter || normalizePurokName(record.purok) === purokFilter
     );
     const ids = new Set(canonicalRecords.map((r) => String(r.id)));
     return sortRecordsNewestFirst([
@@ -352,7 +378,7 @@ const RecordsList = ({
     `${count} ${label}${searchQuery.trim() ? ` matching “${searchQuery.trim()}”` : ''}`;
 
   const emptyRecordsMessage = (defaultMsg) =>
-    searchQuery.trim() ? 'No records match your search.' : defaultMsg;
+    searchQuery.trim() || purokFilter ? 'No records match the current filters.' : defaultMsg;
 
   const RecordActions = ({ record }) => (
     <ReportRowActions
@@ -361,11 +387,12 @@ const RecordsList = ({
     />
   );
 
-  const filteredRecords = filter === 'all' 
-    ? pendingVisits 
-    : pendingVisits.filter(v => 
-        filter === 'pending' ? !v.synced : v.synced
-      );
+  const filteredRecords = (filter === 'all'
+    ? pendingVisits
+    : pendingVisits.filter((visit) => filter === 'pending' ? !visit.synced : visit.synced)
+  ).filter((visit) =>
+    !purokFilter || normalizePurokName(visit.purok) === purokFilter
+  );
 
   const handleDeleteRecord = (id) => {
     requestConfirmation(
@@ -449,6 +476,8 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
+          purokFilter={purokFilter}
+          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -552,6 +581,8 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
+          purokFilter={purokFilter}
+          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
@@ -650,6 +681,8 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
+          purokFilter={purokFilter}
+          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -749,6 +782,8 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
+          purokFilter={purokFilter}
+          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -813,6 +848,7 @@ const RecordsList = ({
       'Month',
       'Purok',
       'Mother',
+      'Mother Birthday',
       'Age',
       'Child',
       'Sex',
@@ -844,12 +880,14 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
+          purokFilter={purokFilter}
+          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1800px]">
-                <div className="grid grid-cols-[repeat(19,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
+              <div className="min-w-[1900px]">
+                <div className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
                   {[...natalityHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
@@ -862,12 +900,13 @@ const RecordsList = ({
                   categoryRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(19,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span className="truncate">{formatMonth(record.month)}</span>
                       <span>{record.purok || '—'}</span>
                       {updatedName(record.mother_name, record)}
-                      <span>{record.mother_age ?? '—'}</span>
+                      <span>{formatTableDate(record.mother_birthday)}</span>
+                      <span>{calculateAgeInYears(record.mother_birthday) || record.mother_age || '—'}</span>
                       <span className="truncate">{record.child_name || '—'}</span>
                       <span>{record.sex === 'boys' ? 'Male' : record.sex === 'girls' ? 'Female' : '—'}</span>
                       <span>{formatTableDate(record.dob)}</span>
@@ -930,6 +969,8 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
+          purokFilter={purokFilter}
+          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -992,6 +1033,8 @@ const RecordsList = ({
         setShowSearchSuggestions={setShowSearchSuggestions}
         setSelectedCategory={setSelectedCategory}
         setActiveView={setActiveView}
+        purokFilter={purokFilter}
+        setPurokFilter={setPurokFilter}
       />
 
       {selectedCategory ? (
@@ -1152,12 +1195,9 @@ const HomeScreen = ({
   isOnline,
   setEditingRecord,
   currentUserId,
-  userEmail,
-  onDeleteAccount,
   onOpenAssignedTask,
   onClearSyncNotification,
 }) => {
-  const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [readNotificationIds, setReadNotificationIds] = useState(getReadNotificationIds);
   const userCategoryRecords = DASHBOARD_CATEGORIES.map((category) => ({
     ...category,
@@ -1453,44 +1493,23 @@ const HomeScreen = ({
               type="button"
               onClick={() => {
                 setShowNotifications(false);
-                setShowProfileMenu((visible) => !visible);
+                setActiveView('profile');
               }}
               className="p-2.5 rounded-full bg-white/50 hover:bg-white/70 transition"
               style={{ color: NUTRI_GRID_THEME.text }}
               aria-label="Open profile menu"
-              aria-expanded={showProfileMenu}
             >
               <UserCircle size={20} />
             </button>
-            {showProfileMenu && (
-              <div className="absolute right-0 top-12 w-64 rounded-2xl border border-gray-100 bg-white p-3 text-gray-800 shadow-xl z-50">
-                <p className="truncate px-2 pb-2 text-xs text-gray-500">{userEmail}</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowProfileMenu(false);
-                    setActiveView('password');
-                  }}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-medium hover:bg-purple-50"
-                >
-                  <KeyRound size={17} />
-                  Reset password
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowProfileMenu(false);
-                    onDeleteAccount();
-                  }}
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-red-700 hover:bg-red-50"
-                >
-                  <Trash2 size={17} />
-                  Delete account
-                </button>
-              </div>
-            )}
             {showNotifications && (
-              <div className="absolute right-0 top-12 w-72 bg-white rounded-2xl shadow-xl z-50 text-gray-800 border border-gray-100 overflow-hidden">
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowNotifications(false)}
+                  className="fixed inset-0 z-40 cursor-default bg-transparent"
+                  aria-label="Close notifications"
+                />
+                <div className="absolute right-0 top-12 z-50 w-72 overflow-hidden rounded-2xl border border-gray-100 bg-white text-gray-800 shadow-xl">
                 <div className="px-4 py-3 border-b font-semibold text-sm" style={{ color: MOBILE.navy }}>
                   Notifications
                 </div>
@@ -1564,7 +1583,8 @@ const HomeScreen = ({
                     </>
                   )}
                 </div>
-              </div>
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -1962,6 +1982,195 @@ const HomeScreen = ({
   );
 };
 
+const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDeleteAccount }) => {
+  const [fullName, setFullName] = useState(user?.fullName || '');
+  const [age, setAge] = useState(user?.age == null ? '' : String(user.age));
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const [deleteError, setDeleteError] = useState('');
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
+  const submitAccountDeletion = async (event) => {
+    event.preventDefault();
+    setDeleteError('');
+    setIsDeletingAccount(true);
+    try {
+      const result = await onDeleteAccount(deletePassword);
+      if (!result?.success) {
+        setDeleteError(result?.error || 'Account deletion could not be completed. Please try again.');
+        return;
+      }
+      setShowDeleteDialog(false);
+      setDeletePassword('');
+    } catch (error) {
+      console.error('Account deletion confirmation failed:', error);
+      setDeleteError(error.message || 'Account deletion could not be completed. Please try again.');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#DDEBFF] via-[#F4E8FF] to-[#FFE9F3] pb-8">
+      <header className="flex items-center gap-3 bg-white px-4 py-4 shadow-sm">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-full p-2 text-gray-700 hover:bg-gray-100"
+          aria-label="Back to dashboard"
+        >
+          <ChevronLeft size={20} />
+        </button>
+        <h1 className="text-xl font-bold text-gray-900">Profile</h1>
+      </header>
+
+      <main className="space-y-4 px-4 pt-5">
+        <form
+          className="space-y-3 rounded-2xl bg-white p-5 shadow-sm"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onSave({ fullName, age });
+          }}
+        >
+          <h2 className="mb-4 text-base font-bold text-gray-900">Edit Profile</h2>
+          <p className="mb-4 break-all text-sm text-gray-500">{user?.email}</p>
+          <label className="mb-4 block">
+            <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Name</span>
+            <input
+              type="text"
+              value={fullName}
+              onChange={(event) => setFullName(event.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-medium text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              autoComplete="name"
+              required
+            />
+          </label>
+          <label className="mb-4 block">
+            <span className="mb-2 block text-xs font-bold uppercase tracking-wider text-gray-500">Age</span>
+            <input
+              type="number"
+              min="1"
+              max="120"
+              value={age}
+              onChange={(event) => setAge(event.target.value)}
+              className="w-full rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-medium text-gray-900 outline-none focus:border-blue-500 focus:ring-2 focus:ring-blue-100"
+              inputMode="numeric"
+              required
+            />
+          </label>
+          <button
+            type="button"
+            onClick={onResetPassword}
+            className="w-full rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-center font-semibold uppercase text-blue-700 hover:bg-blue-100"
+          >
+            Reset Password
+          </button>
+          <div className="space-y-3 border-t border-slate-100 pt-4">
+            <button
+              type="submit"
+              className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-4 font-bold text-white shadow-sm hover:from-blue-700 hover:to-blue-600"
+            >
+              Save Changes
+            </button>
+            <button
+              type="button"
+              onClick={onCancel}
+              className="w-full rounded-xl bg-slate-100 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-200"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+
+        <section className="rounded-2xl border border-red-100 bg-white p-5 shadow-sm">
+          <h2 className="mb-4 text-base font-bold text-red-700">⚠️ Danger Zone</h2>
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={onLogout}
+              className="w-full rounded-xl border-2 border-red-300 bg-white px-4 py-3 font-bold text-red-700 hover:bg-red-50"
+            >
+              Log Out
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setDeleteError('');
+                setDeletePassword('');
+                setShowDeleteDialog(true);
+              }}
+              className="w-full rounded-xl border-2 border-red-700 bg-red-50 px-4 py-3 font-bold text-red-800 hover:bg-red-100"
+            >
+              Delete Account
+            </button>
+          </div>
+        </section>
+      </main>
+      {showDeleteDialog && (
+        <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/50 p-4">
+          <form
+            onSubmit={submitAccountDeletion}
+            className="w-full max-w-sm space-y-4 rounded-2xl bg-white p-5 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="delete-account-title"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 id="delete-account-title" className="text-lg font-bold text-red-800">
+                  Delete account?
+                </h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  This permanently deletes your account and cannot be undone. Enter your password to confirm.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeleteDialog(false)}
+                disabled={isDeletingAccount}
+                className="rounded-full p-1 text-gray-500 hover:bg-gray-100"
+                aria-label="Close delete account dialog"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <label className="block">
+              <span className="mb-2 block text-sm font-semibold text-gray-700">Password</span>
+              <input
+                type="password"
+                value={deletePassword}
+                onChange={(event) => setDeletePassword(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 px-4 py-3 text-base outline-none focus:border-red-500 focus:ring-2 focus:ring-red-100"
+                autoComplete="current-password"
+                required
+                autoFocus
+              />
+            </label>
+            {deleteError && <p role="alert" className="text-sm font-medium text-red-700">{deleteError}</p>}
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowDeleteDialog(false)}
+                disabled={isDeletingAccount}
+                className="flex-1 rounded-xl bg-slate-100 px-4 py-3 font-semibold text-slate-700 hover:bg-slate-200 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={isDeletingAccount || !deletePassword}
+                className="flex-1 rounded-xl bg-red-700 px-4 py-3 font-bold text-white hover:bg-red-800 disabled:opacity-50"
+              >
+                {isDeletingAccount ? 'Deleting…' : 'Delete account'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </div>
+  );
+};
+
 
 const NutriGridMobile = () => {
   // Authentication States
@@ -1985,8 +2194,8 @@ const NutriGridMobile = () => {
   const [editingRecord, setEditingRecord] = useState(null);
   const [recordsRefresh, setRecordsRefresh] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [accountActionError, setAccountActionError] = useState('');
   const [syncNotification, setSyncNotification] = useState('');
+  const [syncNotificationIsError, setSyncNotificationIsError] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const lastBackgroundSyncError = useRef('');
@@ -2026,14 +2235,19 @@ const NutriGridMobile = () => {
       setPendingConfirmation(null);
     } catch (error) {
       console.error('Confirmed action failed:', error);
-      alert(error.message || 'The action could not be completed. Please try again.');
+      setPendingConfirmation(null);
+      showSyncNotification(
+        error.message || 'The action could not be completed. Please try again.',
+        { isError: true }
+      );
     } finally {
       setConfirmationBusy(false);
     }
   };
 
-  const showSyncNotification = (message) => {
+  const showSyncNotification = (message, { isError = false } = {}) => {
     setSyncNotification(message);
+    setSyncNotificationIsError(isError);
   };
 
   useEffect(() => {
@@ -2049,31 +2263,33 @@ const NutriGridMobile = () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    supabase.auth.getSession()
-      .then(({ data: { session }, error }) => {
-        if (error && !(session && !navigator.onLine)) {
-          throw new Error(`Could not restore sign-in session: ${error.message}`);
-        }
-        if (error) {
-          console.warn('Restoring the saved sign-in session while offline:', error.message);
-        }
-        if (!session) {
-          setAppState('welcome');
-          return null;
-        }
-        return restoreSupabaseSession(session);
-      })
-      .then((userData) => {
-        if (userData) {
-          completeSignIn(userData);
-        } else {
-          setAppState('welcome');
-        }
-      })
-      .catch((error) => {
+    const restoreAuthentication = async () => {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        if (error && navigator.onLine) throw new Error(`Could not restore sign-in session: ${error.message}`);
+        if (error) console.warn('Restoring the saved sign-in session while offline:', error.message);
+        const userData = session
+          ? await restoreSupabaseSession(session)
+          : await restoreSupabaseSession(null);
+        if (userData) completeSignIn(userData);
+        else setAppState('welcome');
+      } catch (error) {
         console.error('Could not restore Supabase sign-in:', error);
+        if (!navigator.onLine || /failed to fetch|network|fetch failed|load failed|connection|offline/i.test(error.message || '')) {
+          try {
+            const cachedUser = await restoreSupabaseSession(null, { allowCachedProfile: true });
+            if (cachedUser) {
+              completeSignIn(cachedUser);
+              return;
+            }
+          } catch (offlineError) {
+            console.error('Could not restore the cached offline profile:', offlineError);
+          }
+        }
         setAppState('welcome');
-      });
+      }
+    };
+    void restoreAuthentication();
 
     return () => {
       window.removeEventListener('online', handleOnline);
@@ -2095,6 +2311,11 @@ const NutriGridMobile = () => {
   const completeSignIn = (userData) => {
     startLocationUpdates(userData.id);
     setCurrentUser(userData);
+    setActiveView('home');
+    setShowNotifications(false);
+    setShowMenu(false);
+    setShowCategoryForm(false);
+    setEditingRecord(null);
     setSearchQuery('');
     setSearchResults([]);
     setShowSearchSuggestions(false);
@@ -2126,9 +2347,23 @@ const NutriGridMobile = () => {
     await registerWithSupabase(accountData);
   };
 
-  const handleLogout = async () => {
+  const handleSaveProfile = ({ fullName, age }) => requestConfirmation(
+    'Are you sure you want to save your changes?',
+    async () => {
+      const updatedUser = await updateSupabaseProfile(currentUser, { fullName, age });
+      setCurrentUser(updatedUser);
+      setUserName(updatedUser.fullName);
+      setActiveView('home');
+      showSyncNotification('Profile changes saved.');
+    },
+    { title: 'Save profile changes', confirmLabel: 'Save changes' }
+  );
+
+  const performLogout = async () => {
     try {
-      await signOutSupabase();
+      await signOutSupabase(currentUser?.id);
+    } catch (error) {
+      console.error('Could not fully sign out from Supabase; local app access was cleared:', error);
     } finally {
       if (currentUser?.id) {
         try {
@@ -2144,6 +2379,9 @@ const NutriGridMobile = () => {
       setCurrentLocation(null);
       setIsAuthenticated(false);
       setCurrentUser(null);
+      setActiveView('home');
+      setShowNotifications(false);
+      setShowMenu(false);
       setSelectedCategory(null);
       setSearchQuery('');
       setSearchResults([]);
@@ -2154,23 +2392,45 @@ const NutriGridMobile = () => {
     }
   };
 
-  const handleDeleteAccount = async () => {
-    const confirmed = window.confirm(
-      'Permanently delete your account? This is only available for an approved profile and cannot be undone.'
-    );
-    if (!confirmed) return;
+  const handleLogout = () => requestConfirmation(
+    'Are you sure you want to log out?',
+    performLogout,
+    { title: 'Log out', confirmLabel: 'Log out', destructive: true }
+  );
 
-    setAccountActionError('');
+  const handleDeleteAccount = async (password) => {
+    if (!currentUser?.email) {
+      return { success: false, error: 'Could not verify the signed-in email address.' };
+    }
     try {
-      const { error } = await supabase.functions.invoke('delete-own-account');
-      if (error) {
-        setAccountActionError(error.message || 'Account deletion could not be completed.');
-        return;
+      const { error: passwordError } = await supabase.auth.signInWithPassword({
+        email: currentUser.email,
+        password,
+      });
+      if (passwordError) {
+        return {
+          success: false,
+          error: passwordError.message === 'Invalid login credentials'
+            ? 'The password is incorrect.'
+            : `Could not verify your password: ${passwordError.message}`,
+        };
       }
-      await handleLogout();
+
+      const { data, error } = await supabase.functions.invoke('delete-own-account');
+      if (error) {
+        return { success: false, error: error.message || 'Account deletion could not be completed.' };
+      }
+      if (!data?.deleted) {
+        return { success: false, error: 'The server did not confirm account deletion.' };
+      }
+      await performLogout();
+      return { success: true };
     } catch (error) {
       console.error('Account deletion failed:', error);
-      setAccountActionError('Account deletion could not be completed. Please try again.');
+      return {
+        success: false,
+        error: error.message || 'Account deletion could not be completed. Please try again.',
+      };
     }
   };
 
@@ -2429,8 +2689,13 @@ const NutriGridMobile = () => {
       return;
     }
 
-    const results = performRecordSearch(savedRecords, query);
-    setSearchResults(results.slice(0, 15));
+    const normalizedQuery = query.trim().toLowerCase();
+    const results = performRecordSearch(savedRecords, query).sort((left, right) => {
+      const leftStartsWithQuery = getRecordDisplayTitle(left.data).toLowerCase().startsWith(normalizedQuery);
+      const rightStartsWithQuery = getRecordDisplayTitle(right.data).toLowerCase().startsWith(normalizedQuery);
+      return Number(rightStartsWithQuery) - Number(leftStartsWithQuery);
+    });
+    setSearchResults(results);
     setShowSearchSuggestions(true);
   };
 
@@ -2811,7 +3076,7 @@ const NutriGridMobile = () => {
         adminName={currentUser.fullName}
         adminEmail={currentUser.email}
         currentUserId={currentUser.id}
-        onLogout={handleLogout}
+        onLogout={performLogout}
       />
     );
   }
@@ -2824,39 +3089,35 @@ const NutriGridMobile = () => {
           <div
             role="status"
             aria-live="polite"
-            className="fixed left-1/2 top-4 z-[120] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-start gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-lg"
+            className={`fixed left-1/2 top-4 z-[120] flex w-[calc(100%-2rem)] max-w-md -translate-x-1/2 items-start gap-3 rounded-2xl border px-4 py-3 text-sm shadow-lg ${
+              syncNotificationIsError
+                ? 'border-red-200 bg-red-50 text-red-900'
+                : 'border-emerald-200 bg-emerald-50 text-emerald-900'
+            }`}
           >
-            <CheckCircle size={19} className="mt-0.5 shrink-0 text-emerald-600" aria-hidden="true" />
+            {syncNotificationIsError ? (
+              <AlertCircle size={19} className="mt-0.5 shrink-0 text-red-600" aria-hidden="true" />
+            ) : (
+              <CheckCircle size={19} className="mt-0.5 shrink-0 text-emerald-600" aria-hidden="true" />
+            )}
             <span className="flex-1 font-medium">{syncNotification}</span>
             <button
               type="button"
               onClick={() => setSyncNotification('')}
               aria-label="Dismiss sync notification"
-              className="rounded-full p-1 text-emerald-700 transition hover:bg-emerald-100"
+              className={`rounded-full p-1 transition ${
+                syncNotificationIsError
+                  ? 'text-red-700 hover:bg-red-100'
+                  : 'text-emerald-700 hover:bg-emerald-100'
+              }`}
             >
               <X size={16} />
-            </button>
-          </div>
-        )}
-        {accountActionError && (
-          <div
-            role="alert"
-            className="fixed left-1/2 top-4 z-[120] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900 shadow-lg"
-          >
-            {accountActionError}
-            <button
-              type="button"
-              onClick={() => setAccountActionError('')}
-              className="ml-2 font-bold underline"
-            >
-              Dismiss
             </button>
           </div>
         )}
         <SideMenu
           open={showMenu}
           onClose={() => setShowMenu(false)}
-          onLogout={handleLogout}
           taskNavigationDate={taskNavigationDate}
         />
         <FieldResponsiveShell>
@@ -2891,8 +3152,6 @@ const NutriGridMobile = () => {
               isOnline={isOnline}
               setEditingRecord={setEditingRecord}
               currentUserId={currentUser?.id}
-              userEmail={currentUser?.email}
-              onDeleteAccount={handleDeleteAccount}
               onOpenAssignedTask={(task) => {
                 setTaskNavigationDate(task.due_date || '');
                 setShowMenu(true);
@@ -2900,11 +3159,21 @@ const NutriGridMobile = () => {
               onClearSyncNotification={() => setSyncNotification('')}
             />
           )}
+          {activeView === 'profile' && (
+            <ProfileScreen
+              user={currentUser}
+              onSave={handleSaveProfile}
+              onCancel={() => setActiveView('home')}
+              onResetPassword={() => setActiveView('password')}
+              onLogout={handleLogout}
+              onDeleteAccount={handleDeleteAccount}
+            />
+          )}
           {activeView === 'password' && (
             <ForgotPassword
               initialEmail={currentUser?.email}
               onBack={() => setActiveView('home')}
-              onDone={handleLogout}
+              onDone={performLogout}
             />
           )}
           {activeView === 'visit' && <HouseVisitForm />}

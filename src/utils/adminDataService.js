@@ -72,6 +72,8 @@ const COLUMN_MAPS = {
   },
   monthlynatal: {
     name_of_mother: 'mother_name',
+    mother_birthday: 'mother_birthday',
+    mother_age: 'mother_age',
     name_of_child: 'child_name',
     sex: 'sex',
     dob: 'dob',

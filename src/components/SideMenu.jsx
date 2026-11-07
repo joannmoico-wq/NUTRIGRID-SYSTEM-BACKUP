@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../utils/supabaseClient';
 import { deduplicateTasks, getLocalTasks, loadTasks, isTaskOverdue } from '../utils/taskSyncService';
-import { X, ChevronLeft, ChevronRight, Clock, Circle, LogOut } from 'lucide-react';
+import { X, ChevronLeft, ChevronRight, Clock, Circle } from 'lucide-react';
 import MyTasks from './MyTasks';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
@@ -31,7 +31,7 @@ const DAY_TONES = [
 
 const TASK_ICON_BG = ['bg-[#DDEBFF]', 'bg-[#FFE1F0]', 'bg-[#E4DEFF]', 'bg-[#FFEBD9]', 'bg-[#DFF7EC]'];
 
-export default function SideMenu({ open, onClose, onLogout, taskNavigationDate }) {
+export default function SideMenu({ open, onClose, taskNavigationDate }) {
   const [tasks, setTasks] = useState([]);
   const [anchor, setAnchor] = useState(() => startOfWeek(new Date()));
   const [selected, setSelected] = useState(() => toKey(new Date()));
@@ -370,19 +370,6 @@ export default function SideMenu({ open, onClose, onLogout, taskNavigationDate }
 
         </div>
 
-        <div className="shrink-0 border-t border-white/70 p-4">
-          <button
-            type="button"
-            onClick={async () => {
-              onClose();
-              await onLogout?.();
-            }}
-            className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 shadow-sm transition hover:bg-red-100"
-          >
-            <LogOut size={17} />
-            Logout
-          </button>
-        </div>
       </aside>
     </>
   );

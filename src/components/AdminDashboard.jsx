@@ -2483,6 +2483,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'No.', rowSpan: 2 },
       { label: 'Purok', rowSpan: 2 },
       { label: 'Name of Mother', rowSpan: 2 },
+      { label: 'Mother Birthday', rowSpan: 2 },
+      { label: 'Mother Age', rowSpan: 2 },
       { label: 'Name of Child', rowSpan: 2 },
       { label: 'Sex', rowSpan: 2 },
       { label: 'Date of Birth', rowSpan: 2 },
@@ -2929,18 +2931,18 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           ]),
         })
       }
-      minTableWidth={1800}
+      minTableWidth={2000}
       {...pregnantActions}
     />
   );
 
   const natalityExportHeaders = [
-    'No.', 'Purok', 'Mother', 'Child', 'Sex', 'DOB', 'Birth Weight', 'Follow-up Date',
+    'No.', 'Purok', 'Mother', 'Mother Birthday', 'Mother Age', 'Child', 'Sex', 'DOB', 'Birth Weight', 'Follow-up Date',
     'AIM (Months)', 'Length (cm)', 'Wt (kg)', 'Height (cm)', 'W/A', 'H/A', 'W/L/H',
     'Iron/Services', 'Remarks',
   ];
   const natalityExportRows = filteredNatality.map((row) => [
-    row.no, row.purok, row.motherName, row.childName, row.sex, row.dob, row.birthWeight,
+    row.no, row.purok, row.motherName, row.motherBirthday, row.motherAge, row.childName, row.sex, row.dob, row.birthWeight,
     row.dow, row.aim, row.length, row.weight, row.height, row.wA, row.hA, row.wLH,
     row.ironStatus, row.remarks,
   ]);
@@ -2948,7 +2950,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredNatality}
-      columnKeys={['no', 'purok', 'motherName', 'childName', 'sex', 'dob', 'birthWeight', 'dow', 'aim', 'length', 'weight', 'height', 'wA', 'hA', 'wLH', 'ironStatus', 'remarks']}
+      columnKeys={['no', 'purok', 'motherName', 'motherBirthday', 'motherAge', 'childName', 'sex', 'dob', 'birthWeight', 'dow', 'aim', 'length', 'weight', 'height', 'wA', 'hA', 'wLH', 'ironStatus', 'remarks']}
       headRows={monthlyNatalityHeadRows}
       reportHeader={
         <ReportHeader

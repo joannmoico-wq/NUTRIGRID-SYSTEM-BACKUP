@@ -135,28 +135,38 @@ function normalizeRemoteRecord(category, row, userId) {
 
 async function pullCategoryRecords(category, userId) {
   const { table, idColumn } = RECORD_TABLES[category];
-  let ownerResult = await readUserRows(table, idColumn, 'created_by_user_id', userId);
-  let rows;
-  if (ownerResult.error && isMissingOwnerColumnError(ownerResult.error)) {
-    ownerResult = await readUserRows(table, idColumn, 'data->>created_by_user_id', userId);
-    if (ownerResult.error) throw new Error(`${table}: ${ownerResult.error.message}`);
-    rows = ownerResult.rows;
-  } else {
-    if (ownerResult.error) throw new Error(`${table}: ${ownerResult.error.message}`);
-    const dataOwnerResult = await readUserRows(table, idColumn, 'data->>created_by_user_id', userId);
-    if (dataOwnerResult.error) {
-      throw new Error(`${table}: ${dataOwnerResult.error.message}`);
+  const primaryOwnerColumns = [
+    'created_by_user_id',
+    'data->>created_by_user_id',
+  ];
+  const rowsById = new Map();
+  let successfulOwnerColumns = 0;
+  const readOwnerColumns = async (ownerColumns) => {
+    for (const ownerColumn of ownerColumns) {
+      const result = await readUserRows(table, idColumn, ownerColumn, userId);
+      if (result.error) {
+        if (isMissingOwnerColumnError(result.error)) continue;
+        throw new Error(`${table}: ${result.error.message}`);
+      }
+      successfulOwnerColumns += 1;
+      result.rows.forEach((row) => {
+        const key = String(row.local_id ?? row[idColumn] ?? row.data?.id ?? '');
+        rowsById.set(key, row);
+      });
     }
-
-    const rowsById = new Map();
-    [...ownerResult.rows, ...dataOwnerResult.rows].forEach((row) => {
-      const key = String(row.local_id ?? row[idColumn] ?? row.data?.id ?? '');
-      rowsById.set(key, row);
-    });
-    rows = [...rowsById.values()];
+  };
+  await readOwnerColumns(primaryOwnerColumns);
+  if (!rowsById.size) await readOwnerColumns(['user_id', 'data->>user_id']);
+  if (!successfulOwnerColumns) {
+    throw new Error(`${table}: no supported record owner field was found.`);
   }
-  rows = rows.filter((row) => {
-    const owners = [row.created_by_user_id, row.data?.created_by_user_id]
+  const rows = [...rowsById.values()].filter((row) => {
+    const owners = [
+      row.created_by_user_id,
+      row.user_id,
+      row.data?.created_by_user_id,
+      row.data?.user_id,
+    ]
       .filter(Boolean)
       .map(String);
     return owners.length > 0 && owners.every((ownerId) => ownerId === String(userId));
@@ -363,6 +373,7 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
     monthlynatal: {
       month: record.month || null,
       name_of_mother: record.name_of_mother || record.mother_name || null,
+      mother_birthday: record.mother_birthday || null,
       mother_age: asNumberOrNull(record.mother_age),
       name_of_child: record.name_of_child || record.child_name || null,
       sex: record.sex || null,

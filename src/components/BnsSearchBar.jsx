@@ -52,7 +52,7 @@ const BnsSearchBar = ({
       },
       input: 'text-sm text-[#2D2D3A] placeholder:text-[#8E8EA9]',
       icon: '#8E8EA9',
-      dropdown: 'bg-white border-gray-100',
+      dropdown: 'bg-[#FFF8FC] border-[#F8DDEB]',
     },
   };
 
