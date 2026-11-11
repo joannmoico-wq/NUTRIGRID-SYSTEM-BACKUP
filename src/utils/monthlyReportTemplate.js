@@ -9,7 +9,17 @@ const emptyCounts = () => ({
   tF: 0,
 });
 
-function reportLine({ id, slug, indicator, isHeader = false, sortOrder }) {
+function reportLine({
+  id,
+  slug,
+  indicator,
+  isHeader = false,
+  sortOrder,
+  reportQuarter = 1,
+  month1Name = 'January',
+  month2Name = 'February',
+  month3Name = 'March',
+}) {
   return {
     id,
     slug,
@@ -21,6 +31,10 @@ function reportLine({ id, slug, indicator, isHeader = false, sortOrder }) {
     sortOrder: sortOrder ?? id,
     barangay: 'ALAWIHAO',
     reportYear: 2026,
+    reportQuarter,
+    month1Name,
+    month2Name,
+    month3Name,
     ...emptyCounts(),
   };
 }
@@ -42,20 +56,50 @@ export const DEFAULT_MONTHLY_REPORT_LINES = [
   reportLine({ id: 13, slug: 'iron-lbw', indicator: 'LBW/Preterm Babies' }),
   reportLine({ id: 14, slug: 'hdr-nip', indicator: 'National Immunization Program', isHeader: true }),
   reportLine({ id: 15, slug: 'fic-9-12', indicator: 'Fully Immunized Children (9–12 months)' }),
+  reportLine({ id: 16, slug: 'hdr-follow-up-weighing', indicator: 'Follow-up Weighing', isHeader: true }),
+  reportLine({ id: 17, slug: 'weighed-0-23-months', indicator: 'No. of 0–23 mos. old weighed (Monthly)' }),
+  reportLine({ id: 18, slug: 'hdr-newborn-babies', indicator: 'Newborn Babies', isHeader: true }),
+  reportLine({ id: 19, slug: 'newborn-babies-origin', indicator: 'No. of Newborn Babies (origin)' }),
+  reportLine({ id: 20, slug: 'hdr-complementary-feeding', indicator: 'Introduce Complementary Feeding', isHeader: true }),
+  reportLine({ id: 21, slug: 'comp-feeding-continued', indicator: 'Infants 6–8 months initiated complementary feeding with continued breastfeeding' }),
+  reportLine({ id: 22, slug: 'comp-feeding-stopped', indicator: 'Infants 6–8 months initiated complementary feeding but no longer or never been breastfed' }),
+  reportLine({ id: 23, slug: 'hdr-breastfeeding-iycf', indicator: 'Breast Feeding IYCF Report', isHeader: true }),
+  reportLine({ id: 24, slug: 'exclusive-breastfeeding', indicator: 'Infants exclusively breastfed (3 months & 29 days or 3 months and 1 day before the child turns 6 months)' }),
+  reportLine({ id: 25, slug: 'hdr-deliveries', indicator: 'Deliveries', isHeader: true }),
+  reportLine({ id: 26, slug: 'deliveries', indicator: 'Deliveries' }),
+  reportLine({ id: 27, slug: 'delivery-percentage', indicator: 'Percentage' }),
 ];
 
 const lineKey = (row) => {
-  if (row?.slug) return String(row.slug);
+  if (row?.slug) {
+    return `${row.reportYear || 2026}:${row.reportQuarter || 1}:${row.slug}`;
+  }
   return `${row?.indicator || row?.category || ''}::${row?.subcategory || ''}`;
 };
 
 const COUNT_KEYS = ['m1M', 'm1F', 'm2M', 'm2F', 'm3M', 'm3F', 'tM', 'tF'];
+const BATCH_MONTHS = [
+  ['January', 'February', 'March'],
+  ['April', 'May', 'June'],
+  ['July', 'August', 'September'],
+  ['October', 'November', 'December'],
+];
 
 export function mergeMonthlyReportLines(savedRows = []) {
   const saved = Array.isArray(savedRows) ? savedRows : [];
   const savedByKey = new Map(saved.map((row) => [lineKey(row), row]));
 
-  const mergedDefaults = DEFAULT_MONTHLY_REPORT_LINES.map((template) => {
+  const defaultLines = BATCH_MONTHS.flatMap((months, batchIndex) =>
+    DEFAULT_MONTHLY_REPORT_LINES.map((template) => ({
+      ...template,
+      id: template.id + (batchIndex * DEFAULT_MONTHLY_REPORT_LINES.length),
+      reportQuarter: batchIndex + 1,
+      month1Name: months[0],
+      month2Name: months[1],
+      month3Name: months[2],
+    }))
+  );
+  const mergedDefaults = defaultLines.map((template) => {
     const existing = savedByKey.get(lineKey(template));
     if (!existing) return { ...template };
     savedByKey.delete(lineKey(template));
@@ -67,6 +111,10 @@ export function mergeMonthlyReportLines(savedRows = []) {
       indicator: existing.indicator || template.indicator,
       isHeader: existing.isHeader ?? template.isHeader,
       sortOrder: existing.sortOrder ?? template.sortOrder,
+      reportQuarter: existing.reportQuarter ?? template.reportQuarter,
+      month1Name: existing.month1Name || template.month1Name,
+      month2Name: existing.month2Name || template.month2Name,
+      month3Name: existing.month3Name || template.month3Name,
     };
   });
 

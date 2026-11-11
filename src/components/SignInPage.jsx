@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import ForgotPassword from "./ForgotPassword";
+import { supabase } from "../utils/supabaseClient";
 import { CalendarDays, Lock, Mail, User } from "lucide-react";
 
 const svgProps = {
@@ -219,6 +220,14 @@ function SignInPage({ onSignIn, onRegister, onSocialSignIn }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeProvider, setActiveProvider] = useState("");
   const registering = mode === "register";
+
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "PASSWORD_RECOVERY") setShowForgotPassword(true);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
   if (showForgotPassword) {
     return (
       <ForgotPassword

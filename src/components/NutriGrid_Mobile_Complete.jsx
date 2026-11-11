@@ -39,6 +39,7 @@ import {
   getRecordDisplayTitle,
   queueRecordDeletion,
   sortRecordsNewestFirst,
+  toAdminEnvironmental,
 } from '../utils/bnsStorage';
 import {
   registerWithSupabase,
@@ -105,6 +106,28 @@ const LEGACY_RECORD_KEYS = {
 };
 const PWA_READ_NOTIFICATIONS_KEY = 'nutrigrid_pwa_read_notifications';
 const SHARED_PUROK_CACHE_KEY = 'nutrigrid_shared_purok_counts_v1';
+const PWA_INITIAL_SYNC_KEY = 'nutrigrid_initial_sync';
+
+function getInitialSyncKey(userId) {
+  return `${PWA_INITIAL_SYNC_KEY}:${userId}`;
+}
+
+function hasCompletedInitialSync(userId) {
+  try {
+    return sessionStorage.getItem(getInitialSyncKey(userId)) === 'completed';
+  } catch (error) {
+    console.error('Could not read PWA sync state:', error);
+    return false;
+  }
+}
+
+function markInitialSyncCompleted(userId) {
+  try {
+    sessionStorage.setItem(getInitialSyncKey(userId), 'completed');
+  } catch (error) {
+    console.error('Could not save PWA sync state:', error);
+  }
+}
 
 function readSharedPurokCache(monthKey) {
   try {
@@ -345,11 +368,15 @@ const RecordsList = ({
   const categoryMeta = DASHBOARD_CATEGORIES.find((c) => c.id === selectedCategory);
   const categoryRecords = useMemo(() => {
     if (!selectedCategory) return [];
+    const storedRecords = getUserRecords(
+      storageKeyForCategory(selectedCategory),
+      currentUserId
+    );
     const records = filterRecordsBySearch(
-      getUserRecords(storageKeyForCategory(selectedCategory), currentUserId),
+      storedRecords,
       searchQuery
     );
-    return purokFilter
+    return selectedCategory !== 'environmental' && purokFilter
       ? records.filter((record) => normalizePurokName(record.purok) === purokFilter)
       : records;
   }, [selectedCategory, recordsRefresh, searchQuery, currentUserId, purokFilter]);
@@ -365,6 +392,7 @@ const RecordsList = ({
       legacy.filter((record) => isOwnedByUser(record, currentUserId)),
       searchQuery
     ).filter((record) =>
+      selectedCategory === 'environmental' ||
       !purokFilter || normalizePurokName(record.purok) === purokFilter
     );
     const ids = new Set(canonicalRecords.map((r) => String(r.id)));
@@ -476,8 +504,6 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
-          purokFilter={purokFilter}
-          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -534,38 +560,34 @@ const RecordsList = ({
   if (selectedCategory === 'environmental') {
     const environmentalColumns = [
       ['purok', 'Purok'],
-      ['total_hh', 'Total HH'],
-      ['total_families', 'Families'],
-      ['compost_pit', 'Compost'],
-      ['garbage_collect', 'Collection'],
-      ['garbage_others', 'Other garbage'],
-      ['water_level_i', 'Water I'],
-      ['water_level_ii', 'Water II'],
-      ['water_level_iii', 'Water III'],
-      ['without_potable_water', 'No potable water'],
-      ['toilet_sanitary', 'Sanitary toilet'],
-      ['toilet_not_sanitary', 'No sanitary toilet'],
-      ['selling_iodized_sari', 'Salt: sari-sari'],
-      ['selling_iodized_grocery', 'Salt: grocery'],
-      ['selling_iodized_bakery', 'Salt: bakery'],
-      ['selling_iodized_carenderia', 'Salt: carenderia'],
-      ['selling_fortified_grocery', 'Fortified: grocery'],
-      ['selling_fortified_bakery', 'Fortified: bakery'],
-      ['selling_fortified_restaurant', 'Fortified: restaurant'],
-      ['establishments_hospital', 'Hospital'],
-      ['establishments_hotel', 'Hotel'],
-      ['establishments_restaurant', 'Restaurant'],
-      ['establishments_carenderia', 'Carenderia'],
-      ['establishments_bakery', 'Bakery'],
-      ['establishments_grocery', 'Grocery'],
-      ['establishments_sari', 'Sari-sari'],
-      ['visit_date', 'Visit date'],
-      ['visited_by', 'Visited by'],
-      ['notes', 'Notes'],
-      ['status', 'Status'],
+      ['totalHH', 'Total HH'], ['totalFamilies', 'Total Families'], ['maleCount', 'Male'],
+      ['femaleCount', 'Female'], ['totalPopulation', 'Total Population'], ['hhWithOccupation', 'Occupation'],
+      ['toiletVS', 'WS'], ['toiletOP', 'OP'], ['toiletCommunal', 'Communal'],
+      ['toiletNone', 'NO SANITARY TOILET'], ['waterSourceI', 'I'], ['waterSourceII', 'II'],
+      ['waterSourceIII', 'III'], ['withoutPotableWater', 'Without potable water'],
+      ['electricityOwned', 'Owned'], ['electricityConnected', 'Connect'],
+      ['vegetableGarden', 'Veg. garden'], ['herbalGarden', 'Herbal garden'],
+      ['backyardPoultry', 'Backyard poultry/livestock'], ['swine', 'Swine'], ['fishPond', 'Fish pond'],
+      ['usesIodizedSalt', 'Uses iodized salt'], ['malunggayTree', 'With malunggay tree'],
+      ['garbageCollect', 'Collected'], ['garbageCompostPit', 'Compost Pit'], ['garbageBurned', 'Burned'],
+      ['householdSmoker', 'HH w/ smoker'], ['householdNonsmoker', 'HH w/ non-smoker'],
+      ['fatherReceivingRe', 'CH. NL father'], ['iodizedSaltSariSari', 'Sari-sari salt'],
+      ['iodizedSaltGrocery', 'Grocery salt'],
+      ['estBakery', 'Bakery'], ['estCarenderia', 'Carenderia'], ['estRestaurant', 'Restaurant'],
+      ['estHotelRest', 'Hotel'],
+      ['actions', 'Actions'],
     ];
     const allEnvironmentalRecords = mergeWithLegacyFiltered(categoryRecords, 'records_environmental');
-    const yesNo = (value) => value ? 'Yes' : '—';
+    const adminRecords = toAdminEnvironmental(allEnvironmentalRecords);
+    const checkmarkKeys = new Set([
+      'toiletVS', 'toiletOP', 'toiletCommunal', 'toiletNone',
+      'waterSourceI', 'waterSourceII', 'waterSourceIII', 'withoutPotableWater',
+      'electricityOwned', 'electricityConnected', 'vegetableGarden', 'herbalGarden',
+      'backyardPoultry', 'swine', 'fishPond', 'usesIodizedSalt', 'malunggayTree',
+      'garbageCollect', 'garbageCompostPit', 'garbageBurned', 'householdSmoker',
+      'householdNonsmoker', 'fatherReceivingRe', 'iodizedSaltSariSari',
+      'iodizedSaltGrocery', 'estBakery', 'estCarenderia', 'estRestaurant', 'estHotelRest',
+    ]);
 
     return (
       <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
@@ -581,15 +603,16 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
-          purokFilter={purokFilter}
-          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
             <div className="overflow-x-auto">
               <div className="min-w-[2350px]">
-                <div className="grid grid-cols-[repeat(31,minmax(4.5rem,1fr))] gap-1 border-b border-green-200 bg-green-50 px-3 py-3 text-center text-[10px] font-semibold uppercase tracking-wide text-green-900">
-                  {[...environmentalColumns.map(([, label]) => label), 'Actions'].map((label) => (
+                <div
+                  className="grid gap-1 border-b border-green-200 bg-green-50 px-3 py-3 text-center text-[10px] font-semibold uppercase tracking-wide text-green-900"
+                  style={{ gridTemplateColumns: `repeat(${environmentalColumns.length}, minmax(4.5rem, 1fr))` }}
+                >
+                  {environmentalColumns.map(([, label]) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
                 </div>
@@ -598,13 +621,22 @@ const RecordsList = ({
                     {emptyRecordsMessage('No environmental sanitation records yet. Tap New Visit to add one.')}
                   </div>
                 ) : (
-                  allEnvironmentalRecords.map((record, index) => (
+                  adminRecords.map((record, index) => (
                     <div
                       key={record.id ?? index}
-                      className="grid grid-cols-[repeat(31,minmax(4.5rem,1fr))] items-center gap-1 border-b border-gray-100 px-3 py-2.5 text-center text-[11px] text-gray-800"
+                      className="grid items-center gap-1 border-b border-gray-100 px-3 py-2.5 text-center text-[11px] text-gray-800"
+                      style={{ gridTemplateColumns: `repeat(${environmentalColumns.length}, minmax(4.5rem, 1fr))` }}
                     >
                       {environmentalColumns.map(([key]) => (
-                        key === 'notes' ? (
+                        key === 'actions' ? (
+                          <div key={key} className="flex min-w-[4.5rem] items-center justify-center">
+                            {record._raw ? (
+                              <RecordActions record={record._raw} />
+                            ) : (
+                              <span className="text-gray-300" aria-hidden="true">—</span>
+                            )}
+                          </div>
+                        ) : key === 'notes' ? (
                           <ExpandableNote key={key} value={record.notes} />
                         ) : (
                           <span
@@ -612,19 +644,12 @@ const RecordsList = ({
                             className={key === 'visited_by' ? 'min-w-0' : 'truncate'}
                             title={String(record[key] ?? '')}
                           >
-                            {key === 'visited_by'
-                              ? updatedName(record.visited_by, record)
-                              : typeof record[key] === 'boolean'
-                              ? yesNo(record[key])
-                              : key === 'visit_date'
-                                ? formatTableDate(record[key])
-                                : key === 'status'
-                                  ? statusLabel(record)
-                                  : record[key] || '—'}
+                            {checkmarkKeys.has(key)
+                              ? (record[key] ? '✓' : '')
+                              : (record[key] ?? 0)}
                           </span>
                         )
                       ))}
-                      <RecordActions record={record} />
                     </div>
                   ))
                 )}
@@ -664,6 +689,8 @@ const RecordsList = ({
       'Ht',
       'BMI',
       'MUAC',
+      'Given Iron with Folic Acid for',
+      'Amount of Tabs',
       'Notes',
     ];
 
@@ -687,8 +714,8 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1550px]">
-                <div className="grid grid-cols-[repeat(21,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+              <div className="min-w-[1700px]">
+                <div className="grid grid-cols-[repeat(23,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
                   {[...pwHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">
                       {label}
@@ -703,7 +730,7 @@ const RecordsList = ({
                   allPwRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(21,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(23,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{formatTableDate(record.date_of_registration)}</span>
                       <span className="truncate">{record.family_serial_number || '—'}</span>
@@ -724,6 +751,8 @@ const RecordsList = ({
                       <span>{record.height ?? '—'}</span>
                       <span>{record.bmi ?? '—'}</span>
                       <span>{record.muac ?? '—'}</span>
+                      <span className="truncate">{record.iron_folic_acid_type || '—'}</span>
+                      <span>{record.iron_folic_acid || '—'}</span>
                       <ExpandableNote value={record.notes} />
                       <RecordActions record={record} />
                     </div>
@@ -764,6 +793,7 @@ const RecordsList = ({
       'Ht',
       'BMI',
       'MUAC',
+      'Iron with Folic Acid',
       'Date Delivered',
       'Notes',
     ];
@@ -788,8 +818,8 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1550px]">
-                <div className="grid grid-cols-[repeat(21,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+              <div className="min-w-[1600px]">
+                <div className="grid grid-cols-[repeat(22,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
                   {[...lwHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">
                       {label}
@@ -804,7 +834,7 @@ const RecordsList = ({
                   allLwRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(21,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(22,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{idx + 1}</span>
                       <span>{formatTableDate(record.date_of_registration)}</span>
@@ -824,6 +854,7 @@ const RecordsList = ({
                       <span>{record.height ?? '—'}</span>
                       <span>{record.bmi ?? '—'}</span>
                       <span>{record.muac ?? '—'}</span>
+                      <span>{record.iron_folic_acid || '—'}</span>
                       <span>{formatTableDate(record.date_delivered)}</span>
                       <ExpandableNote value={record.notes} />
                       <RecordActions record={record} />
@@ -862,7 +893,11 @@ const RecordsList = ({
       'W/A',
       'H/A',
       'W/L/H',
-      'Iron Given / Services',
+      'Iron Drops for LBW/Preterm',
+      'Given Vitamin A',
+      'Vitamin A Quantity',
+      'Fully Immunized (9–12 months)',
+      'Newborn Babies',
       'Remarks',
     ];
 
@@ -887,7 +922,7 @@ const RecordsList = ({
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[1900px]">
-                <div className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
+                <div className="grid grid-cols-[repeat(24,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
                   {[...natalityHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
@@ -900,7 +935,7 @@ const RecordsList = ({
                   categoryRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(20,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(24,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span className="truncate">{formatMonth(record.month)}</span>
                       <span>{record.purok || '—'}</span>
@@ -920,6 +955,10 @@ const RecordsList = ({
                       <span>{record.h_a || '—'}</span>
                       <span>{record.w_l_h || '—'}</span>
                       <span className="truncate">{record.iron_status || record.iron_given || '—'}</span>
+                      <span className="truncate">{record.vitamin_a || '—'}</span>
+                      <span>{record.vitamin_a_count || '—'}</span>
+                      <span>{record.fully_immunized ? '✓' : ''}</span>
+                      <span>{record.newborn_babies ? '✓' : ''}</span>
                       <ExpandableNote value={record.remarks || record.notes} />
                       <RecordActions record={record} />
                     </div>
@@ -1897,8 +1936,8 @@ const HomeScreen = ({
       </div>
 
       {showCategoryForm && selectedCategory && (
-        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4 max-w-md mx-auto">
-          <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full max-h-[92vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="bg-white rounded-t-3xl sm:rounded-2xl w-full max-w-2xl max-h-[92vh] overflow-hidden flex flex-col">
             <div
               className={`sticky top-0 bg-gradient-to-r ${selectedCategoryData?.gradient} px-5 py-4 flex items-center justify-between rounded-t-3xl text-white sm:rounded-t-2xl`}
             >
@@ -1913,7 +1952,7 @@ const HomeScreen = ({
                 <X size={22} />
               </button>
             </div>
-            <div className="bg-white p-4 pb-8">
+            <div className="bg-white p-5 sm:p-6 pb-8 overflow-y-auto">
               {selectedCategory === 'environmental' && (
                 <EnvironmentalSanitationForm
                   key={`environmental-${editingRecord?.id || 'new'}`}
@@ -2012,7 +2051,7 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#DDEBFF] via-[#F4E8FF] to-[#FFE9F3] pb-8">
-      <header className="flex items-center gap-3 bg-white px-4 py-4 shadow-sm">
+      <header className="flex items-center gap-3 border-t-4 border-pink-200 bg-white px-4 py-4 shadow-sm">
         <button
           type="button"
           onClick={onCancel}
@@ -2026,7 +2065,7 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
 
       <main className="space-y-4 px-4 pt-5">
         <form
-          className="space-y-3 rounded-2xl bg-white p-5 shadow-sm"
+          className="space-y-3 rounded-2xl border border-pink-200 bg-[#ffeef4] p-5 shadow-sm"
           onSubmit={(event) => {
             event.preventDefault();
             onSave({ fullName, age });
@@ -2199,6 +2238,8 @@ const NutriGridMobile = () => {
   const [pendingConfirmation, setPendingConfirmation] = useState(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
   const lastBackgroundSyncError = useRef('');
+  const syncInFlight = useRef(false);
+  const wasOffline = useRef(!navigator.onLine);
   const locationWatchId = useRef(null);
 
   const startLocationUpdates = (userId) => {
@@ -2265,12 +2306,19 @@ const NutriGridMobile = () => {
 
     const restoreAuthentication = async () => {
       try {
+        if (!navigator.onLine) {
+          const cachedUser = await restoreSupabaseSession(null, { allowCachedProfile: true });
+          if (cachedUser) completeSignIn(cachedUser);
+          else setAppState('welcome');
+          return;
+        }
+
         const { data: { session }, error } = await supabase.auth.getSession();
         if (error && navigator.onLine) throw new Error(`Could not restore sign-in session: ${error.message}`);
         if (error) console.warn('Restoring the saved sign-in session while offline:', error.message);
         const userData = session
           ? await restoreSupabaseSession(session)
-          : await restoreSupabaseSession(null);
+          : await restoreSupabaseSession(null, { allowCachedProfile: true });
         if (userData) completeSignIn(userData);
         else setAppState('welcome');
       } catch (error) {
@@ -2503,15 +2551,20 @@ const NutriGridMobile = () => {
   useEffect(() => {
     if (!isAuthenticated || currentUser?.role?.toLowerCase() === 'admin') return undefined;
 
-    const syncWhenOnline = ({ notify = false } = {}) => {
-      if (navigator.onLine) {
-        void syncData({ notify });
-        void syncPendingActivityLogs().then((result) => {
+    const syncWhenOnline = ({ notify = false, force = false } = {}) => {
+      if (!navigator.onLine || syncInFlight.current) return;
+      if (!force && hasCompletedInitialSync(currentUser.id)) return;
+
+      syncInFlight.current = true;
+      if (!force) markInitialSyncCompleted(currentUser.id);
+      void Promise.all([
+        syncData({ notify }),
+        syncPendingActivityLogs().then((result) => {
           if (result.errors.length) {
             console.error('Some record activity logs are waiting to sync:', result.errors);
           }
-        }).catch((error) => console.error('Could not sync pending record activity logs:', error));
-        void syncPendingTasks().then((result) => {
+        }),
+        syncPendingTasks().then((result) => {
           if (result.errors?.length) {
             console.error('Some tasks are waiting to sync:', result.errors);
           } else if (result.synced > 0) {
@@ -2519,17 +2572,29 @@ const NutriGridMobile = () => {
               `${result.synced} ${result.synced === 1 ? 'task' : 'tasks'} synced and saved in the Admin Dashboard and database.`
             );
           }
-        }).catch((error) => console.error('Could not sync pending tasks:', error));
-      }
+        }),
+      ]).catch((error) => {
+        console.error('Could not complete online sync:', error);
+      }).finally(() => {
+        syncInFlight.current = false;
+      });
     };
-    const handleOnline = () => syncWhenOnline({ notify: true });
+
+    const handleOffline = () => {
+      wasOffline.current = true;
+    };
+    const handleOnline = () => {
+      if (wasOffline.current) syncWhenOnline({ notify: true, force: true });
+      wasOffline.current = false;
+    };
+
     syncWhenOnline({ notify: true });
     window.addEventListener('online', handleOnline);
-    const timer = window.setInterval(() => syncWhenOnline(), 60000);
+    window.addEventListener('offline', handleOffline);
 
     return () => {
       window.removeEventListener('online', handleOnline);
-      window.clearInterval(timer);
+      window.removeEventListener('offline', handleOffline);
     };
   }, [isAuthenticated, currentUser?.id, currentUser?.role]);
 

@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
     publicDir: 'src/public',
     server: {
       port: 3000,
+      strictPort: true,
       open: true
     }
   }

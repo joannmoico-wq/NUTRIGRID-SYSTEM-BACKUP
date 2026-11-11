@@ -12,6 +12,10 @@ create table if not exists public.monthly_report (
   sort_order integer not null default 0,
   barangay text not null default 'ALAWIHAO',
   report_year integer not null default extract(year from current_date)::integer,
+  report_quarter integer not null default 1 check (report_quarter between 1 and 4),
+  month_1_name text not null default 'January',
+  month_2_name text not null default 'February',
+  month_3_name text not null default 'March',
   m1_male integer not null default 0 check (m1_male >= 0),
   m1_female integer not null default 0 check (m1_female >= 0),
   m2_male integer not null default 0 check (m2_male >= 0),
@@ -23,11 +27,102 @@ create table if not exists public.monthly_report (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint monthly_report_year_valid check (report_year between 2000 and 2200),
-  constraint monthly_report_barangay_year_slug_key unique (barangay, report_year, slug)
+  constraint monthly_report_barangay_year_quarter_slug_key unique (barangay, report_year, report_quarter, slug)
 );
 
+alter table public.monthly_report
+  add column if not exists report_quarter integer not null default 1,
+  add column if not exists month_1_name text not null default 'January',
+  add column if not exists month_2_name text not null default 'February',
+  add column if not exists month_3_name text not null default 'March';
+
+alter table public.monthly_report
+  drop constraint if exists monthly_report_barangay_year_slug_key;
+
+alter table public.monthly_report
+  drop constraint if exists monthly_report_report_quarter_valid;
+
+alter table public.monthly_report
+  drop constraint if exists monthly_report_barangay_year_quarter_slug_key;
+
+alter table public.monthly_report
+  add constraint monthly_report_report_quarter_valid check (report_quarter between 1 and 4),
+  add constraint monthly_report_barangay_year_quarter_slug_key
+    unique (barangay, report_year, report_quarter, slug);
+
 create index if not exists monthly_report_year_sort_idx
-  on public.monthly_report (barangay, report_year, sort_order);
+  on public.monthly_report (barangay, report_year, report_quarter, sort_order);
+
+-- Seed the complete indicator list for every batch.
+-- Existing rows and entered values are preserved.
+with indicator_template(sort_order, slug, indicator, is_header) as (
+  values
+    (1, 'hdr-new-cases', 'New Cases of', true),
+    (2, 'wasted-mam', 'Wasted (MAM)', false),
+    (3, 'severely-wasted-sam', 'Severely Wasted (SAM)', false),
+    (4, 'hdr-vitamin-a', 'Given Vitamin A', true),
+    (5, 'vit-a-6-11', '6–11 months old (100,000 IU)', false),
+    (6, 'vit-a-12-59', '12–59 months old (200,000 IU)', false),
+    (7, 'vit-a-postpartum', 'Post-partum Women (200,000 IU)', false),
+    (8, 'hdr-iron-folic', 'No. Given Iron with Folic Acid', true),
+    (9, 'iron-pregnant', 'Pregnant (180 tabs)', false),
+    (10, 'iron-adolescent', 'Adolescent Pregnant (180 tabs)', false),
+    (11, 'iron-lactating', 'Lactating Women (90 tabs)', false),
+    (12, 'hdr-iron-drops', 'No. of Infants Given Iron Drops', true),
+    (13, 'iron-lbw', 'LBW/Preterm Babies', false),
+    (14, 'hdr-nip', 'National Immunization Program', true),
+    (15, 'fic-9-12', 'Fully Immunized Children (9–12 months)', false),
+    (16, 'hdr-follow-up-weighing', 'Follow-up Weighing', true),
+    (17, 'weighed-0-23-months', 'No. of 0–23 mos. old weighed (Monthly)', false),
+    (18, 'hdr-newborn-babies', 'Newborn Babies', true),
+    (19, 'newborn-babies-origin', 'No. of Newborn Babies (origin)', false),
+    (20, 'hdr-complementary-feeding', 'Introduce Complementary Feeding', true),
+    (21, 'comp-feeding-continued', 'Infants 6–8 months initiated complementary feeding with continued breastfeeding', false),
+    (22, 'comp-feeding-stopped', 'Infants 6–8 months initiated complementary feeding but no longer or never been breastfed', false),
+    (23, 'hdr-breastfeeding-iycf', 'Breast Feeding IYCF Report', true),
+    (24, 'exclusive-breastfeeding', 'Infants exclusively breastfed (3 months & 29 days or 3 months and 1 day before the child turns 6 months)', false),
+    (25, 'hdr-deliveries', 'Deliveries', true),
+    (26, 'deliveries', 'Deliveries', false),
+    (27, 'delivery-percentage', 'Percentage', false)
+)
+insert into public.monthly_report (
+  slug,
+  indicator,
+  category,
+  subcategory,
+  group_label,
+  is_header,
+  sort_order,
+  barangay,
+  report_year,
+  report_quarter,
+  month_1_name,
+  month_2_name,
+  month_3_name
+)
+select
+  template.slug,
+  template.indicator,
+  template.indicator,
+  case when template.is_header then null else template.indicator end,
+  template.indicator,
+  template.is_header,
+  template.sort_order,
+  'ALAWIHAO',
+  extract(year from current_date)::integer,
+  batch.report_quarter,
+  batch.month_1_name,
+  batch.month_2_name,
+  batch.month_3_name
+from indicator_template template
+cross join (
+  values
+    (1, 'January', 'February', 'March'),
+    (2, 'April', 'May', 'June'),
+    (3, 'July', 'August', 'September'),
+    (4, 'October', 'November', 'December')
+) as batch(report_quarter, month_1_name, month_2_name, month_3_name)
+on conflict (barangay, report_year, report_quarter, slug) do nothing;
 
 create or replace function public.set_monthly_report_updated_at()
 returns trigger

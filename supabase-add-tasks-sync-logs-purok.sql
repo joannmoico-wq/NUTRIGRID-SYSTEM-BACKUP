@@ -14,14 +14,26 @@ alter table public.infant_feeding
   add column if not exists purok text;
 alter table public.lactating_women
   add column if not exists purok text;
+alter table public.lactating_women
+  add column if not exists iron_folic_acid text;
 alter table public.pregnant_women
   add column if not exists purok text;
+alter table public.pregnant_women
+  add column if not exists iron_folic_acid text,
+  add column if not exists iron_folic_acid_type text;
+alter table public.pregnant_women
+  add column if not exists iron_folic_acid text,
+  add column if not exists iron_folic_acid_type text;
 alter table public.monthly_natality
   add column if not exists purok text;
 alter table public.monthly_natality
   add column if not exists birth_weight numeric,
   add column if not exists sex text,
   add column if not exists iron_status text,
+  add column if not exists vitamin_a text,
+  add column if not exists vitamin_a_count text,
+  add column if not exists fully_immunized boolean not null default false,
+  add column if not exists newborn_babies boolean not null default false,
   add column if not exists remarks text;
 
 -- Allow each approved field worker to restore only their own previously synced PWA records.

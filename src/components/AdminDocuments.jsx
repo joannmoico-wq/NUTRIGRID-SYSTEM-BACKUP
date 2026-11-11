@@ -172,6 +172,8 @@ export default function AdminDocuments({
       const items = await withDocumentStore('readonly', (store) => store.getAll());
       return (items || []).sort((left, right) => right.addedAt - left.addedAt);
     },
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
   });
   const allDocuments = useMemo(() => [...pwaPhotos, ...documents], [pwaPhotos, documents]);
   const documentUrls = useMemo(() => allDocuments.map((document) => {
@@ -266,6 +268,8 @@ export default function AdminDocuments({
     }),
     getNextPageParam: (lastPage) =>
       lastPage.nextOffset < openedFolderDocuments.length ? lastPage.nextOffset : undefined,
+    staleTime: Infinity,
+    gcTime: 30 * 60 * 1000,
   });
   const visibleFolderDocuments = documentPages?.pages.flatMap((page) => page.items) || [];
   const loadMoreRef = useRef(null);
@@ -274,7 +278,7 @@ export default function AdminDocuments({
     const sentinel = loadMoreRef.current;
     if (!sentinel || !hasNextPage || isFetchingNextPage) return undefined;
     const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) void fetchNextPage();
+      if (entry.isIntersecting && !isFetchingNextPage) void fetchNextPage();
     }, { rootMargin: '240px' });
     observer.observe(sentinel);
     return () => observer.disconnect();

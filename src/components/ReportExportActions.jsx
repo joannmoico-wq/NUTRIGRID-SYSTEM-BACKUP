@@ -78,6 +78,7 @@ export default function ReportExportActions({
   enableEmail = false,
   initialRecipient = '',
   signatureOptions = [],
+  sectionRowLabels = [],
 }) {
   const signatureInput = useRef(null);
   const [signatureSlots, setSignatureSlots] = useState({});
@@ -318,16 +319,20 @@ export default function ReportExportActions({
           children: [cellParagraph(header, true)],
         })),
       }),
-      ...rows.map((row) => new TableRow({
+      ...rows.map((row) => {
+        const isSectionRow = sectionRowLabels.includes(String(row[0] || ''));
+        return new TableRow({
         cantSplit: true,
         children: headers.map((_, index) => new TableCell({
           width: { size: tableColumnWidths[index], type: WidthType.DXA },
           margins: tableCellMargins,
           verticalAlignment: 'center',
+          shading: isSectionRow ? { fill: 'FFE8F3' } : undefined,
           borders: tableBorders,
-          children: [cellParagraph(row[index] ?? '')],
+          children: [cellParagraph(row[index] ?? '', isSectionRow)],
         })),
-      })),
+        });
+      }),
     ];
     const children = [
       new Paragraph({

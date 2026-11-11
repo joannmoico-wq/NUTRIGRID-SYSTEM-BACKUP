@@ -39,12 +39,36 @@ const COLUMN_MAPS = {
   environmental: {
     total_hh: 'total_hh',
     total_families: 'total_families',
+    male_count: 'male_count',
+    female_count: 'female_count',
+    total_population: 'total_population',
+    hh_with_occupation: 'hh_with_occupation',
+    electricity_owned: 'electricity_owned',
+    electricity_connected: 'electricity_connected',
+    has_veg_garden: 'has_veg_garden',
+    has_herbal_garden: 'has_herbal_garden',
+    has_backyard_poultry: 'has_backyard_poultry',
+    has_swine: 'has_swine',
+    has_fish_pond: 'has_fish_pond',
+    uses_iodized_salt: 'uses_iodized_salt',
+    has_malunggay_tree: 'has_malunggay_tree',
+    child_re: 'child_re',
+    father_re: 'father_re',
+    household_nonsmoker: 'household_nonsmoker',
+    household_smoker: 'household_smoker',
+    water_source: 'water_source',
+    toilet_type: 'toilet_type',
     water_level_i: 'water_level_i',
     water_level_ii: 'water_level_ii',
     water_level_iii: 'water_level_iii',
     without_potable_water: 'without_potable_water',
     toilet_sanitary: 'toilet_sanitary',
     toilet_not_sanitary: 'toilet_not_sanitary',
+    selling_iodized_restaurant: 'selling_iodized_restaurant',
+    selling_iodized_hotel: 'selling_iodized_hotel',
+    selling_fortified_sari: 'selling_fortified_sari',
+    selling_fortified_carenderia: 'selling_fortified_carenderia',
+    selling_fortified_hotel: 'selling_fortified_hotel',
     visit_date: 'visit_date',
     notes: 'notes',
     environmental_sanitation_photo: 'photo_url',
@@ -201,6 +225,10 @@ function monthlyReportFromRow(row) {
     sortOrder: row.sort_order,
     barangay: row.barangay,
     reportYear: row.report_year,
+    reportQuarter: row.report_quarter || 1,
+    month1Name: row.month_1_name || 'January',
+    month2Name: row.month_2_name || 'February',
+    month3Name: row.month_3_name || 'March',
     m1M: row.m1_male,
     m1F: row.m1_female,
     m2M: row.m2_male,
@@ -227,13 +255,17 @@ export async function saveMonthlyReportLine(line) {
       sort_order: Number(line.sortOrder) || 0,
       barangay: line.barangay || MONTHLY_REPORT_BARANGAY,
       report_year: Number(line.reportYear) || MONTHLY_REPORT_YEAR,
+      report_quarter: Number(line.reportQuarter) || 1,
+      month_1_name: line.month1Name || 'January',
+      month_2_name: line.month2Name || 'February',
+      month_3_name: line.month3Name || 'March',
       m1_male: Number(line.m1M) || 0,
       m1_female: Number(line.m1F) || 0,
       m2_male: Number(line.m2M) || 0,
       m2_female: Number(line.m2F) || 0,
       m3_male: Number(line.m3M) || 0,
       m3_female: Number(line.m3F) || 0,
-    }, { onConflict: 'barangay,report_year,slug' })
+    }, { onConflict: 'barangay,report_year,report_quarter,slug' })
     .select('*')
     .single();
 
@@ -247,6 +279,7 @@ export async function deleteMonthlyReportLine(line) {
     .delete()
     .eq('barangay', line.barangay || MONTHLY_REPORT_BARANGAY)
     .eq('report_year', Number(line.reportYear) || MONTHLY_REPORT_YEAR)
+    .eq('report_quarter', Number(line.reportQuarter) || 1)
     .eq('slug', line.slug);
 
   if (error) throw new Error(`Could not delete monthly report line from Supabase: ${error.message}`);
@@ -257,7 +290,6 @@ async function readMonthlyReportLines() {
     .from(MONTHLY_REPORT_TABLE)
     .select('*')
     .eq('barangay', MONTHLY_REPORT_BARANGAY)
-    .eq('report_year', MONTHLY_REPORT_YEAR)
     .order('sort_order', { ascending: true });
 
   if (error) throw new Error(`${MONTHLY_REPORT_TABLE}: ${error.message}`);

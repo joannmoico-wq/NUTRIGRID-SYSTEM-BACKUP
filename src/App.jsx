@@ -4,7 +4,7 @@ import { initializeLocalDatabase } from './utils/bnsStorage'
 
 
 function App() {
-  const [localDatabaseReady, setLocalDatabaseReady] = useState(false)
+  const [localDatabaseReady, setLocalDatabaseReady] = useState(() => !navigator.onLine)
 
   useEffect(() => {
     initializeLocalDatabase()

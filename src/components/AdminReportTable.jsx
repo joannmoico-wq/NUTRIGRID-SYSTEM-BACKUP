@@ -115,10 +115,15 @@ export default function AdminReportTable({
   getCellValue,
   emptyMessage = 'No records yet.',
   minTableWidth = 720,
+  showPurokFilter = true,
+  purokFilter: controlledPurokFilter,
+  onPurokFilterChange,
 }) {
   const [isOnline, setIsOnline] = useState(() => navigator.onLine);
-  const [purokFilter, setPurokFilter] = useState('');
-  const visibleData = purokFilter
+  const [localPurokFilter, setLocalPurokFilter] = useState('');
+  const purokFilter = controlledPurokFilter ?? localPurokFilter;
+  const setPurokFilter = onPurokFilterChange || setLocalPurokFilter;
+  const visibleData = showPurokFilter && purokFilter && purokFilter !== '__sorted__'
     ? data.filter((row) => normalizePurokName(row.purok) === purokFilter)
     : data;
   useEffect(() => {
@@ -205,20 +210,23 @@ export default function AdminReportTable({
           <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
             {visibleData.length} record(s)
           </span>
-          <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
-            <span>Filter:</span>
-            <select
-              value={purokFilter}
-              onChange={(event) => setPurokFilter(event.target.value)}
-              className="rounded-lg border border-[#E8DCEF] bg-white px-3 py-2 text-sm text-gray-800 shadow-sm outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100 dark:border-gray-500 dark:bg-[#26263B] dark:text-gray-100"
-              aria-label="Filter records by Purok"
-            >
-              <option value="">All Puroks</option>
-              {PUROK_OPTIONS.map((purok) => (
-                <option key={purok} value={purok}>{purok}</option>
-              ))}
-            </select>
-          </label>
+          {showPurokFilter && (
+            <label className="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-200">
+              <span>Filter:</span>
+              <select
+                value={purokFilter}
+                onChange={(event) => setPurokFilter(event.target.value)}
+                className="rounded-lg border border-[#E8DCEF] bg-white px-3 py-2 text-sm text-gray-800 shadow-sm outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100 dark:border-gray-500 dark:bg-[#26263B] dark:text-gray-100"
+                aria-label="Filter records by Purok"
+              >
+                <option value="">All Puroks</option>
+                <option value="__sorted__">Purok 1-10</option>
+                {PUROK_OPTIONS.map((purok) => (
+                  <option key={purok} value={purok}>{purok}</option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {onAdd && (

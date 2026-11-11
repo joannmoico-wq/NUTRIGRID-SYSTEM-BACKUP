@@ -66,7 +66,7 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { getCategoryForm } from './CategorySpecificForms';
-import { normalizePurokName, sortPurokCounts } from '../utils/purok';
+import { normalizePurokName, PUROK_OPTIONS, sortPurokCounts, getPurokNumber } from '../utils/purok';
 import { isTaskOverdue } from '../utils/taskSyncService';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
 import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
@@ -816,6 +816,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem(DARK_MODE_KEY) === 'true');
   const adminName = profileName?.trim() || 'Admin';
   const [searchTerm, setSearchTerm] = useState('');
+  const [adminPurokFilter, setAdminPurokFilter] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [selectedTaskFilter, setSelectedTaskFilter] = useState(null);
@@ -842,6 +843,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [adminConfirmation, setAdminConfirmation] = useState(null);
   const [adminConfirmationBusy, setAdminConfirmationBusy] = useState(false);
   const [residentPurokFilter, setResidentPurokFilter] = useState('');
+  const [monthlyReportBatch, setMonthlyReportBatch] = useState(1);
   const [scheduledVisitPurok, setScheduledVisitPurok] = useState('');
   const notifRef = useRef(null);
 
@@ -1142,10 +1144,18 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const filteredHouseholds = useMemo(() => filterRecordsBySearch(households, searchTerm), [households, searchTerm]);
   const filteredResidentHouseholds = useMemo(
-    () => residentPurokFilter
-      ? filteredHouseholds.filter((record) => normalizePurokName(record.purok) === residentPurokFilter)
-      : filteredHouseholds,
-    [filteredHouseholds, residentPurokFilter]
+    () => {
+      let rows = residentPurokFilter
+        ? filteredHouseholds.filter((record) => normalizePurokName(record.purok) === residentPurokFilter)
+        : filteredHouseholds;
+      if (adminPurokFilter === '__sorted__') {
+        rows = [...rows].sort((a, b) => getPurokNumber(a.purok) - getPurokNumber(b.purok));
+      } else if (adminPurokFilter) {
+        rows = rows.filter((record) => normalizePurokName(record.purok) === adminPurokFilter);
+      }
+      return rows;
+    },
+    [filteredHouseholds, residentPurokFilter, adminPurokFilter]
   );
   const handlePurokResidents = useCallback((purok) => {
     setResidentPurokFilter(normalizePurokName(purok));
@@ -1665,30 +1675,146 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   });
 
   const filterAdminTableData = (rows, term, categoryId) => {
-    if (!term.trim()) return rows;
+    let filteredRows = rows;
+    if (adminPurokFilter === '__sorted__') {
+      filteredRows = [...filteredRows].sort((a, b) => getPurokNumber(a.purok) - getPurokNumber(b.purok));
+    } else if (adminPurokFilter) {
+      filteredRows = filteredRows.filter((row) => normalizePurokName(row.purok) === adminPurokFilter);
+    }
+    if (!term.trim()) return filteredRows;
     const q = term.trim().toLowerCase();
-    return rows.filter((row) => recordMatchesSearch({ ...row, category: categoryId }, q));
+    return filteredRows.filter((row) => recordMatchesSearch({ ...row, category: categoryId }, q));
   };
+
+  const autoMonthlyReportData = useMemo(() => {
+    const sourceRows = [
+      ['monthlynatal', natalityData],
+      ['pregnantwoman', pregnantWomenData],
+      ['lactatingwoman', lactatingWomenData],
+      ['infantfeeding', infantFeedingData],
+    ];
+    const derived = new Map();
+    const categoryDerivedSlugs = new Set([
+      'vit-a-6-11',
+      'vit-a-12-59',
+      'vit-a-postpartum',
+      'iron-pregnant',
+      'iron-adolescent',
+      'iron-lactating',
+      'iron-lbw',
+      'fic-9-12',
+      'newborn-babies-origin',
+      'exclusive-breastfeeding',
+    ]);
+    const getRecordDate = (record) => {
+      const raw = record._raw || record;
+      return raw.updated_at || raw.created_at || raw.date_of_registration || raw.dow || raw.month || '';
+    };
+    const getDateParts = (record) => {
+      const value = String(getRecordDate(record));
+      const match = value.match(/^(20\d{2})[-/](\d{1,2})/);
+      if (!match) return null;
+      const month = Number(match[2]);
+      const batch = Math.ceil(month / 3);
+      return {
+        year: Number(match[1]),
+        batch,
+        monthIndex: (month - 1) % 3,
+      };
+    };
+    const numericAmount = (value, maximum = Number.POSITIVE_INFINITY) => {
+      const normalized = String(value ?? '').trim();
+      if (!normalized) return 0;
+      const amount = Number(normalized);
+      return Number.isFinite(amount) && amount >= 0 && amount <= maximum ? amount : 0;
+    };
+    const add = (slug, record, amount = 1) => {
+      const date = getDateParts(record);
+      if (!date || date.year !== Number(REPORT_META.reportYear)) return;
+      const key = `${date.batch}:${slug}`;
+      const current = derived.get(key) || { m1M: 0, m1F: 0, m2M: 0, m2F: 0, m3M: 0, m3F: 0 };
+      const raw = record._raw || record;
+      const isMale = raw.sex === 'boys' || record.sex === 'Male';
+      const genderKey = `${date.monthIndex === 0 ? 'm1' : date.monthIndex === 1 ? 'm2' : 'm3'}${isMale ? 'M' : 'F'}`;
+      current[genderKey] += Number(amount) || 0;
+      derived.set(key, current);
+    };
+
+    sourceRows.forEach(([category, records]) => {
+      (records || []).forEach((record) => {
+        const raw = record._raw || record;
+        if (category === 'monthlynatal') {
+          if (raw.vitamin_a === '6–11 months old (100,000 IU)') add('vit-a-6-11', record, numericAmount(raw.vitamin_a_count));
+          if (raw.vitamin_a === '12–59 months old (200,000 IU)') add('vit-a-12-59', record, numericAmount(raw.vitamin_a_count));
+          if (raw.vitamin_a === 'Post-partum Women (200,000 IU)') add('vit-a-postpartum', record, numericAmount(raw.vitamin_a_count));
+          if (raw.iron_status || raw.iron_given) {
+            add('iron-lbw', record, numericAmount(raw.iron_status || raw.iron_given, 100));
+          }
+          if (raw.fully_immunized) add('fic-9-12', record);
+          if (raw.newborn_babies) add('newborn-babies-origin', record);
+        }
+        if (category === 'pregnantwoman') {
+          if (raw.iron_folic_acid_type === 'Pregnant (180 tabs)') add('iron-pregnant', record, numericAmount(raw.iron_folic_acid));
+          if (raw.iron_folic_acid_type === 'Adolescent Pregnant (180 tabs)') add('iron-adolescent', record, numericAmount(raw.iron_folic_acid));
+        }
+        if (category === 'lactatingwoman' && raw.iron_folic_acid) {
+          add('iron-lactating', record, numericAmount(raw.iron_folic_acid));
+        }
+        if (category === 'infantfeeding' && raw.feeding_3_month) {
+          add('exclusive-breastfeeding', record);
+        }
+      });
+    });
+
+    return monthlyReportData.map((row) => {
+      const next = { ...row };
+      const values = derived.get(`${Number(row.reportQuarter || 1)}:${row.slug}`);
+      if (row.isHeader) return next;
+      if (categoryDerivedSlugs.has(row.slug)) {
+        Object.assign(next, values || {
+          m1M: 0,
+          m1F: 0,
+          m2M: 0,
+          m2F: 0,
+          m3M: 0,
+          m3F: 0,
+        });
+      } else if (values) {
+        Object.assign(next, values);
+      } else {
+        return next;
+      }
+      next.tM = next.m1M + next.m2M + next.m3M;
+      next.tF = next.m1F + next.m2F + next.m3F;
+      return next;
+    });
+  }, [
+    monthlyReportData,
+    natalityData,
+    pregnantWomenData,
+    lactatingWomenData,
+    infantFeedingData,
+  ]);
 
   const filteredEnvironmental = useMemo(
     () => filterAdminTableData(environmentalSanitationData, searchTerm, 'environmental'),
-    [environmentalSanitationData, searchTerm]
+    [environmentalSanitationData, searchTerm, adminPurokFilter]
   );
   const filteredInfantFeeding = useMemo(
     () => filterAdminTableData(infantFeedingData, searchTerm, 'infantfeeding'),
-    [infantFeedingData, searchTerm]
+    [infantFeedingData, searchTerm, adminPurokFilter]
   );
   const filteredLactating = useMemo(
     () => filterAdminTableData(lactatingWomenData, searchTerm, 'lactatingwoman'),
-    [lactatingWomenData, searchTerm]
+    [lactatingWomenData, searchTerm, adminPurokFilter]
   );
   const filteredPregnant = useMemo(
     () => filterAdminTableData(pregnantWomenData, searchTerm, 'pregnantwoman'),
-    [pregnantWomenData, searchTerm]
+    [pregnantWomenData, searchTerm, adminPurokFilter]
   );
   const filteredNatality = useMemo(
     () => filterAdminTableData(natalityData, searchTerm, 'monthlynatal'),
-    [natalityData, searchTerm]
+    [natalityData, searchTerm, adminPurokFilter]
   );
 
   const residentActions = categoryCrud(STORAGE_KEYS.residents, 'residents', households);
@@ -1811,6 +1937,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     headRows,
     signatures = [],
     preview = false,
+    sectionRowLabels = [],
   }) => {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
       import('jspdf'),
@@ -1848,6 +1975,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       styles: { font: 'helvetica', fontSize: headers.length > 18 ? 5 : headers.length > 10 ? 6 : 8, cellPadding: 3, overflow: 'linebreak', halign: 'center' },
       bodyStyles: { halign: 'center', fontStyle: 'bold' },
       headStyles: { fillColor: [238, 234, 246], textColor: [35, 35, 45], fontStyle: 'bold', halign: 'center' },
+      didParseCell: (hookData) => {
+        if (
+          hookData.section === 'body' &&
+          sectionRowLabels.includes(String(hookData.row.raw?.[0] || ''))
+        ) {
+          hookData.cell.styles.fontStyle = 'bold';
+          hookData.cell.styles.fillColor = [255, 232, 243];
+          hookData.cell.styles.textColor = [45, 45, 58];
+        }
+      },
       horizontalPageBreak: headers.length > 18,
       horizontalPageBreakRepeat: 1,
     });
@@ -2358,72 +2495,109 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     'purok',
     'totalHH',
     'totalFamilies',
-    'garbageCompostPit',
-    'garbageCollect',
-    'garbageOthers',
-    'waterLevelI',
-    'waterLevelII',
-    'waterLevelIII',
+    'maleCount',
+    'femaleCount',
+    'totalPopulation',
+    'hhWithOccupation',
+    'toiletVS',
+    'toiletOP',
+    'toiletCommunal',
+    'toiletNone',
+    'waterSourceI',
+    'waterSourceII',
+    'waterSourceIII',
     'withoutPotableWater',
-    'toiletWithSanitary',
-    'toiletWithoutSanitary',
+    'electricityOwned',
+    'electricityConnected',
+    'vegetableGarden',
+    'herbalGarden',
+    'backyardPoultry',
+    'swine',
+    'fishPond',
+    'usesIodizedSalt',
+    'malunggayTree',
+    'garbageCollect',
+    'garbageCompostPit',
+    'garbageBurned',
+    'householdSmoker',
+    'householdNonsmoker',
+    'fatherReceivingRe',
     'iodizedSaltSariSari',
-    'fortifiedFoodsGrocery',
+    'iodizedSaltGrocery',
     'estBakery',
     'estCarenderia',
     'estRestaurant',
-    'notes',
+    'estHotelRest',
   ];
   const environmentalExportHeaders = [
     'Purok',
     'Total HH',
     'Total Families',
+    'Total HH Members (Male)',
+    'Total HH Members (Female)',
+    'Total Population',
+    'HH Member With Occupation',
+    'WS',
+    'OP',
+    'Communal',
+    'NO SANITARY TOILET',
+    'I',
+    'II',
+    'III',
+    'Without Potable Water Source',
+    'Electricity Owned',
+    'Electricity Connected',
+    'Vegetable Garden',
+    'Herbal Garden',
+    'Backyard Poultry/Livestock',
+    'Swine',
+    'Fish Pond',
+    'Uses Iodized Salt',
+    'With Malunggay Tree',
+    'Collected',
     'Compost Pit',
-    'Collect',
-    'Others',
-    'Level I',
-    'Level II',
-    'Level III',
-    'Without potable water source',
-    'w/ Sanitary Toilet',
-    'w/out Sanitary Toilet',
-    'Sari-Sari Store',
-    'Grocery Stores',
+    'Burned',
+    'HH W/ Smoker',
+    'HH W/ Non-Smoker',
+    'CH. NL Father',
+    'Sari-Sari Store Selling Iodized Salt',
+    'Grocery Store Selling Iodized Salt',
     'Bakery',
     'Carenderia',
     'Restaurant',
-    'Notes',
+    'Hotel',
   ];
 
   const environmentalHeadRows = [
     [
-      { label: 'Purok', rowSpan: 2 },
-      { label: 'Total HH', rowSpan: 2 },
-      { label: 'Total Families', rowSpan: 2 },
-      { label: 'Garbage Disposal', colSpan: 3 },
-      { label: 'Household Water Supply', colSpan: 4 },
-      { label: 'Household Toilet Facility', colSpan: 2 },
-      { label: 'Selling Iodized Salt', colSpan: 1 },
-      { label: 'Selling Fortified Foods', colSpan: 1 },
-      { label: 'Establishments Using Iodized Salt', colSpan: 3 },
-      { label: 'Notes', rowSpan: 2 },
-      ACTIONS_HEAD_CELL,
+      { label: 'PUROK', rowSpan: 2 },
+      { label: 'TOTAL NO. OF HH', rowSpan: 2 },
+      { label: 'TOTAL NO. OF FAMILIES', rowSpan: 2 },
+      { label: 'TOTAL NO. OF HH MEMBERS', colSpan: 2 },
+      { label: 'TOTAL POPULATION', rowSpan: 2 },
+      { label: 'NO. OF HH MEMBER WITH OCCUPATION', rowSpan: 2 },
+      { label: 'TOILET TYPE', colSpan: 4 },
+      { label: 'HOUSEHOLD WATER SUPPLY', colSpan: 4 },
+      { label: 'ELECTRICITY', colSpan: 2 },
+      { label: 'FOOD PRODUCTION', colSpan: 7 },
+      { label: 'GARBAGE DISPOSAL', colSpan: 3 },
+      { label: 'HEALTH METRICS', colSpan: 5 },
+      { label: 'ESTABLISHMENTS USING IODIZED SALT', colSpan: 4 },
     ],
     [
-      { label: 'Compost Pit' },
-      { label: 'Collect' },
-      { label: 'Others' },
-      { label: 'Level I' },
-      { label: 'Level II' },
-      { label: 'Level III' },
-      { label: 'Without potable water source' },
-      { label: 'w/ Sanitary Toilet' },
-      { label: 'w/out Sanitary Toilet' },
-      { label: 'Sari-Sari Store' },
-      { label: 'Grocery Stores' },
-      { label: 'Bakery' },
-      { label: 'Carenderia' },
-      { label: 'Restaurant' },
+      { label: 'MALE' }, { label: 'FEMALE' },
+      { label: 'WS' }, { label: 'OP' }, { label: 'COMMUNAL' }, { label: 'NO SANITARY TOILET' },
+      { label: 'I' }, { label: 'II' }, { label: 'III' },
+      { label: 'WITHOUT POTABLE WATER SOURCE' },
+      { label: 'OWNED' }, { label: 'CONNECT' },
+      { label: 'VEG. GARDEN' }, { label: 'HERBAL GARDEN' },
+      { label: 'BACKYARD POULTRY/LIVESTOCK' }, { label: 'SWINE' }, { label: 'FISH POND' },
+      { label: 'USES IODIZED SALT' }, { label: 'WITH MAL. TREE' },
+      { label: 'COLLECTED' }, { label: 'COMPOST PIT' }, { label: 'BURNED' },
+      { label: 'HH W/ SMOKER' }, { label: 'HH W/ NON-SMOKER' }, { label: 'CH. NL FATHER' },
+      { label: 'SARI-SARI STORE SELLING IODIZED SALT' },
+      { label: 'GROCERY STORE SELLING IODIZED SALT' },
+      { label: 'BAKERY' }, { label: 'CARENDERIA' }, { label: 'RESTAURANT' }, { label: 'HOTEL' },
     ],
   ];
 
@@ -2434,6 +2608,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'Pangalan ng Nanay', rowSpan: 2 },
       { label: 'Pangalan ng Bata', rowSpan: 2 },
       { label: 'Paraan ng Pagpapakain o Pagpapainom', colSpan: 6 },
+      { label: 'Iron with Folic Acid', colSpan: 2 },
       { label: 'Notes', rowSpan: 2 },
       ACTIONS_HEAD_CELL,
     ],
@@ -2464,6 +2639,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'PhilHealth', rowSpan: 2 },
       { label: '4Ps', rowSpan: 2 },
       { label: 'Measurements', colSpan: 4 },
+      { label: 'Given Iron with Folic Acid', colSpan: 2 },
       { label: 'Notes', rowSpan: 2 },
       ACTIONS_HEAD_CELL,
     ],
@@ -2475,6 +2651,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'Ht.' },
       { label: 'BMI' },
       { label: 'MUAC' },
+      { label: 'For' },
+      { label: 'Amount of Tabs' },
     ],
   ];
 
@@ -2494,7 +2672,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'Length (cm)', rowSpan: 2 },
       { label: 'Measurements', colSpan: 2 },
       { label: 'Nutrition Status', colSpan: 3 },
-      { label: 'Iron Given / Other Services', rowSpan: 2 },
+      { label: 'Iron Drops for LBW/Preterm Babies', rowSpan: 2 },
+      { label: 'Given Vitamin A', rowSpan: 2 },
+      { label: 'Vitamin A Quantity', rowSpan: 2 },
+      { label: 'Fully Immunized (9–12 months)', rowSpan: 2 },
+      { label: 'Newborn Babies', rowSpan: 2 },
       { label: 'Remarks', rowSpan: 2 },
       ACTIONS_HEAD_CELL,
     ],
@@ -2524,6 +2706,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       <AdminReportTable
         darkMode={darkMode}
         data={filteredResidentHouseholds}
+        purokFilter={adminPurokFilter}
+        onPurokFilterChange={setAdminPurokFilter}
         columnKeys={['purok', 'head', 'members', 'lastVisit', 'notes']}
         singleRowHeaders={['Purok', 'Household Head', 'Members', 'Last Visit', 'Notes']}
         reportHeader={
@@ -2561,11 +2745,46 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   );
 
   const EnvironmentalSanitation = () => {
-    const tableData = filteredEnvironmental.map((record) => ({ ...record }));
+    const numericKeys = [
+      'totalHH', 'totalFamilies', 'maleCount', 'femaleCount', 'totalPopulation', 'hhWithOccupation',
+      'toiletVS', 'toiletOP', 'toiletCommunal', 'toiletNone', 'waterSourceI', 'waterSourceII',
+      'waterSourceIII', 'withoutPotableWater',
+      'electricityOwned', 'electricityConnected', 'vegetableGarden', 'herbalGarden',
+      'backyardPoultry', 'swine', 'fishPond', 'usesIodizedSalt', 'malunggayTree',
+      'garbageCollect', 'garbageCompostPit', 'garbageBurned',
+      'householdSmoker', 'householdNonsmoker', 'fatherReceivingRe',
+      'iodizedSaltSariSari', 'iodizedSaltGrocery',
+      'estBakery', 'estCarenderia', 'estRestaurant', 'estHotelRest',
+    ];
+    const grouped = new Map();
+    filteredEnvironmental.forEach((record) => {
+      const purok = normalizePurokName(record.purok) || record.purok || 'Unassigned';
+      const current = grouped.get(purok) || {
+        purok,
+        id: record.id,
+        _raw: record._raw || record,
+      };
+      numericKeys.forEach((key) => {
+        current[key] = (current[key] || 0) + (Number(record[key]) || 0);
+      });
+      grouped.set(purok, current);
+    });
+    const tableData = Array.from({ length: 10 }, (_, index) => {
+      const normalizedPurok = `Purok ${index + 1}`;
+      const purok = `P-${index + 1}`;
+      const row = { ...(grouped.get(normalizedPurok) || {}), purok };
+      numericKeys.forEach((key) => { row[key] = row[key] || 0; });
+      return row;
+    });
+    const total = { purok: 'TOTAL' };
+    numericKeys.forEach((key) => { total[key] = tableData.reduce((sum, row) => sum + (Number(row[key]) || 0), 0); });
+    tableData.push(total);
     return (
       <AdminReportTable
         darkMode={darkMode}
         data={tableData}
+        purokFilter={adminPurokFilter}
+        onPurokFilterChange={setAdminPurokFilter}
         columnKeys={environmentalColumnKeys}
         headRows={environmentalHeadRows}
         reportHeader={
@@ -2579,26 +2798,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             ]}
           />
         }
-        getCellValue={(row, key) =>
-          [
-            'garbageCompostPit',
-            'garbageCollect',
-            'garbageOthers',
-            'waterLevelI',
-            'waterLevelII',
-            'waterLevelIII',
-            'withoutPotableWater',
-            'toiletWithSanitary',
-            'toiletWithoutSanitary',
-            'iodizedSaltSariSari',
-            'fortifiedFoodsGrocery',
-            'estBakery',
-            'estCarenderia',
-            'estRestaurant',
-          ].includes(key)
-            ? markCheck(row[key])
-            : row[key] ?? '—'
-        }
+        getCellValue={(row, key) => row[key] ?? 0}
+        showPurokFilter={false}
         emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
         minTableWidth={1100}
         exportActions={
@@ -2608,12 +2809,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             headers={environmentalExportHeaders}
             rows={tableData.map((record) =>
               environmentalColumnKeys.map((key) =>
-                [
-                  'garbageCompostPit', 'garbageCollect', 'garbageOthers', 'waterLevelI',
-                  'waterLevelII', 'waterLevelIII', 'withoutPotableWater', 'toiletWithSanitary',
-                  'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery',
-                  'estBakery', 'estCarenderia', 'estRestaurant',
-                ].includes(key) ? markCheck(record[key]) : record[key] ?? ''
+                record[key] ?? 0
               )
             )}
             preamble={[
@@ -2627,12 +2823,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               headers: environmentalExportHeaders,
               rows: tableData.map((record) =>
                 environmentalColumnKeys.map((key) =>
-                  [
-                    'garbageCompostPit', 'garbageCollect', 'garbageOthers', 'waterLevelI',
-                    'waterLevelII', 'waterLevelIII', 'withoutPotableWater', 'toiletWithSanitary',
-                    'toiletWithoutSanitary', 'iodizedSaltSariSari', 'fortifiedFoodsGrocery',
-                    'estBakery', 'estCarenderia', 'estRestaurant',
-                  ].includes(key) ? markCheck(record[key]) : record[key] ?? ''
+                  record[key] ?? 0
                 )
               ),
               preamble: [
@@ -2653,6 +2844,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredInfantFeeding}
+      purokFilter={adminPurokFilter}
+      onPurokFilterChange={setAdminPurokFilter}
       columnKeys={['no', 'purok', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5', 'notes']}
       headRows={infantFeedingHeadRows}
       legend="Code: E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding"
@@ -2717,17 +2910,19 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const lactatingExportHeaders = [
     'No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name',
     'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'PhilHealth',
-    '4Ps', 'Wt.', 'Ht.', 'BMI', 'MUAC', 'Date Delivered', 'Notes',
+    '4Ps', 'Wt.', 'Ht.', 'BMI', 'MUAC', 'Iron with Folic Acid', 'Date Delivered', 'Notes',
   ];
   const lactatingExportRows = filteredLactating.map((row) => [
     row.no, row.purok, row.dateRegistration, row.familySerial, row.lastName, row.firstName,
     row.middleName, row.spouseName, row.contactNumber, row.birthday, row.age, row.civilStatus,
-    row.philhealth, row.fourPs, row.wt, row.ht, row.bmi, row.muac, row.dateDelivered, row.notes,
+    row.philhealth, row.fourPs, row.wt, row.ht, row.bmi, row.muac, row.ironFolicAcid, row.dateDelivered, row.notes,
   ]);
   const LactatingWomen = () => (
     <AdminReportTable
       darkMode={darkMode}
       data={filteredLactating}
+      purokFilter={adminPurokFilter}
+      onPurokFilterChange={setAdminPurokFilter}
       columnKeys={[
         'no',
         'purok',
@@ -2747,6 +2942,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         'ht',
         'bmi',
         'muac',
+        'ironFolicAcid',
         'dateDelivered',
         'notes',
       ]}
@@ -2769,6 +2965,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         'Ht.',
         'BMI',
         'MUAC',
+        'Iron with Folic Acid',
         'Date Delivered',
         'Notes',
       ]}
@@ -2818,6 +3015,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredPregnant}
+      purokFilter={adminPurokFilter}
+      onPurokFilterChange={setAdminPurokFilter}
       columnKeys={[
         'no',
         'purok',
@@ -2839,6 +3038,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         'ht',
         'bmi',
         'muac',
+        'ironFolicAcidType',
+        'ironFolicAcid',
         'notes',
       ]}
       headRows={pregnantWomenHeadRows}
@@ -2860,7 +3061,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         <ReportExportActions
           title="Masterlist of Pregnant Women"
           fileName="alawihao-pregnant-women"
-          headers={['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Notes']}
+          headers={['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Given Iron with Folic Acid for', 'Amount of Tabs', 'Notes']}
           rows={filteredPregnant.map((row) => [
             row.no,
             row.purok,
@@ -2882,19 +3083,21 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.ht,
             row.bmi,
             row.muac,
+            row.ironFolicAcidType,
+            row.ironFolicAcid,
             row.notes,
           ])}
           signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
           onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-pregnant-women',
             title: 'Masterlist of Pregnant Women',
-            headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Notes'],
+            headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Given Iron with Folic Acid for', 'Amount of Tabs', 'Notes'],
             rows: filteredPregnant.map((row) => [
               row.no, row.purok, row.dateRegistration, row.familySerial, row.lastName,
               row.firstName, row.middleName, row.spouseName, row.contactNumber,
               row.birthday, row.age, row.civilStatus, row.lmp, row.expectedDelivery,
               row.philhealth, row.fourPs, row.wt, row.ht, row.bmi, row.muac,
-              row.notes,
+              row.ironFolicAcidType, row.ironFolicAcid, row.notes,
             ]),
             signatures,
             preview: options.preview,
@@ -2905,7 +3108,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         exportPdfFile({
           fileName: 'alawihao-pregnant-women',
           title: 'Masterlist of Pregnant Women',
-          headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Notes'],
+          headers: ['No.', 'Purok', 'Date Registration', 'Family Serial No.', 'Last Name', 'First Name', 'Middle Name', 'Spouse', 'Contact', 'Birthday', 'Age', 'Civil Status', 'LMP', 'Expected Delivery', 'PhilHealth', '4Ps', 'Wt', 'Ht', 'BMI', 'MUAC', 'Given Iron with Folic Acid for', 'Amount of Tabs', 'Notes'],
           rows: filteredPregnant.map((row) => [
             row.no,
             row.purok,
@@ -2927,6 +3130,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.ht,
             row.bmi,
             row.muac,
+            row.ironFolicAcidType,
+            row.ironFolicAcid,
             row.notes,
           ]),
         })
@@ -2939,18 +3144,22 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const natalityExportHeaders = [
     'No.', 'Purok', 'Mother', 'Mother Birthday', 'Mother Age', 'Child', 'Sex', 'DOB', 'Birth Weight', 'Follow-up Date',
     'AIM (Months)', 'Length (cm)', 'Wt (kg)', 'Height (cm)', 'W/A', 'H/A', 'W/L/H',
-    'Iron/Services', 'Remarks',
+    'Iron Drops for LBW/Preterm', 'Given Vitamin A', 'Vitamin A Quantity',
+    'Fully Immunized (9–12 months)', 'Newborn Babies', 'Remarks',
   ];
   const natalityExportRows = filteredNatality.map((row) => [
     row.no, row.purok, row.motherName, row.motherBirthday, row.motherAge, row.childName, row.sex, row.dob, row.birthWeight,
     row.dow, row.aim, row.length, row.weight, row.height, row.wA, row.hA, row.wLH,
-    row.ironStatus, row.remarks,
+    row.ironStatus, row.vitaminA, row.vitaminACount, row.fullyImmunized,
+    row.newbornBabies, row.remarks,
   ]);
   const MonthlyNatality = () => (
     <AdminReportTable
       darkMode={darkMode}
       data={filteredNatality}
-      columnKeys={['no', 'purok', 'motherName', 'motherBirthday', 'motherAge', 'childName', 'sex', 'dob', 'birthWeight', 'dow', 'aim', 'length', 'weight', 'height', 'wA', 'hA', 'wLH', 'ironStatus', 'remarks']}
+      purokFilter={adminPurokFilter}
+      onPurokFilterChange={setAdminPurokFilter}
+      columnKeys={['no', 'purok', 'motherName', 'motherBirthday', 'motherAge', 'childName', 'sex', 'dob', 'birthWeight', 'dow', 'aim', 'length', 'weight', 'height', 'wA', 'hA', 'wLH', 'ironStatus', 'vitaminA', 'vitaminACount', 'fullyImmunized', 'newbornBabies', 'remarks']}
       headRows={monthlyNatalityHeadRows}
       reportHeader={
         <ReportHeader
@@ -2991,22 +3200,46 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     />
   );
 
+  const monthlyReportBatchMonths = [
+    ['January', 'February', 'March'],
+    ['April', 'May', 'June'],
+    ['July', 'August', 'September'],
+    ['October', 'November', 'December'],
+  ][monthlyReportBatch - 1];
   const monthlyReportExportHeaders = [
-    'Indicator', 'M1 Male', 'M1 Female', 'M2 Male', 'M2 Female', 'M3 Male', 'M3 Female',
+    'Indicator',
+    `${monthlyReportBatchMonths[0]} Male`, `${monthlyReportBatchMonths[0]} Female`,
+    `${monthlyReportBatchMonths[1]} Male`, `${monthlyReportBatchMonths[1]} Female`,
+    `${monthlyReportBatchMonths[2]} Male`, `${monthlyReportBatchMonths[2]} Female`,
     'Total Male', 'Total Female',
   ];
-  const monthlyReportExportRows = monthlyReportData
-    .filter((row) => !row.isHeader)
+  const monthlyReportSectionRowLabels = [
+    'New Cases of',
+    'Given Vitamin A',
+    'No. Given Iron with Folic Acid',
+    'No. of Infants Given Iron Drops',
+    'National Immunization Program',
+    'Follow-up Weighing',
+    'Newborn Babies',
+    'Introduce Complementary Feeding',
+    'Breast Feeding IYCF Report',
+    'Deliveries',
+  ];
+  const monthlyReportExportRows = autoMonthlyReportData
+    .filter((row) => Number(row.reportQuarter || 1) === monthlyReportBatch)
     .map((row) => [
-      row.indicator || row.subcategory, row.m1M, row.m1F, row.m2M, row.m2F,
-      row.m3M, row.m3F, row.tM, row.tF,
+      row.indicator || row.subcategory,
+      ...(row.isHeader
+        ? ['', '', '', '', '', '', '', '']
+        : [row.m1M, row.m1F, row.m2M, row.m2F, row.m3M, row.m3F, row.tM, row.tF]),
     ]);
   const monthlyReportMonth = new Date().toLocaleString('en-US', { month: 'long' });
   const monthlyReportFileName = `ALAWIHAO- Monthly Report- ${monthlyReportMonth} ${REPORT_META.reportYear}`;
   const MonthlyReport = () => (
     <MonthlyReportTable
       darkMode={darkMode}
-      data={monthlyReportData}
+      data={autoMonthlyReportData}
+      onBatchChange={setMonthlyReportBatch}
       onSaveLine={(line) => requestAdminConfirmation(
         'Are you sure you want to save these indicator changes?',
         async () => {
@@ -3034,13 +3267,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         },
         { title: 'Delete indicator', confirmLabel: 'Delete', destructive: true }
       )}
-      onAddLine={(line) => {
+      onAddLines={(lines) => {
         requestAdminConfirmation(
-          `Save monthly data for "${line.indicator}"?`,
+          `Save monthly data for ${lines.length} indicators?`,
           async () => {
             try {
-              const savedLine = await saveMonthlyReportLine(line);
-              upsertRecord(STORAGE_KEYS.monthlyReport, savedLine);
+              const savedLines = await Promise.all(lines.map((line) => saveMonthlyReportLine(line)));
+              savedLines.forEach((savedLine) => upsertRecord(STORAGE_KEYS.monthlyReport, savedLine));
               refreshData();
             } catch (error) {
               console.error('Could not save monthly report data:', error);
@@ -3054,9 +3287,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         title: 'Essential Health Services Monthly Report',
         headers: monthlyReportExportHeaders,
         rows: monthlyReportExportRows,
+        sectionRowLabels: monthlyReportSectionRowLabels,
         preamble: [
           'SUB-TASK GROUP SOCIAL RECOVERY & SUB-TASK UNIT ESSENTIAL HEALTH SERVICES',
           `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
+          `Batch ${monthlyReportBatch}: ${monthlyReportBatchMonths.join(', ')}`,
         ],
       })}
       exportActions={
@@ -3065,9 +3300,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           fileName={monthlyReportFileName}
           headers={monthlyReportExportHeaders}
           rows={monthlyReportExportRows}
+          sectionRowLabels={monthlyReportSectionRowLabels}
           preamble={[
             'SUB-TASK GROUP SOCIAL RECOVERY & SUB-TASK UNIT ESSENTIAL HEALTH SERVICES',
             `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
+            `Batch ${monthlyReportBatch}: ${monthlyReportBatchMonths.join(', ')}`,
           ]}
           signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
           enableEmail
@@ -3076,11 +3313,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             title: 'Essential Health Services Monthly Report',
             headers: monthlyReportExportHeaders,
             rows: monthlyReportExportRows,
+            sectionRowLabels: monthlyReportSectionRowLabels,
             signatures,
             preview: options.preview,
             preamble: [
               'SUB-TASK GROUP SOCIAL RECOVERY & SUB-TASK UNIT ESSENTIAL HEALTH SERVICES',
               `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
+              `Batch ${monthlyReportBatch}: ${monthlyReportBatchMonths.join(', ')}`,
             ],
           })}
           onSendEmail={async (emailDetails) => {

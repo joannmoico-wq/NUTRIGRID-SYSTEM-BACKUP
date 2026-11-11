@@ -25,7 +25,20 @@ const ResidentNotes = () => (
 );
 
 const EnvironmentalNotes = () => (
-  <FormNotes title="Environmental Sanitation" entries={[['HH', 'Household']]} />
+  <FormNotes
+    title="Environmental Sanitation"
+    entries={[
+      ['HH', 'Household'],
+      ['POP.', 'Population'],
+      ['WS', 'Water-Sealed toilet'],
+      ['OP', 'Open Pit toilet'],
+      ['VEG.', 'Vegetable'],
+      ['LS', 'Livestock'],
+      ['MAL.', 'Fruit Bearing Trees / Mahogany / Malapapaya'],
+      ['CH.', 'Children or Child'],
+      ['RE.', 'Rel. / Relation (Relasyon sa kapamilya o Head of the Family)'],
+    ]}
+  />
 );
 
 const WomenNotes = () => (
@@ -48,6 +61,8 @@ const NatalityNotes = () => (
       ['W/A', 'Weight for Age'],
       ['H/A', 'Height for Age'],
       ['W/L/H', 'Weight for Length/Height'],
+      ['Vitamin A Dosage Equivalents', '100,000 IU = 30,000 mcg (micrograms) = 30 mg (milligrams); 200,000 IU = 60,000 mcg (micrograms) = 60 mg (milligrams)'],
+      ['Conversion Formula', '1 IU of Vitamin A = 0.3 mcg Retinol (0.0003 mg)'],
     ]}
   />
 );
@@ -144,6 +159,7 @@ const OptionalPhotoField = ({ value, onChange, color }) => {
             <X size={16} />
           </button>
         </div>
+
       )}
       <input
         ref={inputRef}
@@ -174,6 +190,27 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
     purok: '',
     total_hh: '',
     total_families: '',
+    male_count: '',
+    female_count: '',
+    total_population: '',
+    hh_with_occupation: '',
+    electricity_owned: false,
+    electricity_connected: false,
+    has_veg_garden: false,
+    has_herbal_garden: false,
+    has_backyard_poultry: false,
+    has_swine: false,
+    has_fish_pond: false,
+    uses_iodized_salt: false,
+    has_malunggay_tree: false,
+    child_re: false,
+    father_re: false,
+    household_nonsmoker: false,
+    household_smoker: false,
+    water_source: '',
+    toilet_type: '',
+    toilet_communal: false,
+    toilet_none: false,
     compost_pit: false,
     garbage_collect: false,
     garbage_others: false,
@@ -187,9 +224,14 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
     selling_iodized_grocery: false,
     selling_iodized_bakery: false,
     selling_iodized_carenderia: false,
+    selling_iodized_restaurant: false,
+    selling_iodized_hotel: false,
     selling_fortified_grocery: false,
     selling_fortified_bakery: false,
     selling_fortified_restaurant: false,
+    selling_fortified_sari: false,
+    selling_fortified_carenderia: false,
+    selling_fortified_hotel: false,
     establishments_hospital: false,
     establishments_hotel: false,
     establishments_restaurant: false,
@@ -295,6 +337,121 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
         />
       </div>
 
+      <div className="grid grid-cols-2 gap-4">
+        {[
+          ['male_count', 'Male'],
+          ['female_count', 'Female'],
+          ['total_population', 'Total Population'],
+          ['hh_with_occupation', 'HH with Occupation'],
+        ].map(([key, label]) => (
+          <label key={key} className="block text-sm font-semibold text-gray-700">
+            {label}
+            <input
+              type="number"
+              min="0"
+              value={formData[key]}
+              onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
+              className="mt-2 w-full rounded-lg border-2 border-blue-300 px-4 py-2 focus:ring-2 focus:ring-blue-500"
+            />
+          </label>
+        ))}
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        <div className="rounded-lg border-2 border-cyan-200 bg-cyan-50 p-4">
+          <h3 className="mb-3 font-semibold text-cyan-900">Water Source</h3>
+          <div className="space-y-2">
+            {[
+              ['water_level_i', 'Level I'],
+              ['water_level_ii', 'Level II'],
+              ['water_level_iii', 'Level III'],
+              ['without_potable_water', 'Without potable water source'],
+            ].map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={formData[key]}
+                  onChange={(e) => setFormData({
+                    ...formData,
+                    [key]: e.target.checked,
+                    ...(key === 'water_level_i' ? { water_source: 'Level I' } : {}),
+                    ...(key === 'water_level_ii' ? { water_source: 'Level II' } : {}),
+                    ...(key === 'water_level_iii' ? { water_source: 'Level III' } : {}),
+                  })}
+                  className="h-5 w-5 rounded text-cyan-600"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-lg border-2 border-yellow-200 bg-yellow-50 p-4">
+          <h3 className="mb-3 font-semibold text-yellow-900">Electricity</h3>
+          <div className="space-y-2">
+            {[
+              ['electricity_owned', 'Electricity owned'],
+              ['electricity_connected', 'Electricity connected'],
+            ].map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={formData[key]}
+                  onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })}
+                  className="h-5 w-5 rounded text-yellow-600"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-lg border-2 border-purple-200 bg-purple-50 p-4">
+          <h3 className="mb-3 font-semibold text-purple-900">Toilet Type</h3>
+          <div className="space-y-2">
+            {[
+              ['toilet_sanitary', 'WS'],
+              ['toilet_not_sanitary', 'OP'],
+              ['toilet_communal', 'Communal'],
+              ['toilet_none', 'No Sanitary toilet'],
+            ].map(([key, label]) => (
+              <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={formData[key]}
+                  onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })}
+                  className="h-5 w-5 rounded text-purple-600"
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="rounded-lg border-2 border-green-200 bg-green-50 p-4">
+        <h3 className="mb-3 font-semibold text-green-900">Food Production</h3>
+        <div className="grid grid-cols-2 gap-2">
+          {[
+            ['has_veg_garden', 'Vegetable garden'],
+            ['has_herbal_garden', 'Herbal garden'],
+            ['has_backyard_poultry', 'Backyard poultry / livestock'],
+            ['has_swine', 'Swine'],
+            ['has_fish_pond', 'Fish pond'],
+            ['uses_iodized_salt', 'Uses iodized salt'],
+            ['has_malunggay_tree', 'With malunggay tree'],
+          ].map(([key, label]) => (
+            <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={formData[key]}
+                onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })}
+                className="h-5 w-5 rounded text-green-600"
+              />
+              {label}
+            </label>
+          ))}
+        </div>
+      </div>
+
       {/* Garbage Disposal Section */}
       <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
         <h3 className="font-semibold text-blue-900 mb-3">🗑️ Garbage Disposal</h3>
@@ -324,75 +481,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
               onChange={(e) => setFormData({...formData, garbage_others: e.target.checked})}
               className="w-5 h-5 text-blue-600 rounded"
             />
-            <span className="text-gray-700">Others</span>
-          </label>
-        </div>
-      </div>
-
-      {/* Water Supply Section */}
-      <div className="bg-green-50 p-4 rounded-lg border-2 border-green-200">
-        <h3 className="font-semibold text-green-900 mb-3">💧 Household Water Supply</h3>
-        <div className="space-y-2">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.water_level_i}
-              onChange={(e) => setFormData({...formData, water_level_i: e.target.checked})}
-              className="w-5 h-5 text-green-600 rounded"
-            />
-            <span className="text-gray-700">Level I (Piped Water)</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.water_level_ii}
-              onChange={(e) => setFormData({...formData, water_level_ii: e.target.checked})}
-              className="w-5 h-5 text-green-600 rounded"
-            />
-            <span className="text-gray-700">Level II (Dug Well)</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.water_level_iii}
-              onChange={(e) => setFormData({...formData, water_level_iii: e.target.checked})}
-              className="w-5 h-5 text-green-600 rounded"
-            />
-            <span className="text-gray-700">Level III (Other)</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.without_potable_water}
-              onChange={(e) => setFormData({...formData, without_potable_water: e.target.checked})}
-              className="w-5 h-5 text-green-600 rounded"
-            />
-            <span className="text-gray-700">Without potable water source</span>
-          </label>
-        </div>
-      </div>
-
-      {/* Toilet Facility Section */}
-      <div className="bg-purple-50 p-4 rounded-lg border-2 border-purple-200">
-        <h3 className="font-semibold text-purple-900 mb-3">🚽 Household Toilet Facility</h3>
-        <div className="space-y-2">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.toilet_sanitary}
-              onChange={(e) => setFormData({...formData, toilet_sanitary: e.target.checked})}
-              className="w-5 h-5 text-purple-600 rounded"
-            />
-            <span className="text-gray-700">With Sanitary Toilet</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.toilet_not_sanitary}
-              onChange={(e) => setFormData({...formData, toilet_not_sanitary: e.target.checked})}
-              className="w-5 h-5 text-purple-600 rounded"
-            />
-            <span className="text-gray-700">Without Sanitary Toilet</span>
+            <span className="text-gray-700">Burned</span>
           </label>
         </div>
       </div>
@@ -410,33 +499,18 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             />
             <span className="text-gray-700">Sari-Sari Store</span>
           </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.selling_iodized_grocery}
-              onChange={(e) => setFormData({...formData, selling_iodized_grocery: e.target.checked})}
-              className="w-5 h-5 text-yellow-600 rounded"
-            />
-            <span className="text-gray-700">Grocery Stores</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.selling_iodized_bakery}
-              onChange={(e) => setFormData({...formData, selling_iodized_bakery: e.target.checked})}
-              className="w-5 h-5 text-yellow-600 rounded"
-            />
-            <span className="text-gray-700">Bakery</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.selling_iodized_carenderia}
-              onChange={(e) => setFormData({...formData, selling_iodized_carenderia: e.target.checked})}
-              className="w-5 h-5 text-yellow-600 rounded"
-            />
-            <span className="text-gray-700">Carenderia</span>
-          </label>
+          {[
+            ['selling_iodized_grocery', 'Grocery Stores'],
+            ['selling_iodized_bakery', 'Bakery'],
+            ['selling_iodized_carenderia', 'Carenderia'],
+            ['selling_iodized_restaurant', 'Restaurant'],
+            ['selling_iodized_hotel', 'Hotel'],
+          ].map(([key, label]) => (
+            <label key={key} className="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" checked={formData[key]} onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })} className="w-5 h-5 text-yellow-600 rounded" />
+              <span className="text-gray-700">{label}</span>
+            </label>
+          ))}
         </div>
       </div>
 
@@ -453,24 +527,18 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             />
             <span className="text-gray-700">Grocery Stores</span>
           </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.selling_fortified_bakery}
-              onChange={(e) => setFormData({...formData, selling_fortified_bakery: e.target.checked})}
-              className="w-5 h-5 text-orange-600 rounded"
-            />
-            <span className="text-gray-700">Bakery</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.selling_fortified_restaurant}
-              onChange={(e) => setFormData({...formData, selling_fortified_restaurant: e.target.checked})}
-              className="w-5 h-5 text-orange-600 rounded"
-            />
-            <span className="text-gray-700">Restaurant</span>
-          </label>
+          {[
+            ['selling_fortified_bakery', 'Bakery'],
+            ['selling_fortified_restaurant', 'Restaurant'],
+            ['selling_fortified_sari', 'Sari-Sari Store'],
+            ['selling_fortified_carenderia', 'Carenderia'],
+            ['selling_fortified_hotel', 'Hotel'],
+          ].map(([key, label]) => (
+            <label key={key} className="flex items-center gap-3 cursor-pointer">
+              <input type="checkbox" checked={formData[key]} onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })} className="w-5 h-5 text-orange-600 rounded" />
+              <span className="text-gray-700">{label}</span>
+            </label>
+          ))}
         </div>
       </div>
 
@@ -478,69 +546,24 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       <div className="bg-pink-50 p-4 rounded-lg border-2 border-pink-200">
         <h3 className="font-semibold text-pink-900 mb-3">🏢 Establishments Using Iodized Salt</h3>
         <div className="space-y-2">
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.establishments_hospital}
-              onChange={(e) => setFormData({...formData, establishments_hospital: e.target.checked})}
-              className="w-5 h-5 text-pink-600 rounded"
-            />
-            <span className="text-gray-700">Hospital</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.establishments_hotel}
-              onChange={(e) => setFormData({...formData, establishments_hotel: e.target.checked})}
-              className="w-5 h-5 text-pink-600 rounded"
-            />
-            <span className="text-gray-700">Hotel & Restaurant</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.establishments_restaurant}
-              onChange={(e) => setFormData({...formData, establishments_restaurant: e.target.checked})}
-              className="w-5 h-5 text-pink-600 rounded"
-            />
-            <span className="text-gray-700">Restaurant</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.establishments_carenderia}
-              onChange={(e) => setFormData({...formData, establishments_carenderia: e.target.checked})}
-              className="w-5 h-5 text-pink-600 rounded"
-            />
-            <span className="text-gray-700">Carenderia</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.establishments_bakery}
-              onChange={(e) => setFormData({...formData, establishments_bakery: e.target.checked})}
-              className="w-5 h-5 text-pink-600 rounded"
-            />
-            <span className="text-gray-700">Bakery</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.establishments_grocery}
-              onChange={(e) => setFormData({...formData, establishments_grocery: e.target.checked})}
-              className="w-5 h-5 text-pink-600 rounded"
-            />
-            <span className="text-gray-700">Grocery Store</span>
-          </label>
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={formData.establishments_sari}
-              onChange={(e) => setFormData({...formData, establishments_sari: e.target.checked})}
-              className="w-5 h-5 text-pink-600 rounded"
-            />
-            <span className="text-gray-700">Sari-Sari Store</span>
-          </label>
+          {[
+            ['establishments_hotel', 'Hotel'],
+            ['establishments_restaurant', 'Restaurant'],
+            ['establishments_carenderia', 'Carenderia'],
+            ['establishments_bakery', 'Bakery'],
+            ['establishments_grocery', 'Grocery Store'],
+            ['establishments_sari', 'Sari-Sari Store'],
+          ].map(([key, label]) => (
+            <label key={key} className="flex items-center gap-3 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={formData[key]}
+                onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })}
+                className="w-5 h-5 text-pink-600 rounded"
+              />
+              <span className="text-gray-700">{label}</span>
+            </label>
+          ))}
         </div>
       </div>
 
@@ -807,6 +830,8 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
     height: '',
     bmi: '',
     muac: '',
+    iron_folic_acid: '',
+    iron_folic_acid_type: '',
     notes: '',
     visited_by: userName,
     ...initialData,
@@ -895,6 +920,36 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Middle Name</label>
           <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} className={fieldClass} />
+        </div>
+      </div>
+
+      <div className="space-y-3">
+        <div>
+          <label className="block text-sm font-semibold leading-tight text-gray-700 mb-2">
+            Given Iron with Folic Acid for:
+          </label>
+          <select
+            value={formData.iron_folic_acid_type}
+            onChange={(e) => updateField('iron_folic_acid_type', e.target.value)}
+            className={fieldClass}
+          >
+            <option value="">Select...</option>
+            <option value="Pregnant (180 tabs)">Pregnant (180 tabs)</option>
+            <option value="Adolescent Pregnant (180 tabs)">Adolescent Pregnant (180 tabs)</option>
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-semibold leading-tight text-gray-700 mb-2">
+            Amount of Tabs
+          </label>
+          <input
+            type="text"
+            value={formData.iron_folic_acid}
+            onChange={(e) => updateField('iron_folic_acid', e.target.value)}
+            className={fieldClass}
+            inputMode="numeric"
+            placeholder="Enter amount of tabs"
+          />
         </div>
       </div>
 
@@ -1027,6 +1082,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
     height: '',
     bmi: '',
     muac: '',
+    iron_folic_acid: '',
     date_delivered: '',
     notes: '',
     visited_by: userName,
@@ -1113,6 +1169,19 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
           <label className="block text-sm font-semibold text-gray-700 mb-2">Middle Name</label>
           <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} className={fieldClass} />
         </div>
+      </div>
+
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">
+          No. Given Iron with Folic Acid for Lactating Women
+        </label>
+        <input
+          type="text"
+          value={formData.iron_folic_acid}
+          onChange={(e) => updateField('iron_folic_acid', e.target.value)}
+          className={fieldClass}
+          placeholder="(90 tabs)"
+        />
       </div>
 
       <div>
@@ -1240,6 +1309,10 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
       h_a: '',
       w_l_h: '',
       iron_status: '',
+      vitamin_a: '',
+      vitamin_a_count: '',
+      fully_immunized: false,
+      newborn_babies: false,
       remarks: '',
       visited_by: userName,
       ...initialData,
@@ -1328,18 +1401,20 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3">
+      <div className="space-y-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Mother *</label>
           <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} />
         </div>
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Mother Birthday *</label>
-          <input type="date" required max={new Date().toISOString().split('T')[0]} value={formData.mother_birthday} onChange={(e) => updateField('mother_birthday', e.target.value)} className={fieldClass} />
-        </div>
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Mother Age</label>
-          <input type="number" readOnly value={formData.mother_age} className={`${fieldClass} bg-gray-50`} placeholder="Auto-calculated" />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="min-w-0">
+            <label className="block min-h-5 text-sm font-semibold leading-tight text-gray-700 mb-2">Mother Birthday *</label>
+            <input type="date" required max={new Date().toISOString().split('T')[0]} value={formData.mother_birthday} onChange={(e) => updateField('mother_birthday', e.target.value)} className={fieldClass} />
+          </div>
+          <div className="min-w-0">
+            <label className="block min-h-5 text-sm font-semibold leading-tight text-gray-700 mb-2">Mother Age</label>
+            <input type="number" readOnly value={formData.mother_age} className={`${fieldClass} bg-gray-50`} placeholder="Auto-calculated" />
+          </div>
         </div>
       </div>
 
@@ -1423,10 +1498,54 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Iron Given / Other Services</label>
-          <input type="text" value={formData.iron_status} onChange={(e) => updateField('iron_status', e.target.value)} className={fieldClass} placeholder="e.g. Iron drops given" />
+          <label className="block text-sm font-semibold text-gray-700 mb-2">
+            No. of Infants Given Iron Drops for LBW/Preterm Babies
+          </label>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={formData.iron_status}
+            onChange={(e) => updateField('iron_status', e.target.value)}
+            className={fieldClass}
+            placeholder="Enter number of babies"
+          />
+          <label className="mt-4 flex items-start gap-3 px-1 py-1 text-sm font-semibold leading-tight text-gray-700">
+            <input
+              type="checkbox"
+              checked={Boolean(formData.newborn_babies)}
+              onChange={(e) => updateField('newborn_babies', e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-amber-500"
+            />
+            <span>Newborn Babies</span>
+          </label>
+          <label className="mt-3 flex items-start gap-3 px-1 py-1 text-sm font-semibold leading-tight text-gray-700">
+            <input
+              type="checkbox"
+              checked={Boolean(formData.fully_immunized)}
+              onChange={(e) => updateField('fully_immunized', e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 accent-amber-500"
+            />
+            <span>Fully Immunized Children (9–12 months)</span>
+          </label>
         </div>
         <div>
+          <label className="block text-sm font-semibold text-gray-700 mb-2">Given Vitamin A</label>
+          <select value={formData.vitamin_a} onChange={(e) => updateField('vitamin_a', e.target.value)} className={fieldClass}>
+            <option value="">—</option>
+            <option value="6–11 months old (100,000 IU)">6–11 months old (100,000 IU)</option>
+            <option value="12–59 months old (200,000 IU)">12–59 months old (200,000 IU)</option>
+            <option value="Post-partum Women (200,000 IU)">Post-partum Women (200,000 IU)</option>
+          </select>
+          <input
+            type="text"
+            value={formData.vitamin_a_count}
+            onChange={(e) => updateField('vitamin_a_count', e.target.value)}
+            className={`${fieldClass} mt-2`}
+            placeholder="Enter number given"
+          />
+        </div>
+        <div className="sm:col-span-2">
           <label className="block text-sm font-semibold text-gray-700 mb-2">Remarks</label>
           <textarea rows="1" value={formData.remarks} onChange={(e) => updateField('remarks', e.target.value)} className={`${fieldClass} resize-none`} placeholder="Additional notes" />
         </div>

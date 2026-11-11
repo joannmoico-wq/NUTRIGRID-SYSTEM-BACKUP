@@ -1,9 +1,8 @@
-import { useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { supabase } from '../utils/supabaseClient';
 import { ChevronLeft, CheckCircle2 } from 'lucide-react';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const CODE_LENGTH = 6; // Supabase email codes are 6 digits
 
 const PINK = '#f08c8c';
 const BUTTON_PINK = '#f09a9a';
@@ -86,17 +85,25 @@ const FieldBox = ({ label, ...inputProps }) => (
 );
 
 export default function ForgotPassword({ onBack, onDone, initialEmail = '' }) {
-  const [step, setStep] = useState('email'); // email | code | reset | done
+  const [step, setStep] = useState('email'); // email | link-sent | reset | done
   const [email, setEmail] = useState(initialEmail);
-  const [digits, setDigits] = useState(Array(CODE_LENGTH).fill(''));
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const inputs = useRef([]);
-  const code = digits.join('');
 
-  const sendCode = async (e) => {
+  useEffect(() => {
+    const recoveryLink = `${window.location.hash}${window.location.search}`.includes('type=recovery') ||
+      window.location.hash.includes('access_token=');
+    if (recoveryLink) setStep('reset');
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'PASSWORD_RECOVERY') setStep('reset');
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const sendResetLink = async (e) => {
     e?.preventDefault();
     const address = email.trim().toLowerCase();
     if (!EMAIL_PATTERN.test(address)) {
@@ -105,33 +112,16 @@ export default function ForgotPassword({ onBack, onDone, initialEmail = '' }) {
     }
     setBusy(true);
     setMessage('');
-    const { error } = await supabase.auth.resetPasswordForEmail(address);
+    const { error } = await supabase.auth.resetPasswordForEmail(address, {
+      redirectTo: window.location.origin,
+    });
     setBusy(false);
     if (error) {
       setMessage(error.message);
       return;
     }
     setEmail(address);
-    setDigits(Array(CODE_LENGTH).fill(''));
-    setStep('code');
-    setTimeout(() => inputs.current[0]?.focus(), 50);
-  };
-
-  const verifyCode = async (e) => {
-    e.preventDefault();
-    if (code.length !== CODE_LENGTH) {
-      setMessage(`Enter the ${CODE_LENGTH}-digit code.`);
-      return;
-    }
-    setBusy(true);
-    setMessage('');
-    const { error } = await supabase.auth.verifyOtp({ email, token: code, type: 'recovery' });
-    setBusy(false);
-    if (error) {
-      setMessage('The code is wrong or has expired. Try again or resend.');
-      return;
-    }
-    setStep('reset');
+    setStep('link-sent');
   };
 
   const savePassword = async (e) => {
@@ -156,28 +146,6 @@ export default function ForgotPassword({ onBack, onDone, initialEmail = '' }) {
     setStep('done');
   };
 
-  const setDigit = (index, value) => {
-    const clean = value.replace(/\D/g, '');
-    const next = [...digits];
-    if (!clean) {
-      next[index] = '';
-      setDigits(next);
-      return;
-    }
-    // Supports typing one digit or pasting the full code
-    clean.slice(0, CODE_LENGTH - index).split('').forEach((ch, i) => {
-      next[index + i] = ch;
-    });
-    setDigits(next);
-    inputs.current[Math.min(index + clean.length, CODE_LENGTH - 1)]?.focus();
-  };
-
-  const onDigitKeyDown = (index, e) => {
-    if (e.key === 'Backspace' && !digits[index] && index > 0) {
-      inputs.current[index - 1]?.focus();
-    }
-  };
-
   const Message = () =>
     message ? <p className="mt-4 text-center text-xs text-rose-500">{message}</p> : null;
 
@@ -185,7 +153,7 @@ export default function ForgotPassword({ onBack, onDone, initialEmail = '' }) {
     <main className="flex min-h-screen items-center justify-center bg-gradient-to-b from-slate-50 to-white p-4">
       <div className="flex h-[600px] w-full max-w-xs flex-col rounded-[2.5rem] bg-white p-6 shadow-xl ring-1 ring-slate-200">
         {step === 'email' && (
-          <form onSubmit={sendCode} className="flex flex-1 flex-col">
+          <form onSubmit={sendResetLink} className="flex flex-1 flex-col">
             <Header title="Forgot Password" onBack={onBack} />
             <IconCircle>
               <LockIcon badge="question" />
@@ -193,7 +161,7 @@ export default function ForgotPassword({ onBack, onDone, initialEmail = '' }) {
             <p className="mt-8 text-center text-sm leading-relaxed text-slate-800">
               Please Enter Your Email Address To
               <br />
-              Receive a Verification Code.
+              Receive a password reset link.
             </p>
             <div className="mt-8">
               <FieldBox
@@ -207,9 +175,6 @@ export default function ForgotPassword({ onBack, onDone, initialEmail = '' }) {
             </div>
             <Message />
             <div className="mt-auto space-y-6">
-              <p className="text-center text-xs underline" style={{ color: PINK }}>
-                Try another way
-              </p>
               <PinkButton type="submit" disabled={busy}>
                 {busy ? 'Sending...' : 'Send'}
               </PinkButton>
@@ -217,56 +182,29 @@ export default function ForgotPassword({ onBack, onDone, initialEmail = '' }) {
           </form>
         )}
 
-        {step === 'code' && (
-          <form onSubmit={verifyCode} className="flex flex-1 flex-col">
-            <Header title="Verify Your Email" onBack={() => setStep('email')} />
+        {step === 'link-sent' && (
+          <div className="flex flex-1 flex-col">
+            <Header title="Check Your Email" onBack={() => setStep('email')} />
             <IconCircle>
               <MailIcon />
             </IconCircle>
             <p className="mt-8 text-center text-sm leading-relaxed text-slate-800">
-              Please Enter The {CODE_LENGTH} Digit Code Sent To
+              Open the password reset link sent to
               <br />
               {email}
             </p>
-            <div className="mt-6 flex justify-center gap-1.5">
-              {digits.map((digit, index) => (
-                <input
-                  key={index}
-                  ref={(el) => (inputs.current[index] = el)}
-                  value={digit}
-                  inputMode="numeric"
-                  autoComplete={index === 0 ? 'one-time-code' : 'off'}
-                  maxLength={CODE_LENGTH}
-                  onChange={(e) => setDigit(index, e.target.value)}
-                  onKeyDown={(e) => onDigitKeyDown(index, e)}
-                  aria-label={`Digit ${index + 1}`}
-                  className="h-11 w-9 rounded-lg border border-slate-800 bg-white text-center text-lg text-slate-900 outline-none focus:border-pink-400"
-                />
-              ))}
-            </div>
-            <div className="mt-6 text-center">
-              <button
-                type="button"
-                onClick={sendCode}
-                disabled={busy}
-                className="text-xs underline disabled:opacity-60"
-                style={{ color: PINK }}
-              >
-                Resend Code
-              </button>
-            </div>
             <Message />
-            <div className="mt-auto">
-              <PinkButton type="submit" disabled={busy}>
-                {busy ? 'Verifying...' : 'Verify'}
+            <div className="mt-auto space-y-4">
+              <PinkButton type="button" onClick={() => setStep('email')}>
+                Send Again
               </PinkButton>
             </div>
-          </form>
+          </div>
         )}
 
         {step === 'reset' && (
           <form onSubmit={savePassword} className="flex flex-1 flex-col">
-            <Header title="Create New Password" onBack={() => setStep('code')} />
+            <Header title="Create New Password" onBack={() => setStep('email')} />
             <IconCircle>
               <LockIcon badge="check" />
             </IconCircle>
