@@ -1389,7 +1389,7 @@ const HomeScreen = ({
 
     const loadSharedPurokCounts = async () => {
       if (!navigator.onLine) {
-        if (active && !cachedCounts) setSharedPurokStatus('offline');
+        if (active && !cachedCounts?.length) setSharedPurokStatus('offline');
         return;
       }
 
@@ -1402,12 +1402,17 @@ const HomeScreen = ({
         }
       } catch (error) {
         console.error('Could not load shared Purok totals from Supabase:', error);
-        if (active && !cachedCounts) setSharedPurokStatus('error');
+        if (active && !cachedCounts?.length) setSharedPurokStatus('error');
       }
     };
 
     void loadSharedPurokCounts();
     window.addEventListener('online', loadSharedPurokCounts);
+    window.addEventListener('focus', loadSharedPurokCounts);
+    const handleVisibilityChange = () => {
+      if (!document.hidden) void loadSharedPurokCounts();
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     const channel = supabase
       .channel('pwa-shared-purok-counts')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, loadSharedPurokCounts)
@@ -1416,6 +1421,8 @@ const HomeScreen = ({
     return () => {
       active = false;
       window.removeEventListener('online', loadSharedPurokCounts);
+      window.removeEventListener('focus', loadSharedPurokCounts);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       void supabase.removeChannel(channel);
     };
   }, [sharedPurokMonth]);
@@ -1810,6 +1817,8 @@ const HomeScreen = ({
                 <p className="py-5 text-center text-[9px] leading-tight text-gray-500">Loading Purok data…</p>
               ) : sharedPurokStatus === 'error' ? (
                 <p className="py-5 text-center text-[9px] leading-tight text-red-600">Shared data unavailable for this month.</p>
+              ) : sharedPurokStatus === 'offline' ? (
+                <p className="py-5 text-center text-[9px] leading-tight text-gray-500">Connect to the internet to load shared Purok data.</p>
               ) : (
                 <p className="py-5 text-center text-[9px] leading-tight text-gray-500">No household records for this month.</p>
               )}

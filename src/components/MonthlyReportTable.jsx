@@ -56,13 +56,15 @@ export default function MonthlyReportTable({
   onGenerateReport,
   exportActions,
   onBatchChange,
+  selectedBatch,
 }) {
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
   const [selectedYear, setSelectedYear] = useState(
     () => data.find((row) => row.reportYear)?.reportYear || new Date().getFullYear()
   );
-  const [selectedQuarter, setSelectedQuarter] = useState(1);
+  const [internalQuarter, setInternalQuarter] = useState(1);
+  const selectedQuarter = selectedBatch ?? internalQuarter;
 
   const years = useMemo(
     () => [...new Set(data.map((row) => Number(row.reportYear)).filter(Boolean))].sort((a, b) => b - a),
@@ -174,7 +176,7 @@ export default function MonthlyReportTable({
               value={selectedQuarter}
               onChange={(e) => {
                 const batch = Number(e.target.value);
-                setSelectedQuarter(batch);
+                if (selectedBatch === undefined) setInternalQuarter(batch);
                 onBatchChange?.(batch);
               }}
               className="ml-1 rounded-lg border border-gray-200 px-2 py-1 text-xs dark:border-gray-600 dark:bg-[#1e1e30]"

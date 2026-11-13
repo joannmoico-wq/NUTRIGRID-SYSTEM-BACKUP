@@ -27,7 +27,14 @@ const RECORD_TABLES = {
   environmental: {
     table: 'environmental_sanitation',
     idColumn: 'env_san_id',
-    fields: { environmental_sanitation_photo: 'photo_url', notes: 'notes' },
+    fields: {
+      male_count: 'male_count',
+      female_count: 'female_count',
+      total_population: 'total_population',
+      hh_with_occupation: 'hh_with_occupation',
+      environmental_sanitation_photo: 'photo_url',
+      notes: 'notes',
+    },
   },
   infantfeeding: { table: 'infant_feeding', idColumn: 'infant_id', fields: { notes: 'notes' } },
   lactatingwoman: {
@@ -59,7 +66,7 @@ function localIdForRecord(category, record) {
   return String(record.id);
 }
 const FIELD_MAPPING_VERSION_KEY = 'bns_supabase_field_mapping_version';
-const FIELD_MAPPING_VERSION = '3';
+const FIELD_MAPPING_VERSION = '5';
 const PENDING_SYNC_LOGS_KEY = 'nutrigrid_pending_sync_logs';
 
 // Older versions of the app saved records under these keys
@@ -113,7 +120,18 @@ function normalizeRemoteRecord(category, row, userId) {
   const record = { ...payload };
 
   Object.entries(fields).forEach(([column, field]) => {
-    if (row[column] !== null && row[column] !== undefined) record[field] = row[column];
+    if (row[column] === null || row[column] === undefined) return;
+    const isLegacyDefaultCount =
+      category === 'environmental' &&
+      ['male_count', 'female_count', 'total_population', 'hh_with_occupation'].includes(column) &&
+      Number(row[column]) === 0 &&
+      Number(payload[column]) > 0;
+    const isLegacyDefaultBoolean =
+      category === 'environmental' &&
+      row[column] === false &&
+      (payload[column] === true || String(payload[column]).toLowerCase() === 'true');
+    if (isLegacyDefaultCount || isLegacyDefaultBoolean) return;
+    record[field] = row[column];
   });
   record.photo_url = record.photo_url ||
     row.residents_photo ||
@@ -291,6 +309,10 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
     environmental: {
       total_hh: asNumberOrNull(record.total_hh),
       total_families: asNumberOrNull(record.total_families),
+      male_count: asNumberOrNull(record.male_count),
+      female_count: asNumberOrNull(record.female_count),
+      total_population: asNumberOrNull(record.total_population),
+      hh_with_occupation: asNumberOrNull(record.hh_with_occupation),
       compost_pit: record.compost_pit ?? false,
       garbage_collect: record.garbage_collect ?? false,
       garbage_others: record.garbage_others ?? false,
@@ -690,6 +712,12 @@ export async function getSharedHouseholdCountsByPurokForMonth(monthKey) {
   const dateEnd = `${periodEnd.getFullYear()}-${String(periodEnd.getMonth() + 1).padStart(2, '0')}-01`;
   const createdAtStart = periodStart.toISOString();
   const createdAtEnd = periodEnd.toISOString();
+  const visitDateFilter = [
+    `and(visit_date.gte.${dateStart},visit_date.lt.${dateEnd})`,
+    `and(visit_date.is.null,created_at.gte.${createdAtStart},created_at.lt.${createdAtEnd})`,
+    `and(visit_date.is.null,data->>visit_date.gte.${dateStart},data->>visit_date.lt.${dateEnd})`,
+    `and(visit_date.is.null,data->>lastVisit.gte.${dateStart},data->>lastVisit.lt.${dateEnd})`,
+  ].join(',');
   const counts = new Map();
   const pageSize = 1000;
   let offset = 0;
@@ -697,10 +725,8 @@ export async function getSharedHouseholdCountsByPurokForMonth(monthKey) {
   while (true) {
     const { data, error } = await supabase
       .from('residents')
-      .select('resident_id,purok,visit_date,created_at,data')
-      .or(
-        `and(visit_date.gte.${dateStart},visit_date.lt.${dateEnd}),and(visit_date.is.null,created_at.gte.${createdAtStart},created_at.lt.${createdAtEnd})`
-      )
+      .select('resident_id,purok,visit_date,created_at,updated_at,data')
+      .or(visitDateFilter)
       .order('resident_id', { ascending: true })
       .range(offset, offset + pageSize - 1);
     if (error) throw new Error(`Could not load household records for ${monthKey}: ${error.message}`);

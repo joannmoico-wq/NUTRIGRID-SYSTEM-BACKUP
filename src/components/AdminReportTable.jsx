@@ -8,11 +8,11 @@ export const REPORT_META = {
   municipality: 'DAET',
   province: 'CAMARINES NORTE',
   reportYear: '2026',
-  visitPeriodStart: 'March 2026',
-  visitPeriodEnd: 'September 2026',
-  formsSubmitDate: '2026-09-03',
+  visitPeriodStart: 'November 2026',
+  visitPeriodEnd: 'November 2026',
+  formsSubmitDate: '2026-11-03',
   bnsGuide: 'LAARNI B. POMADA / BNS',
-  monthYear: 'September 2026',
+  monthYear: 'November 2026',
 };
 
 /** Append to multi-row header definitions (row 0) for edit/delete column */

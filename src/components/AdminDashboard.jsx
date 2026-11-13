@@ -843,7 +843,23 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [adminConfirmation, setAdminConfirmation] = useState(null);
   const [adminConfirmationBusy, setAdminConfirmationBusy] = useState(false);
   const [residentPurokFilter, setResidentPurokFilter] = useState('');
-  const [monthlyReportBatch, setMonthlyReportBatch] = useState(1);
+  const [monthlyReportBatch, setMonthlyReportBatch] = useState(() => {
+    try {
+      const savedBatch = Number(localStorage.getItem('nutrigrid_monthly_report_batch'));
+      return Number.isInteger(savedBatch) && savedBatch >= 1 && savedBatch <= 4 ? savedBatch : 1;
+    } catch (error) {
+      console.error('Could not load monthly report batch preference:', error);
+      return 1;
+    }
+  });
+  const updateMonthlyReportBatch = (batch) => {
+    setMonthlyReportBatch(batch);
+    try {
+      localStorage.setItem('nutrigrid_monthly_report_batch', String(batch));
+    } catch (error) {
+      console.error('Could not save monthly report batch preference:', error);
+    }
+  };
   const [scheduledVisitPurok, setScheduledVisitPurok] = useState('');
   const notifRef = useRef(null);
 
@@ -1698,6 +1714,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       'vit-a-6-11',
       'vit-a-12-59',
       'vit-a-postpartum',
+      'wasted-mam',
+      'severely-wasted-sam',
       'iron-pregnant',
       'iron-adolescent',
       'iron-lactating',
@@ -1706,12 +1724,17 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       'newborn-babies-origin',
       'exclusive-breastfeeding',
     ]);
-    const getRecordDate = (record) => {
+    const getRecordDate = (category, record) => {
       const raw = record._raw || record;
-      return raw.updated_at || raw.created_at || raw.date_of_registration || raw.dow || raw.month || '';
+      if (category === 'monthlynatal') return raw.dow || raw.month || raw.created_at || '';
+      if (category === 'pregnantwoman' || category === 'lactatingwoman') {
+        return raw.date_of_registration || raw.created_at || '';
+      }
+      if (category === 'infantfeeding') return raw.updated_at || raw.created_at || '';
+      return raw.created_at || raw.visit_date || '';
     };
-    const getDateParts = (record) => {
-      const value = String(getRecordDate(record));
+    const getDateParts = (category, record) => {
+      const value = String(getRecordDate(category, record));
       const match = value.match(/^(20\d{2})[-/](\d{1,2})/);
       if (!match) return null;
       const month = Number(match[2]);
@@ -1725,11 +1748,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     const numericAmount = (value, maximum = Number.POSITIVE_INFINITY) => {
       const normalized = String(value ?? '').trim();
       if (!normalized) return 0;
-      const amount = Number(normalized);
+      const numericText = normalized.match(/^\d+(?:\.\d+)?/)?.[0];
+      if (!numericText) return 0;
+      const amount = Number(numericText);
       return Number.isFinite(amount) && amount >= 0 && amount <= maximum ? amount : 0;
     };
-    const add = (slug, record, amount = 1) => {
-      const date = getDateParts(record);
+    const add = (slug, category, record, amount = 1) => {
+      const date = getDateParts(category, record);
       if (!date || date.year !== Number(REPORT_META.reportYear)) return;
       const key = `${date.batch}:${slug}`;
       const current = derived.get(key) || { m1M: 0, m1F: 0, m2M: 0, m2F: 0, m3M: 0, m3F: 0 };
@@ -1744,24 +1769,36 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       (records || []).forEach((record) => {
         const raw = record._raw || record;
         if (category === 'monthlynatal') {
-          if (raw.vitamin_a === '6–11 months old (100,000 IU)') add('vit-a-6-11', record, numericAmount(raw.vitamin_a_count));
-          if (raw.vitamin_a === '12–59 months old (200,000 IU)') add('vit-a-12-59', record, numericAmount(raw.vitamin_a_count));
-          if (raw.vitamin_a === 'Post-partum Women (200,000 IU)') add('vit-a-postpartum', record, numericAmount(raw.vitamin_a_count));
-          if (raw.iron_status || raw.iron_given) {
-            add('iron-lbw', record, numericAmount(raw.iron_status || raw.iron_given, 100));
+          if (raw.vitamin_a === '6–11 months old (100,000 IU)') add('vit-a-6-11', category, record);
+          if (raw.vitamin_a === '12–59 months old (200,000 IU)') add('vit-a-12-59', category, record);
+          if (raw.vitamin_a === 'Post-partum Women (200,000 IU)') add('vit-a-postpartum', category, record);
+          if (numericAmount(raw.iron_status || raw.iron_given, 100) > 0) {
+            add('iron-lbw', category, record);
           }
-          if (raw.fully_immunized) add('fic-9-12', record);
-          if (raw.newborn_babies) add('newborn-babies-origin', record);
+          const wastingStatus = String(raw.w_l_h || '').trim().toLowerCase();
+          if (wastingStatus.includes('severely wasted')) {
+            add('severely-wasted-sam', category, record);
+          } else if (wastingStatus.includes('wasted')) {
+            add('wasted-mam', category, record);
+          }
+          if (raw.fully_immunized) add('fic-9-12', category, record);
+          if (raw.newborn_babies) add('newborn-babies-origin', category, record);
         }
         if (category === 'pregnantwoman') {
-          if (raw.iron_folic_acid_type === 'Pregnant (180 tabs)') add('iron-pregnant', record, numericAmount(raw.iron_folic_acid));
-          if (raw.iron_folic_acid_type === 'Adolescent Pregnant (180 tabs)') add('iron-adolescent', record, numericAmount(raw.iron_folic_acid));
+          if (
+            raw.iron_folic_acid_type === 'Pregnant (180 tabs)' &&
+            numericAmount(raw.iron_folic_acid) > 0
+          ) add('iron-pregnant', category, record);
+          if (
+            raw.iron_folic_acid_type === 'Adolescent Pregnant (180 tabs)' &&
+            numericAmount(raw.iron_folic_acid) > 0
+          ) add('iron-adolescent', category, record);
         }
-        if (category === 'lactatingwoman' && raw.iron_folic_acid) {
-          add('iron-lactating', record, numericAmount(raw.iron_folic_acid));
+        if (category === 'lactatingwoman' && numericAmount(raw.iron_folic_acid) > 0) {
+          add('iron-lactating', category, record);
         }
         if (category === 'infantfeeding' && raw.feeding_3_month) {
-          add('exclusive-breastfeeding', record);
+          add('exclusive-breastfeeding', category, record);
         }
       });
     });
@@ -1938,13 +1975,17 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     signatures = [],
     preview = false,
     sectionRowLabels = [],
+    pageFormat = 'a4',
+    fontSize,
+    cellPadding = 3,
+    horizontalPageBreak,
   }) => {
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
       import('jspdf'),
       import('jspdf-autotable'),
     ]);
     const landscape = headers.length > 8;
-    const document = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'pt', format: 'a4' });
+    const document = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'pt', format: pageFormat });
     const pageWidth = document.internal.pageSize.getWidth();
     let startY = 32;
 
@@ -1972,7 +2013,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       body: rows,
       theme: 'grid',
       margin: { top: 24, right: 18, bottom: 100, left: 18 },
-      styles: { font: 'helvetica', fontSize: headers.length > 18 ? 5 : headers.length > 10 ? 6 : 8, cellPadding: 3, overflow: 'linebreak', halign: 'center' },
+      styles: { font: 'helvetica', fontSize: fontSize ?? (headers.length > 18 ? 5 : headers.length > 10 ? 6 : 8), cellPadding, overflow: 'linebreak', halign: 'center' },
       bodyStyles: { halign: 'center', fontStyle: 'bold' },
       headStyles: { fillColor: [238, 234, 246], textColor: [35, 35, 45], fontStyle: 'bold', halign: 'center' },
       didParseCell: (hookData) => {
@@ -1985,7 +2026,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           hookData.cell.styles.textColor = [45, 45, 58];
         }
       },
-      horizontalPageBreak: headers.length > 18,
+      horizontalPageBreak: horizontalPageBreak ?? headers.length > 18,
       horizontalPageBreakRepeat: 1,
     });
 
@@ -2608,7 +2649,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'Pangalan ng Nanay', rowSpan: 2 },
       { label: 'Pangalan ng Bata', rowSpan: 2 },
       { label: 'Paraan ng Pagpapakain o Pagpapainom', colSpan: 6 },
-      { label: 'Iron with Folic Acid', colSpan: 2 },
       { label: 'Notes', rowSpan: 2 },
       ACTIONS_HEAD_CELL,
     ],
@@ -2832,6 +2872,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               ],
               signatures,
               preview: options.preview,
+              pageFormat: 'a3',
+              fontSize: 4,
+              cellPadding: 1.5,
+              horizontalPageBreak: false,
             })}
           />
         }
@@ -3239,7 +3283,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <MonthlyReportTable
       darkMode={darkMode}
       data={autoMonthlyReportData}
-      onBatchChange={setMonthlyReportBatch}
+      onBatchChange={updateMonthlyReportBatch}
+      selectedBatch={monthlyReportBatch}
       onSaveLine={(line) => requestAdminConfirmation(
         'Are you sure you want to save these indicator changes?',
         async () => {

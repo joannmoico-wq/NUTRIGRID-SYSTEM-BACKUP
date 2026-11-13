@@ -119,6 +119,117 @@ comment on column public.environmental_sanitation.toilet_not_sanitary is 'OP';
 comment on column public.environmental_sanitation.toilet_communal is 'Communal';
 comment on column public.environmental_sanitation.toilet_none is 'No Sanitary Toilet';
 
+update public.environmental_sanitation
+set
+  male_count = case
+    when coalesce(male_count, 0) = 0 and coalesce(data->>'male_count', '') ~ '^\d+$'
+      then (data->>'male_count')::integer
+    else male_count
+  end,
+  female_count = case
+    when coalesce(female_count, 0) = 0 and coalesce(data->>'female_count', '') ~ '^\d+$'
+      then (data->>'female_count')::integer
+    else female_count
+  end,
+  total_population = case
+    when coalesce(total_population, 0) = 0 and coalesce(data->>'total_population', '') ~ '^\d+$'
+      then (data->>'total_population')::integer
+    else total_population
+  end,
+  hh_with_occupation = case
+    when coalesce(hh_with_occupation, 0) = 0 and coalesce(data->>'hh_with_occupation', '') ~ '^\d+$'
+      then (data->>'hh_with_occupation')::integer
+    else hh_with_occupation
+  end
+where
+  (
+    coalesce(male_count, 0) = 0
+    and case when coalesce(data->>'male_count', '') ~ '^\d+$'
+      then (data->>'male_count')::integer > 0 else false end
+  )
+  or (
+    coalesce(female_count, 0) = 0
+    and case when coalesce(data->>'female_count', '') ~ '^\d+$'
+      then (data->>'female_count')::integer > 0 else false end
+  )
+  or (
+    coalesce(total_population, 0) = 0
+    and case when coalesce(data->>'total_population', '') ~ '^\d+$'
+      then (data->>'total_population')::integer > 0 else false end
+  )
+  or (
+    coalesce(hh_with_occupation, 0) = 0
+    and case when coalesce(data->>'hh_with_occupation', '') ~ '^\d+$'
+      then (data->>'hh_with_occupation')::integer > 0 else false end
+  );
+
+update public.environmental_sanitation
+set total_population = male_count + female_count
+where coalesce(total_population, 0) = 0
+  and coalesce(male_count, 0) + coalesce(female_count, 0) > 0;
+
+do $$
+declare
+  field_name text;
+begin
+  foreach field_name in array array[
+    'compost_pit',
+    'garbage_collect',
+    'garbage_others',
+    'water_level_i',
+    'water_level_ii',
+    'water_level_iii',
+    'without_potable_water',
+    'toilet_sanitary',
+    'toilet_not_sanitary',
+    'toilet_communal',
+    'toilet_none',
+    'electricity_owned',
+    'electricity_connected',
+    'has_veg_garden',
+    'has_herbal_garden',
+    'has_backyard_poultry',
+    'has_swine',
+    'has_fish_pond',
+    'uses_iodized_salt',
+    'has_malunggay_tree',
+    'child_re',
+    'father_re',
+    'household_nonsmoker',
+    'household_smoker',
+    'selling_iodized_sari',
+    'selling_iodized_grocery',
+    'selling_iodized_bakery',
+    'selling_iodized_carenderia',
+    'selling_iodized_restaurant',
+    'selling_iodized_hotel',
+    'selling_fortified_grocery',
+    'selling_fortified_bakery',
+    'selling_fortified_restaurant',
+    'selling_fortified_sari',
+    'selling_fortified_carenderia',
+    'selling_fortified_hotel',
+    'establishments_hospital',
+    'establishments_hotel',
+    'establishments_restaurant',
+    'establishments_carenderia',
+    'establishments_bakery',
+    'establishments_grocery',
+    'establishments_sari'
+  ]
+  loop
+    execute format(
+      'update public.environmental_sanitation
+       set %1$I = true
+       where coalesce(%1$I, false) = false
+         and lower(coalesce(data->>%2$L, '''')) in (''true'', ''1'', ''yes'')',
+      field_name,
+      field_name
+    );
+  end loop;
+end
+$$;
+
 drop view if exists public.environmental_sanitation_purok_totals;
 
 create view public.environmental_sanitation_purok_totals as

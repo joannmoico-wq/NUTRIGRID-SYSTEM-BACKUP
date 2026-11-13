@@ -192,6 +192,14 @@ async function readAllRows(category, { table, idColumn }) {
 
     Object.entries(columnMap).forEach(([column, field]) => {
       if (row[column] !== null && row[column] !== undefined) {
+        const isLegacyDefaultCount =
+          ['male_count', 'female_count', 'total_population', 'hh_with_occupation'].includes(column) &&
+          Number(row[column]) === 0 &&
+          Number(payload[column]) > 0;
+        const isLegacyDefaultBoolean =
+          row[column] === false &&
+          (payload[column] === true || String(payload[column]).toLowerCase() === 'true');
+        if (category === 'environmental' && (isLegacyDefaultCount || isLegacyDefaultBoolean)) return;
         record[field] = row[column];
       }
     });

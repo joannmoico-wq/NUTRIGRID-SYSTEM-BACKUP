@@ -505,7 +505,8 @@ const InteractiveMapComponent = ({
   highlightedPuroks = [],
 }) => {
   const [mapMode, setMapMode] = useState('nutritional');
-  const [mapZoom, setMapZoom] = useState(15);
+  const [mapZoom, setMapZoom] = useState(17);
+  const [showMapColorKey, setShowMapColorKey] = useState(true);
   const [selectedPurokId, setSelectedPurokId] = useState(null);
   const highlightedPurokNames = useMemo(
     () => new Set(highlightedPuroks.map(normalizePurokName).filter(Boolean)),
@@ -651,15 +652,22 @@ const InteractiveMapComponent = ({
           Purok outlines are illustrative guides based on marker locations, not official surveyed boundaries.
         </p>
         <div>
-          <div className={`relative z-0 isolate overflow-hidden rounded-lg border shadow-lg ${panelClass}`}>
+          <div
+            className={`relative z-0 isolate overflow-hidden rounded-lg border shadow-lg ${panelClass}`}
+            onClickCapture={(event) => {
+              if (!(event.target instanceof Element)) return;
+              if (event.target.closest('[data-map-key], [data-map-key-toggle]')) return;
+              setShowMapColorKey(false);
+            }}
+          >
             <MapContainer
               center={[14.1093473, 122.9291014]}
-              zoom={15}
+              zoom={17}
               minZoom={13}
               maxZoom={19}
               scrollWheelZoom
               touchZoom
-              doubleClickZoom
+              doubleClickZoom={false}
               zoomControl={false}
               style={{ height: 'min(72vh, 760px)', minHeight: '560px', width: '100%' }}
               className="rounded-lg"
@@ -722,6 +730,42 @@ const InteractiveMapComponent = ({
                 );
               })}
             </MapContainer>
+            {showMapColorKey ? (
+              <section
+                aria-label="Map color key"
+                data-map-key
+                className="pointer-events-auto absolute left-[4%] top-[18%] z-[500] w-[min(270px,30%)] rounded-xl border border-slate-200 bg-white/95 p-4 text-slate-800 shadow-lg backdrop-blur-sm"
+              >
+                  <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                    {COLOR_CATEGORIES.map(({ key, label }) => (
+                      <div key={key} className="flex items-start gap-2 text-xs leading-snug">
+                        <span
+                          className="mt-0.5 h-3 w-3 shrink-0 rounded-full"
+                          style={{ backgroundColor: COLORS[key] }}
+                        />
+                        <span>{label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowMapColorKey(false)}
+                    aria-label="Hide map color key"
+                    className="absolute -right-2 -top-2 grid h-6 w-6 place-items-center rounded-full border border-slate-200 bg-white text-slate-500 shadow hover:bg-slate-100"
+                  >
+                    <X size={14} />
+                  </button>
+              </section>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowMapColorKey(true)}
+                  data-map-key-toggle
+                  className="absolute left-3 top-3 z-[500] rounded-lg border border-slate-200 bg-white/95 px-2.5 py-1.5 text-[10px] font-bold text-slate-700 shadow-lg"
+                >
+                  Show color key
+                </button>
+              )}
             {selectedPurok && selectedVisibleMarkers.length > 0 && (
               <section
                 aria-label={`${selectedPurok.name} information`}
@@ -891,18 +935,6 @@ const InteractiveMapComponent = ({
         </div>
       </section>
 
-      <section className={`rounded-lg border p-5 ${panelClass}`}>
-        <h3 className={`mb-1 font-bold ${primaryTextClass}`}>Spot-map color coding</h3>
-        <p className={`mb-3 text-xs ${secondaryTextClass}`}>Category colors follow the barangay spot-map coding shown below.</p>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {COLOR_CATEGORIES.map(({ key, label }) => (
-            <div className="flex items-center gap-2" key={key}>
-              <span className="h-4 w-4 shrink-0 rounded-full" style={{ backgroundColor: COLORS[key] }} />
-              <span className={`text-xs ${secondaryTextClass}`}>{label}</span>
-            </div>
-          ))}
-        </div>
-      </section>
     </div>
   );
 };
