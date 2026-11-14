@@ -312,7 +312,14 @@ export async function loadAdminDataFromSupabase(userId, { onRecordsLoaded } = {}
   }
   const activeUserId = userId || sessionUserId;
   const categoryResultsPromise = Promise.allSettled([
-    readAllRows('residents', ADMIN_TABLES.residents),
+    readAllRows('residents', ADMIN_TABLES.residents).then((records) => {
+      onRecordsLoaded?.({
+        households: toAdminResidents(
+          cacheSharedRecords('residents', records, activeUserId)
+        ),
+      });
+      return records;
+    }),
     readAllRows('environmental', ADMIN_TABLES.environmental),
     readAllRows('infantfeeding', ADMIN_TABLES.infantfeeding),
     readAllRows('lactatingwoman', ADMIN_TABLES.lactatingwoman),

@@ -712,51 +712,74 @@ export async function getSharedHouseholdCountsByPurokForMonth(monthKey) {
   const dateEnd = `${periodEnd.getFullYear()}-${String(periodEnd.getMonth() + 1).padStart(2, '0')}-01`;
   const createdAtStart = periodStart.toISOString();
   const createdAtEnd = periodEnd.toISOString();
-  const visitDateFilter = [
-    `and(visit_date.gte.${dateStart},visit_date.lt.${dateEnd})`,
-    `and(visit_date.is.null,created_at.gte.${createdAtStart},created_at.lt.${createdAtEnd})`,
-    `and(visit_date.is.null,data->>visit_date.gte.${dateStart},data->>visit_date.lt.${dateEnd})`,
-    `and(visit_date.is.null,data->>lastVisit.gte.${dateStart},data->>lastVisit.lt.${dateEnd})`,
+  const selectFields = [
+    'resident_id',
+    'purok',
+    'visit_date',
+    'created_at',
+    'updated_at',
+    'payload_visit_date:data->>visit_date',
+    'payload_last_visit:data->>lastVisit',
   ].join(',');
-  const counts = new Map();
   const pageSize = 1000;
-  let offset = 0;
+  const readRows = async (buildQuery) => {
+    const rows = [];
+    let offset = 0;
+    while (true) {
+      const { data, error } = await buildQuery()
+        .order('resident_id', { ascending: true })
+        .range(offset, offset + pageSize - 1);
+      if (error) throw new Error(`Could not load household records for ${monthKey}: ${error.message}`);
+      rows.push(...(data || []));
+      if (!data || data.length < pageSize) break;
+      offset += pageSize;
+    }
+    return rows;
+  };
+  const baseQuery = () => supabase.from('residents').select(selectFields);
+  const [visitDateRows, createdDateRows, payloadVisitDateRows, payloadLastVisitRows] =
+    await Promise.all([
+      readRows(() => baseQuery().gte('visit_date', dateStart).lt('visit_date', dateEnd)),
+      readRows(() => baseQuery()
+        .is('visit_date', null)
+        .gte('created_at', createdAtStart)
+        .lt('created_at', createdAtEnd)),
+      readRows(() => baseQuery()
+        .is('visit_date', null)
+        .gte('data->>visit_date', dateStart)
+        .lt('data->>visit_date', dateEnd)),
+      readRows(() => baseQuery()
+        .is('visit_date', null)
+        .gte('data->>lastVisit', dateStart)
+        .lt('data->>lastVisit', dateEnd)),
+    ]);
 
-  while (true) {
-    const { data, error } = await supabase
-      .from('residents')
-      .select('resident_id,purok,visit_date,created_at,updated_at,data')
-      .or(visitDateFilter)
-      .order('resident_id', { ascending: true })
-      .range(offset, offset + pageSize - 1);
-    if (error) throw new Error(`Could not load household records for ${monthKey}: ${error.message}`);
+  const rowsById = new Map();
+  [
+    ...visitDateRows,
+    ...createdDateRows,
+    ...payloadVisitDateRows,
+    ...payloadLastVisitRows,
+  ].forEach((row) => rowsById.set(String(row.resident_id), row));
+  const counts = new Map();
 
-    (data || []).forEach((row) => {
-      const payload = row.data && typeof row.data === 'object' && !Array.isArray(row.data)
-        ? row.data
-        : {};
-      const dateValue =
-        row.visit_date ||
-        payload.visit_date ||
-        payload.lastVisit ||
-        row.created_at ||
-        payload.created_at ||
-        row.updated_at ||
-        payload.updated_at;
-      if (!dateValue) return;
-      const dateOnly = String(dateValue).match(/^(\d{4})-(\d{2})-(\d{2})/);
-      const recordDate = dateOnly
-        ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
-        : new Date(dateValue);
-      if (Number.isNaN(recordDate.getTime()) || recordDate < periodStart || recordDate >= periodEnd) return;
+  rowsById.forEach((row) => {
+    const dateValue =
+      row.visit_date ||
+      row.payload_visit_date ||
+      row.payload_last_visit ||
+      row.created_at ||
+      row.updated_at;
+    if (!dateValue) return;
+    const dateOnly = String(dateValue).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    const recordDate = dateOnly
+      ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+      : new Date(dateValue);
+    if (Number.isNaN(recordDate.getTime()) || recordDate < periodStart || recordDate >= periodEnd) return;
 
-      const name = normalizePurokName(row.purok ?? payload.purok);
-      if (name) counts.set(name, (counts.get(name) || 0) + 1);
-    });
-
-    if (!data || data.length < pageSize) break;
-    offset += pageSize;
-  }
+    const name = normalizePurokName(row.purok);
+    if (name) counts.set(name, (counts.get(name) || 0) + 1);
+  });
 
   return Array.from(counts, ([purok, count]) => ({ purok, count }))
     .sort((left, right) => right.count - left.count || left.purok.localeCompare(right.purok, undefined, { numeric: true }))

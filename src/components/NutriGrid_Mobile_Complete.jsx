@@ -106,6 +106,7 @@ const LEGACY_RECORD_KEYS = {
 };
 const PWA_READ_NOTIFICATIONS_KEY = 'nutrigrid_pwa_read_notifications';
 const SHARED_PUROK_CACHE_KEY = 'nutrigrid_shared_purok_counts_v1';
+const SHARED_PUROK_CACHE_TTL_MS = 5 * 60 * 1000;
 const PWA_INITIAL_SYNC_KEY = 'nutrigrid_initial_sync';
 
 function getInitialSyncKey(userId) {
@@ -132,9 +133,10 @@ function markInitialSyncCompleted(userId) {
 function readSharedPurokCache(monthKey) {
   try {
     const stored = JSON.parse(localStorage.getItem(SHARED_PUROK_CACHE_KEY) || '{}');
-    return Object.prototype.hasOwnProperty.call(stored, monthKey)
-      ? stored[monthKey]
-      : null;
+    const entry = stored[monthKey];
+    if (Array.isArray(entry)) return { counts: entry, fetchedAt: 0 };
+    if (Array.isArray(entry?.counts) && Number.isFinite(entry.fetchedAt)) return entry;
+    return null;
   } catch (error) {
     console.error('Could not read cached Purok totals:', error);
     return null;
@@ -146,7 +148,7 @@ function saveSharedPurokCache(monthKey, counts) {
     const stored = JSON.parse(localStorage.getItem(SHARED_PUROK_CACHE_KEY) || '{}');
     localStorage.setItem(
       SHARED_PUROK_CACHE_KEY,
-      JSON.stringify({ ...stored, [monthKey]: counts })
+      JSON.stringify({ ...stored, [monthKey]: { counts, fetchedAt: Date.now() } })
     );
   } catch (error) {
     console.error('Could not cache shared Purok totals:', error);
@@ -1285,7 +1287,7 @@ const HomeScreen = ({
   });
   const [initialSharedPurokCache] = useState(() => readSharedPurokCache(sharedPurokMonth));
   const [sharedHouseholdsByPurok, setSharedHouseholdsByPurok] = useState(
-    () => initialSharedPurokCache || []
+    () => initialSharedPurokCache?.counts || []
   );
   const [sharedPurokStatus, setSharedPurokStatus] = useState(
     () => initialSharedPurokCache ? 'loaded' : 'loading'
@@ -1378,7 +1380,9 @@ const HomeScreen = ({
 
   useEffect(() => {
     let active = true;
-    const cachedCounts = readSharedPurokCache(sharedPurokMonth);
+    let loading = false;
+    const cachedEntry = readSharedPurokCache(sharedPurokMonth);
+    const cachedCounts = cachedEntry?.counts || null;
     if (cachedCounts) {
       setSharedHouseholdsByPurok(cachedCounts);
       setSharedPurokStatus('loaded');
@@ -1387,12 +1391,27 @@ const HomeScreen = ({
       setSharedPurokStatus('loading');
     }
 
-    const loadSharedPurokCounts = async () => {
+    const loadSharedPurokCounts = async ({ force = false } = {}) => {
+      const currentCache = readSharedPurokCache(sharedPurokMonth);
+      if (
+        !force &&
+        currentCache &&
+        Date.now() >= currentCache.fetchedAt &&
+        Date.now() - currentCache.fetchedAt < SHARED_PUROK_CACHE_TTL_MS
+      ) {
+        if (active) {
+          setSharedHouseholdsByPurok(currentCache.counts);
+          setSharedPurokStatus('loaded');
+        }
+        return;
+      }
+      if (loading) return;
       if (!navigator.onLine) {
         if (active && !cachedCounts?.length) setSharedPurokStatus('offline');
         return;
       }
 
+      loading = true;
       try {
         const counts = await getSharedHouseholdCountsByPurokForMonth(sharedPurokMonth);
         if (active) {
@@ -1403,7 +1422,18 @@ const HomeScreen = ({
       } catch (error) {
         console.error('Could not load shared Purok totals from Supabase:', error);
         if (active && !cachedCounts?.length) setSharedPurokStatus('error');
+      } finally {
+        loading = false;
       }
+    };
+
+    let realtimeRefreshTimeout;
+    const handleRealtimeChange = () => {
+      window.clearTimeout(realtimeRefreshTimeout);
+      realtimeRefreshTimeout = window.setTimeout(
+        () => void loadSharedPurokCounts({ force: true }),
+        300
+      );
     };
 
     void loadSharedPurokCounts();
@@ -1415,7 +1445,7 @@ const HomeScreen = ({
     document.addEventListener('visibilitychange', handleVisibilityChange);
     const channel = supabase
       .channel('pwa-shared-purok-counts')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, loadSharedPurokCounts)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, handleRealtimeChange)
       .subscribe();
 
     return () => {
@@ -1423,6 +1453,7 @@ const HomeScreen = ({
       window.removeEventListener('online', loadSharedPurokCounts);
       window.removeEventListener('focus', loadSharedPurokCounts);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearTimeout(realtimeRefreshTimeout);
       void supabase.removeChannel(channel);
     };
   }, [sharedPurokMonth]);

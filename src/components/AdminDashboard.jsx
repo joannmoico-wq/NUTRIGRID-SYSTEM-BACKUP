@@ -118,6 +118,44 @@ const THEME = {
 
 const DARK_MODE_KEY = 'bns_admin_dark_mode';
 const READ_NOTIFICATIONS_KEY = 'nutrigrid_admin_read_notifications';
+const ADMIN_DATA_CACHE_KEY = 'nutrigrid_admin_data_last_loaded';
+const ADMIN_DATA_CACHE_TTL_MS = 5 * 60 * 1000;
+const ADMIN_DATA_STORAGE_KEYS = [
+  STORAGE_KEYS.residents,
+  STORAGE_KEYS.environmental,
+  STORAGE_KEYS.infantfeeding,
+  STORAGE_KEYS.lactatingwoman,
+  STORAGE_KEYS.pregnantwoman,
+  STORAGE_KEYS.monthlynatal,
+];
+
+function isAdminDataCacheFresh(userId) {
+  try {
+    const cacheKey = `${ADMIN_DATA_CACHE_KEY}:${userId || 'shared'}`;
+    const loadedAt = Number(localStorage.getItem(cacheKey));
+    return (
+      Number.isFinite(loadedAt) &&
+      loadedAt > 0 &&
+      Date.now() >= loadedAt &&
+      Date.now() - loadedAt < ADMIN_DATA_CACHE_TTL_MS &&
+      ADMIN_DATA_STORAGE_KEYS.every((key) => localStorage.getItem(key) !== null)
+    );
+  } catch (error) {
+    console.error('Could not read the admin data cache timestamp:', error);
+    return false;
+  }
+}
+
+function markAdminDataCacheFresh(userId) {
+  try {
+    localStorage.setItem(
+      `${ADMIN_DATA_CACHE_KEY}:${userId || 'shared'}`,
+      String(Date.now())
+    );
+  } catch (error) {
+    console.error('Could not save the admin data cache timestamp:', error);
+  }
+}
 
 const ADMIN_FORM_TITLES = {
   residents: 'Residents - New Visit',
@@ -959,7 +997,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   }, []);
 
   const [adminData, setAdminData] = useState(() => reloadAllAdminData(currentUserId));
-  const [adminDataStatus, setAdminDataStatus] = useState('loading');
+  const [adminDataStatus, setAdminDataStatus] = useState(
+    () => isAdminDataCacheFresh(currentUserId) ? 'loaded' : 'loading'
+  );
   const {
     households,
     pregnantWomenData,
@@ -1067,11 +1107,15 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       STORAGE_KEYS.monthlynatal,
     ];
 
-    const loadSharedAdminData = async () => {
+    const loadSharedAdminData = async ({ force = false } = {}) => {
       if (!active) return;
       if (loading) return;
       if (!navigator.onLine) {
         setAdminDataStatus('offline');
+        return;
+      }
+      if (!force && isAdminDataCacheFresh(currentUserId)) {
+        setAdminDataStatus('loaded');
         return;
       }
 
@@ -1087,6 +1131,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         if (active) {
           setAdminData(sharedData);
           setAdminDataStatus('loaded');
+          markAdminDataCacheFresh(currentUserId);
         }
       } catch (error) {
         console.error('Could not load shared admin records from Supabase:', error);
@@ -1128,17 +1173,25 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     const handlePageFocus = () => {
       if (document.visibilityState === 'visible') void loadSharedAdminData();
     };
+    let realtimeRefreshTimeout;
+    const handleRealtimeChange = () => {
+      window.clearTimeout(realtimeRefreshTimeout);
+      realtimeRefreshTimeout = window.setTimeout(
+        () => void loadSharedAdminData({ force: true }),
+        300
+      );
+    };
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') void loadSharedAdminData();
     };
     const channel = supabase
       .channel(`admin-record-updates-${currentUserId || 'shared'}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, handlePageFocus)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'environmental_sanitation' }, handlePageFocus)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'infant_feeding' }, handlePageFocus)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lactating_women' }, handlePageFocus)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pregnant_women' }, handlePageFocus)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'monthly_natality' }, handlePageFocus)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'environmental_sanitation' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'infant_feeding' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lactating_women' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pregnant_women' }, handleRealtimeChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monthly_natality' }, handleRealtimeChange)
       .subscribe();
 
     void loadSharedAdminData();
@@ -1154,6 +1207,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       window.removeEventListener('storage', handleStorageChanged);
       window.removeEventListener('focus', handlePageFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.clearTimeout(realtimeRefreshTimeout);
       void supabase.removeChannel(channel);
     };
   }, []);
