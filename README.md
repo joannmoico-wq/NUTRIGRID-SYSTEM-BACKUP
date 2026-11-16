@@ -189,3 +189,27 @@ When the connection returns, they are highlighted as ready to reopen and save.
 PWA sign-in can restore an existing Supabase session offline after that account's
 approved profile has been cached on the device. Location is requested after sign-in
 and once per account until the user signs out.
+
+Health records show a per-record synchronization state: Pending Sync, Syncing,
+Synced, or Sync Failed. A failed record remains saved locally for a later retry;
+failure details are visible only on the device where the sync attempt failed.
+Admin dashboards show the state available in Supabase or their local cache; a
+BHW device's failed state is not remotely visible and changes to Synced after a
+successful retry.
+
+The PWA saves each signed-in user's current dashboard, records category, or
+profile view in session storage and restores it after a page refresh. Temporary
+data-entry and password-reset screens are not restored.
+
+The signed-in BHW PWA listens for Supabase Realtime changes to that user's
+health records and updates the local record cache when an Admin Dashboard edit
+arrives. If the PWA is offline or Realtime is unavailable, the next successful
+record sync/pull refreshes the local copy.
+
+## Live Admin/PWA record updates
+
+Run `supabase-records-realtime.sql` in the Supabase SQL Editor to enable live
+insert, edit, and delete notifications for health records. The script adds the
+record tables to the Realtime publication and configures full old-row data so
+deletions can be matched to the local record. Realtime changes are applied to
+the local cache directly; a full record reload is only used as a fallback.

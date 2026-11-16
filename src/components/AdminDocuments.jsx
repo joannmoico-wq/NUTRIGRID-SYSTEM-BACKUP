@@ -5,6 +5,13 @@ import { ChevronDown, ChevronLeft, FileText, Folder, Image, Trash2, UploadCloud,
 const DATABASE_NAME = 'nutrigrid-admin-documents';
 const STORE_NAME = 'documents';
 const DOCUMENT_PAGE_SIZE = 12;
+const MAX_FILE_SIZE_BYTES = 2 * 1024 * 1024;
+const MAX_FILE_SIZE_LABEL = '2 MB';
+const SUPPORTED_FILE_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'gif', 'webp',
+  'pdf', 'doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'txt',
+]);
+const SUPPORTED_FILE_FORMATS = 'JPG/JPEG, PNG, GIF, WEBP, PDF, DOC/DOCX, XLS/XLSX, PPT/PPTX, TXT';
 const RECORD_CATEGORY_FOLDERS = [
   'Residents',
   'Environmental Sanitation',
@@ -86,6 +93,10 @@ function getFileType(file) {
     webp: 'image/webp',
     pdf: 'application/pdf',
   })[extension] || 'application/octet-stream';
+}
+
+function getFileExtension(file) {
+  return file.name.includes('.') ? file.name.split('.').pop().toLowerCase() : '';
 }
 
 function createDocumentId() {
@@ -311,6 +322,16 @@ export default function AdminDocuments({
   const addFiles = async (fileList) => {
     const files = Array.from(fileList || []);
     if (!files.length) return;
+    const unsupportedFiles = files.filter((file) => !SUPPORTED_FILE_EXTENSIONS.has(getFileExtension(file)));
+    if (unsupportedFiles.length) {
+      setError(`Unsupported file format. Allowed formats: ${SUPPORTED_FILE_FORMATS}.`);
+      return;
+    }
+    const oversizedFiles = files.filter((file) => file.size > MAX_FILE_SIZE_BYTES);
+    if (oversizedFiles.length) {
+      setError(`Each file must be ${MAX_FILE_SIZE_LABEL} or smaller.`);
+      return;
+    }
     setBusy(true);
     setError('');
     try {
@@ -364,7 +385,7 @@ export default function AdminDocuments({
         ref={fileInput}
         type="file"
         multiple
-        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
+        accept=".jpg,.jpeg,.png,.gif,.webp,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt"
         className="hidden"
         aria-label="Choose documents to upload"
         onChange={(event) => {
@@ -532,8 +553,8 @@ export default function AdminDocuments({
                   <h4 className={`mt-3 text-lg font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
                     Drag and drop your documents file instantly
                   </h4>
-                  <p className={`mt-1 text-sm ${mutedTextClass}`}>Or choose files to upload.</p>
-                  <div className="mt-5 flex flex-wrap justify-center gap-3">
+                  <div className="mt-3 flex flex-wrap items-center justify-center gap-2">
+                    <p className={`text-sm ${mutedTextClass}`}>Or choose files to upload:</p>
                     <button
                       type="button"
                       disabled={busy}
@@ -542,6 +563,11 @@ export default function AdminDocuments({
                     >
                       <FileText size={16} /> Browse files
                     </button>
+                  </div>
+                  <div className={`mx-auto mt-3 max-w-md text-center text-xs leading-relaxed ${mutedTextClass}`}>
+                    <p><span className="font-semibold">Supported images:</span> JPG/JPEG, PNG, GIF, WEBP</p>
+                    <p><span className="font-semibold">Other files:</span> PDF, DOC/DOCX, XLS/XLSX, PPT/PPTX, TXT</p>
+                    <p><span className="font-semibold">Maximum size:</span> {MAX_FILE_SIZE_LABEL} per file</p>
                   </div>
                   {busy && <p role="status" className={`mt-4 text-sm ${darkMode ? 'text-pink-200' : 'text-violet-700'}`}>Saving files…</p>}
                   <p className={`mt-3 text-xs ${mutedTextClass}`}>

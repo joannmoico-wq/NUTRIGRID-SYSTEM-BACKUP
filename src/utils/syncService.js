@@ -4,6 +4,7 @@ import {
   getRecords,
   removePendingRecordDeletion,
   setRecords,
+  updateRecordSyncStatus,
   upsertRecord,
   storageKeyForCategory,
 } from './bnsStorage';
@@ -148,11 +149,85 @@ function normalizeRemoteRecord(category, row, userId) {
   record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || userId;
   record.status = 'Synced';
   record.synced = true;
+  record.sync_status = 'synced';
+  record.sync_error = null;
   return record;
+}
+
+export function applyRealtimeRecordChange(category, eventType, row, userId) {
+  const config = RECORD_TABLES[category];
+  if (!config || !row || !userId) return false;
+
+  const owners = [
+    row.created_by_user_id,
+    row.user_id,
+    row.data?.created_by_user_id,
+    row.data?.user_id,
+  ]
+    .filter(Boolean)
+    .map(String);
+  const storageKey = storageKeyForCategory(category);
+  const localRecords = getRecords(storageKey);
+  const recordIds = [
+    row.local_id,
+    row.data?.id,
+    row[config.idColumn],
+  ]
+    .filter((recordId) => recordId !== null && recordId !== undefined)
+    .map(String);
+  if (!recordIds.length) return false;
+
+  if (eventType === 'DELETE') {
+    if (owners.some((ownerId) => ownerId !== String(userId))) return false;
+    const hasOwnedLocalMatch = localRecords.some((record) =>
+      recordIds.includes(String(record.id)) &&
+      String(record.created_by_user_id || '') === String(userId)
+    );
+    if (!owners.length && !hasOwnedLocalMatch) return false;
+
+    const matchesDeletedRecord = (record) => {
+      if (!recordIds.includes(String(record.id))) return false;
+      const localOwnerId = String(record.created_by_user_id || '');
+      return localOwnerId === String(userId) ||
+        (!localOwnerId && owners.length > 0);
+    };
+    const deletedRecord = localRecords.find(matchesDeletedRecord);
+    const remaining = localRecords.filter((record) => !matchesDeletedRecord(record));
+    if (remaining.length === localRecords.length) return true;
+    setRecords(storageKey, remaining, {
+      operation: 'delete',
+      recordId: deletedRecord?.id ?? recordIds[0],
+    });
+    return true;
+  }
+
+  if (!owners.length || owners.some((ownerId) => ownerId !== String(userId))) return false;
+
+  const remoteRecord = normalizeRemoteRecord(category, row, userId);
+  const existingIndex = localRecords.findIndex(
+    (record) => String(record.id) === String(remoteRecord.id)
+  );
+  if (existingIndex >= 0 && isUnsynced(localRecords[existingIndex])) return false;
+
+  const nextRecords = [...localRecords];
+  if (existingIndex < 0) {
+    nextRecords.push(remoteRecord);
+  } else {
+    const merged = { ...localRecords[existingIndex], ...remoteRecord };
+    if (Object.entries(merged).every(([field, value]) =>
+      JSON.stringify(localRecords[existingIndex][field]) === JSON.stringify(value)
+    )) return false;
+    nextRecords[existingIndex] = merged;
+  }
+
+  setRecords(storageKey, nextRecords, { operation: 'upsert', record: remoteRecord });
+  return true;
 }
 
 async function pullCategoryRecords(category, userId) {
   const { table, idColumn } = RECORD_TABLES[category];
+  const storageKey = storageKeyForCategory(category);
+  const localRecords = getRecords(storageKey);
   const primaryOwnerColumns = [
     'created_by_user_id',
     'data->>created_by_user_id',
@@ -174,7 +249,13 @@ async function pullCategoryRecords(category, userId) {
     }
   };
   await readOwnerColumns(primaryOwnerColumns);
-  if (!rowsById.size) await readOwnerColumns(['user_id', 'data->>user_id']);
+  const hasUnmatchedOwnedRecords = localRecords.some((record) =>
+    String(record.created_by_user_id || '') === String(userId) &&
+    !rowsById.has(String(record.id))
+  );
+  if (!rowsById.size || hasUnmatchedOwnedRecords) {
+    await readOwnerColumns(['user_id', 'data->>user_id']);
+  }
   if (!successfulOwnerColumns) {
     throw new Error(`${table}: no supported record owner field was found.`);
   }
@@ -206,19 +287,34 @@ async function pullCategoryRecords(category, userId) {
       .filter((record) => !deletedIds.has(String(record.id)))
       .map((record) => [String(record.id), record])
   );
-  const storageKey = storageKeyForCategory(category);
-  const localRecords = getRecords(storageKey);
   let changed = false;
-  const mergedRecords = localRecords.map((record) => {
-    if (String(record.created_by_user_id || '') !== String(userId)) return record;
+  const mergedRecords = [];
+  localRecords.forEach((record) => {
+    if (String(record.created_by_user_id || '') !== String(userId)) {
+      mergedRecords.push(record);
+      return;
+    }
+    if (deletedIds.has(String(record.id))) {
+      changed = true;
+      return;
+    }
     const remoteRecord = remoteById.get(String(record.id));
-    if (!remoteRecord) return record;
+    if (!remoteRecord) {
+      if (isUnsynced(record)) mergedRecords.push(record);
+      else changed = true;
+      return;
+    }
     remoteById.delete(String(record.id));
-    if (isUnsynced(record)) return record;
-    if (Object.entries(remoteRecord).some(([field, value]) => record[field] !== value)) {
+    if (isUnsynced(record)) {
+      mergedRecords.push(record);
+      return;
+    }
+    if (Object.entries(remoteRecord).some(([field, value]) =>
+      JSON.stringify(record[field]) !== JSON.stringify(value)
+    )) {
       changed = true;
     }
-    return { ...record, ...remoteRecord };
+    mergedRecords.push({ ...record, ...remoteRecord });
   });
 
   if (remoteById.size) {
@@ -548,6 +644,7 @@ export async function syncPendingRecords({ includeShared = false } = {}) {
         (reuploadExistingRecords || isUnsynced(item))
     )) {
       results.records++;
+      updateRecordSyncStatus(storageKey, record.id, 'syncing', '', record);
       const err = await uploadRecord(
         category,
         table,
@@ -557,15 +654,11 @@ export async function syncPendingRecords({ includeShared = false } = {}) {
         session.user.id
       );
       if (err) {
+        updateRecordSyncStatus(storageKey, record.id, 'sync_failed', err, record);
         results.errors.push(`${table} #${record.id}: ${err}`);
         continue;
       }
-      const latestRecord = getRecords(storageKey).find(
-        (item) => String(item.id) === String(record.id)
-      );
-      if (JSON.stringify(latestRecord) === JSON.stringify(record)) {
-        upsertRecord(storageKey, { ...record, status: 'Synced', synced: true });
-      }
+      updateRecordSyncStatus(storageKey, record.id, 'synced', '', record);
       results.synced++;
     }
   }
@@ -591,16 +684,22 @@ export async function syncPendingRecords({ includeShared = false } = {}) {
       if (!reuploadExistingRecords && !isUnsynced(record)) continue;
 
       results.records++;
+      records[i] = { ...record, sync_status: 'syncing', sync_error: null };
+      localStorage.setItem(key, JSON.stringify(records));
       const err = await uploadRecord(category, table, deviceId, `${key}:${record.id}`, record, session.user.id);
       if (err) {
+        records[i] = { ...records[i], sync_status: 'sync_failed', sync_error: err };
+        localStorage.setItem(key, JSON.stringify(records));
         results.errors.push(`${table} (${key}) #${record.id}: ${err}`);
         continue;
       }
       records[i] = {
-        ...record,
+        ...records[i],
         created_by_user_id: record.created_by_user_id,
         status: 'Synced',
         synced: true,
+        sync_status: 'synced',
+        sync_error: null,
       };
       changed = true;
       results.synced++;
@@ -638,6 +737,8 @@ export async function syncSingleRecord(category, record, { includeShared = false
     return 'record-owner-mismatch';
   }
 
+  const storageKey = storageKeyForCategory(category);
+  updateRecordSyncStatus(storageKey, record.id, 'syncing', '', record);
   const error = await uploadRecord(
     category,
     table,
@@ -647,14 +748,62 @@ export async function syncSingleRecord(category, record, { includeShared = false
     session.user.id
   );
   const logError = await writeSyncLog(session.user.id, 1, error ? 0 : 1, Boolean(error));
-  if (error) return logError ? `${error}; sync log failed: ${logError}` : error;
-  return logError ? `Record synced, but sync log failed: ${logError}` : null;
+  if (error) {
+    updateRecordSyncStatus(storageKey, record.id, 'sync_failed', error, record);
+    return logError ? `${error}; sync log failed: ${logError}` : error;
+  }
+  updateRecordSyncStatus(storageKey, record.id, 'synced', '', record);
+  if (logError) console.error(`Record synced, but its sync log is queued for retry: ${logError}`);
+  return null;
+}
+
+export async function syncPendingRecordDeletions({ includeShared = false } = {}) {
+  if (!navigator.onLine) return { synced: 0, records: 0, skipped: 'offline', errors: [] };
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session) return { synced: 0, records: 0, skipped: 'not-signed-in', errors: [] };
+
+  const results = { synced: 0, records: 0, errors: [] };
+  for (const deletion of getPendingRecordDeletions()) {
+    const ownerId = String(deletion.created_by_user_id || '');
+    if (!ownerId) {
+      results.errors.push(`${deletion.category} #${deletion.recordId} delete: record owner is missing`);
+      continue;
+    }
+    if (!includeShared && ownerId !== String(session.user.id)) continue;
+
+    results.records += 1;
+    const error = await deleteRemoteRecord(
+      deletion.category,
+      deletion.recordId,
+      deletion.remoteExpected,
+      ownerId
+    );
+    if (error) {
+      results.errors.push(`${deletion.category} #${deletion.recordId} delete: ${error}`);
+      continue;
+    }
+    removeLegacyRecord(deletion.category, deletion.recordId);
+    removePendingRecordDeletion(deletion.category, deletion.recordId);
+    results.synced += 1;
+  }
+
+  if (results.records > 0) {
+    const logError = await writeSyncLog(
+      session.user.id,
+      results.records,
+      results.synced,
+      results.errors.length > 0
+    );
+    if (logError) console.error(`Record deletion sync completed, but its log is queued for retry: ${logError}`);
+  }
+  if (results.errors.length) console.error('Record deletion sync errors:', results.errors);
+  return results;
 }
 
 export async function deleteRemoteRecord(
   category,
   localId,
-  remoteRecordExpected = false,
+  _remoteRecordExpected = false,
   ownerId = ''
 ) {
   if (!navigator.onLine) return 'offline';
@@ -685,8 +834,17 @@ export async function deleteRemoteRecord(
     .select('data');
 
   if (payloadOwnerDelete.error) return payloadOwnerDelete.error.message;
-  if (remoteRecordExpected && !payloadOwnerDelete.data?.length) {
-    return 'The shared record was not deleted. Check that the Supabase DELETE policy is enabled.';
+  if (!payloadOwnerDelete.data?.length) {
+    const { data: remainingRecords, error: checkError } = await supabase
+      .from(table)
+      .select('data')
+      .eq('data->>id', String(localId))
+      .eq('data->>created_by_user_id', ownerIdToDelete)
+      .limit(1);
+    if (checkError) return checkError.message;
+    if (remainingRecords?.length) {
+      return 'The shared record was not deleted. Check that the Supabase DELETE policy is enabled.';
+    }
   }
   return null;
 }

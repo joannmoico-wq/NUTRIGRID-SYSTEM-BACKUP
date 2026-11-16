@@ -124,9 +124,17 @@ function publishRecords(key, records) {
   window.dispatchEvent(new CustomEvent('bns-records-changed', { detail: { key } }));
 }
 
-function persistCategoryRecords(key, records) {
+function persistCategoryRecords(key, records, change) {
   const table = tableForStorageKey(key);
   if (!table) return Promise.resolve();
+  if (change?.operation === 'delete') {
+    return bnsDatabase.transaction('rw', table, () => table.delete(change.recordId));
+  }
+  if (['upsert', 'realtime-upsert', 'sync-status'].includes(change?.operation)) {
+    const recordId = change.record?.id ?? change.recordId;
+    const record = records.find((item) => String(item.id) === String(recordId));
+    if (record) return bnsDatabase.transaction('rw', table, () => table.put(record));
+  }
   return bnsDatabase.transaction('rw', table, async () => {
     await table.clear();
     if (records.length) await table.bulkPut(records);
@@ -310,7 +318,7 @@ export async function getRecordsWithPhotos(key) {
 
 export function setRecords(key, records, change = null) {
   publishRecords(key, records);
-  const persistence = persistCategoryRecords(key, records);
+  const persistence = persistCategoryRecords(key, records, change);
   persistence.catch((error) => {
     console.error(`Could not persist ${key} in IndexedDB:`, error);
   });
@@ -330,6 +338,36 @@ export function setRecords(key, records, change = null) {
   return persistence;
 }
 
+export function getRecordSyncStatus(record) {
+  const status = String(record?.sync_status || '').toLowerCase();
+  if (['pending_sync', 'syncing', 'synced', 'sync_failed'].includes(status)) return status;
+  return record?.synced || String(record?.status || '').toLowerCase() === 'synced'
+    ? 'synced'
+    : 'pending_sync';
+}
+
+export function updateRecordSyncStatus(key, recordId, syncStatus, syncError = '', expectedRecord = null) {
+  const records = getRecords(key);
+  let updated = false;
+  const nextRecords = records.map((record) => {
+    if (String(record.id) !== String(recordId)) return record;
+    if (expectedRecord && !Object.entries(expectedRecord).every(([field, value]) =>
+      ['sync_status', 'sync_error'].includes(field) ||
+      JSON.stringify(record[field]) === JSON.stringify(value)
+    )) return record;
+
+    updated = true;
+    return {
+      ...record,
+      sync_status: syncStatus,
+      sync_error: syncError || null,
+      ...(syncStatus === 'synced' ? { synced: true, status: 'Synced' } : {}),
+    };
+  });
+  if (updated) setRecords(key, nextRecords, { operation: 'sync-status', recordId: String(recordId) });
+  return updated;
+}
+
 export function deleteRecordById(key, id) {
   const records = getRecords(key);
   const recordToDelete = records.find((record) => String(record.id) === String(id));
@@ -339,7 +377,7 @@ export function deleteRecordById(key, id) {
   setRecords(
     key,
     records.filter((r) => String(r.id) !== String(id)),
-    { operation: 'delete', recordId: String(id) }
+    { operation: 'delete', recordId: recordToDelete?.id ?? id }
   );
 }
 
@@ -633,9 +671,20 @@ export function countPendingAcrossCategories() {
 
 export function sortRecordsNewestFirst(records) {
   const timestamp = (record) => {
-    const date = [
+    const updatedAtDates = [
       record.updated_at,
+      record._raw?.updated_at,
+      record.data?.updated_at,
+      record._raw?.data?.updated_at,
+    ]
+      .filter((value) => value && !Number.isNaN(Date.parse(value)))
+      .map((value) => Date.parse(value));
+    if (updatedAtDates.length) return Math.max(...updatedAtDates);
+
+    const date = [
       record.created_at,
+      record._raw?.created_at,
+      record.data?.created_at,
       record.visit_date,
       record.date_of_registration,
       record.dow,

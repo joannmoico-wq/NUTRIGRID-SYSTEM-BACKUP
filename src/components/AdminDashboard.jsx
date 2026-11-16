@@ -15,13 +15,18 @@ import {
   storageKeyForCategory,
   categoryIdForStorageKey,
   queueRecordDeletion,
+  updateRecordSyncStatus,
 } from '../utils/bnsStorage';
 import {
+  applyAdminRealtimeRecordChange,
   deleteMonthlyReportLine,
   loadAdminDataFromSupabase,
   saveMonthlyReportLine,
 } from '../utils/adminDataService';
-import { syncPendingRecords, syncSingleRecord } from '../utils/syncService';
+import {
+  syncPendingRecordDeletions,
+  syncSingleRecord,
+} from '../utils/syncService';
 import { supabase } from '../utils/supabaseClient';
 import MonthlyReportTable from './MonthlyReportTable';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
@@ -32,6 +37,7 @@ import InteractiveMapComponent from './InteractiveMapComponent';
 import AdminDocuments from './AdminDocuments';
 import ReportExportActions from './ReportExportActions';
 import ConfirmActionDialog from './ConfirmActionDialog';
+import RecordSyncStatus from './RecordSyncStatus';
 import {
   Home,
   Users,
@@ -180,11 +186,6 @@ const BNS_RHM_SIGNATURE_OPTIONS = [
   { id: 'rhm', label: 'RURAL MIDWIFE', role: 'Rural Health Midwife' },
 ];
 
-const BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS = [
-  { id: 'bns', label: 'BNS', role: 'Barangay Nutrition Scholar' },
-  { id: 'rhm', label: 'RHM/RHMPP/NDP', role: 'RHM/RHMPP/NDP' },
-];
-
 const NOTIF_LABELS = {
   [STORAGE_KEYS.residents]: 'Residents',
   [STORAGE_KEYS.environmental]: 'Environmental Sanitation',
@@ -263,7 +264,7 @@ const AdminHeader = ({
   darkMode,
   adminName,
   searchTerm,
-  setSearchTerm,
+  setTabSearchTerm,
   performSearch,
   searchResults,
   setSearchResults,
@@ -346,16 +347,17 @@ const AdminHeader = ({
                       ? 'Completed'
                       : 'Pending'
               );
-              setSearchTerm('');
+              setTabSearchTerm('tasks', '');
               setSearchResults([]);
               setActiveTab('tasks');
             } else if (record.categoryId === 'documents') {
-              setSearchTerm(record.data.name || '');
+              setTabSearchTerm('documents', record.data.name || '');
               setActiveTab('documents');
               setShowSearchSuggestions(false);
             } else {
+              if (record.tab) setTabSearchTerm(record.tab, searchTerm);
               setShowSearchSuggestions(false);
-              setActiveTab(record.tab);
+              if (record.tab) setActiveTab(record.tab);
             }
           }}
           onFocusSuggestions={() => setShowSearchSuggestions(true)}
@@ -853,7 +855,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [isExpanded, setIsExpanded] = useState(() => window.matchMedia('(min-width: 768px)').matches);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem(DARK_MODE_KEY) === 'true');
   const adminName = profileName?.trim() || 'Admin';
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerms, setSearchTerms] = useState({});
+  const searchTerm = searchTerms[activeTab] || '';
+  const setTabSearchTerm = (tab, value) => {
+    setSearchTerms((current) => ({ ...current, [tab]: value }));
+  };
   const [adminPurokFilter, setAdminPurokFilter] = useState('');
   const [searchResults, setSearchResults] = useState([]);
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
@@ -1098,6 +1104,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   useEffect(() => {
     let active = true;
     let loading = false;
+    let refreshAfterLoad = false;
+    const realtimeChangesDuringLoad = [];
     const photoStorageKeys = [
       STORAGE_KEYS.residents,
       STORAGE_KEYS.environmental,
@@ -1109,7 +1117,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
     const loadSharedAdminData = async ({ force = false } = {}) => {
       if (!active) return;
-      if (loading) return;
+      if (loading) {
+        if (force) refreshAfterLoad = true;
+        return;
+      }
       if (!navigator.onLine) {
         setAdminDataStatus('offline');
         return;
@@ -1138,6 +1149,15 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         if (active) setAdminDataStatus('error');
       } finally {
         loading = false;
+        if (active && realtimeChangesDuringLoad.length) {
+          realtimeChangesDuringLoad.splice(0).forEach(({ category, eventType, row }) => {
+            applyAdminRealtimeRecordChange(category, eventType, row);
+          });
+        }
+        if (active && refreshAfterLoad) {
+          refreshAfterLoad = false;
+          void loadSharedAdminData({ force: true });
+        }
       }
     };
 
@@ -1151,7 +1171,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     };
 
     const handleLocalRecordsChanged = (event) => {
-      if (event.detail?.operation === 'upsert' || event.detail?.operation === 'delete') {
+      if (
+        ['upsert', 'realtime-upsert', 'delete'].includes(event.detail?.operation)
+      ) {
         setAdminData(reloadAllAdminData(currentUserId));
         if (event.detail.operation === 'upsert') void hydrateLocalPhotos();
       }
@@ -1174,38 +1196,62 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       if (document.visibilityState === 'visible') void loadSharedAdminData();
     };
     let realtimeRefreshTimeout;
-    const handleRealtimeChange = () => {
-      window.clearTimeout(realtimeRefreshTimeout);
-      realtimeRefreshTimeout = window.setTimeout(
-        () => void loadSharedAdminData({ force: true }),
-        300
-      );
+    const handleRealtimeChange = (category) => (payload) => {
+      const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+      if (applyAdminRealtimeRecordChange(category, payload.eventType, row)) {
+        if (loading) realtimeChangesDuringLoad.push({ category, eventType: payload.eventType, row });
+      } else {
+        window.clearTimeout(realtimeRefreshTimeout);
+        realtimeRefreshTimeout = window.setTimeout(
+          () => void loadSharedAdminData({ force: true }),
+          300
+        );
+      }
     };
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') void loadSharedAdminData();
     };
+    const syncQueuedRecordDeletions = () => {
+      if (!active || !navigator.onLine) return;
+      void syncPendingRecordDeletions({ includeShared: true })
+        .then((result) => {
+          if (result.errors?.length) {
+            console.error('Some queued record deletions are still waiting to sync:', result.errors);
+          }
+        })
+        .catch((error) => {
+          console.error('Could not sync queued record deletions:', error);
+        });
+    };
     const channel = supabase
       .channel(`admin-record-updates-${currentUserId || 'shared'}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, handleRealtimeChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'environmental_sanitation' }, handleRealtimeChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'infant_feeding' }, handleRealtimeChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'lactating_women' }, handleRealtimeChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pregnant_women' }, handleRealtimeChange)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'monthly_natality' }, handleRealtimeChange)
-      .subscribe();
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'residents' }, handleRealtimeChange('residents'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'environmental_sanitation' }, handleRealtimeChange('environmental'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'infant_feeding' }, handleRealtimeChange('infantfeeding'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lactating_women' }, handleRealtimeChange('lactatingwoman'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pregnant_women' }, handleRealtimeChange('pregnantwoman'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'monthly_natality' }, handleRealtimeChange('monthlynatal'))
+      .subscribe((status, error) => {
+        if (['CHANNEL_ERROR', 'TIMED_OUT'].includes(status)) {
+          console.error('Could not subscribe to Admin Dashboard record updates:', error || status);
+        }
+      });
 
     void loadSharedAdminData();
     void hydrateLocalPhotos();
     window.addEventListener('bns-records-changed', handleLocalRecordsChanged);
     window.addEventListener('storage', handleStorageChanged);
     window.addEventListener('focus', handlePageFocus);
+    window.addEventListener('online', syncQueuedRecordDeletions);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    syncQueuedRecordDeletions();
 
     return () => {
       active = false;
       window.removeEventListener('bns-records-changed', handleLocalRecordsChanged);
       window.removeEventListener('storage', handleStorageChanged);
       window.removeEventListener('focus', handlePageFocus);
+      window.removeEventListener('online', syncQueuedRecordDeletions);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.clearTimeout(realtimeRefreshTimeout);
       void supabase.removeChannel(channel);
@@ -1229,7 +1275,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   );
   const handlePurokResidents = useCallback((purok) => {
     setResidentPurokFilter(normalizePurokName(purok));
-    setSearchTerm('');
+    setTabSearchTerm('residents', '');
     setSearchResults([]);
     setActiveTab('residents');
   }, []);
@@ -1240,7 +1286,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const clearScheduledVisitPurok = useCallback(() => setScheduledVisitPurok(''), []);
 
   const performSearch = (query) => {
-    setSearchTerm(query);
+    setTabSearchTerm(activeTab, query);
     setSearchResults(
       query.trim() && !['tasks', 'documents'].includes(activeTab)
         ? performRecordSearch(buildSavedRecords(), query)
@@ -1430,8 +1476,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     };
     const monthKeyFor = (date) =>
       `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    const months = Array.from({ length: 6 }, (_, index) => {
-      const date = new Date(reportMonth.getFullYear(), reportMonth.getMonth() - 5 + index, 1);
+    const months = Array.from({ length: Math.min(reportMonthIndex, 11) }, (_, index) => {
+      const date = new Date(reportMonth.getFullYear(), index, 1);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       return {
         key,
@@ -1521,8 +1567,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     });
     return months.map((month, index) => ({
       ...month,
-      pregnantAndLactating: pregnantCounts[index] + lactatingCounts[index],
-      infants: infantsByMonth.get(month.key).size,
+      vulnerableCases: month.startDate.getMonth() >= 9 ? month.vulnerableCases : 0,
+      pregnantAndLactating: month.startDate.getMonth() >= 9
+        ? pregnantCounts[index] + lactatingCounts[index]
+        : 0,
+      infants: month.startDate.getMonth() >= 9
+        ? infantsByMonth.get(month.key).size
+        : 0,
     }));
   }, [monthlyTrendEndMonth, natalityData, pregnantWomenData, lactatingWomenData]);
   const monthlyTrendMonthOptions = useMemo(() => {
@@ -1548,11 +1599,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       };
     });
   }, []);
-  const activeMonthlyTrend = monthlyTrendData.some((month) =>
-    month.vulnerableCases > 0 ||
-    month.pregnantAndLactating > 0 ||
-    month.infants > 0
-  );
+  const activeMonthlyTrend = monthlyTrendData.length > 0;
 
   const malnutritionStatusData = (() => {
     const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
@@ -1690,21 +1737,20 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       return;
     }
 
-    try {
-      const syncResult = await syncPendingRecords({ includeShared: true });
-      if (syncResult.errors?.length || syncResult.skipped) {
-        const details = syncResult.errors?.join('\n') || `Sync skipped: ${syncResult.skipped}`;
-        console.error('Record deletion is saved locally and waiting to sync:', details);
-        alert('Deleted locally, but the deletion is still waiting to sync. Check your connection and sign-in, then retry.');
-        return;
-      }
-
-      setAdminData(await loadAdminDataFromSupabase(currentUserId));
-      setAdminDataStatus('loaded');
-    } catch (error) {
-      console.error('Record was deleted locally, but could not be synced:', error);
-      alert(`Deleted locally. Supabase sync will retry when possible: ${error.message || 'request failed'}`);
-    }
+    void syncPendingRecordDeletions({ includeShared: true })
+      .then((syncResult) => {
+        if (syncResult.errors?.length || syncResult.skipped) {
+          const details = syncResult.errors?.join('\n') || `Sync skipped: ${syncResult.skipped}`;
+          console.error('Record deletion is saved locally and waiting to sync:', details);
+          alert('Deleted locally, but the deletion is still waiting to sync. Check your connection and sign-in, then retry.');
+          return;
+        }
+        setAdminDataStatus('loaded');
+      })
+      .catch((error) => {
+        console.error('Record was deleted locally, but could not be synced:', error);
+        alert(`Deleted locally. Supabase sync will retry when possible: ${error.message || 'request failed'}`);
+      });
   };
 
   const openCategoryForm = (category, raw = null) => {
@@ -2197,7 +2243,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                       key={col}
                       className="px-3 py-2.5 text-center text-sm font-semibold text-gray-700 dark:text-gray-200 border border-gray-200 dark:border-gray-600"
                     >
-                      {col === 'Status' ? (
+                      {col === 'Status' && row._raw && (
+                        row._raw.sync_status || row._raw.synced !== undefined
+                      ) ? (
+                        <RecordSyncStatus record={row._raw} />
+                      ) : col === 'Status' ? (
                         <span
                           className={`px-2 py-0.5 rounded-full text-xs font-semibold ${
                             row[getColumnKey(col)] === 'Active' || row[getColumnKey(col)] === 'Synced'
@@ -2220,6 +2270,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                             <span className="inline-flex max-w-full items-center justify-center rounded-full bg-pink-100 px-1.5 py-0.5 text-center text-[9px] font-semibold text-pink-700">
                               Updated
                             </span>
+                          )}
+                          {getColumnKey(col).toLowerCase() === updatedColumn &&
+                            !columns.includes('Status') &&
+                            row._raw && (
+                            <RecordSyncStatus record={row._raw} />
                           )}
                         </span>
                       )}
@@ -2522,7 +2577,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               min={monthlyTrendMonthOptions[0]?.value}
               max={monthlyTrendMonthOptions[monthlyTrendMonthOptions.length - 1]?.value}
               darkMode={darkMode}
-              label="Choose the last month in the trend window"
+              label="Choose the last month shown in the yearly trend"
             />
           </div>
           <span
@@ -2532,7 +2587,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               backgroundColor: darkMode ? 'rgba(255,255,255,0.06)' : THEME.light.surface,
             }}
           >
-            {monthlyTrendMonthOptions.find((month) => month.value === monthlyTrendEndMonth)?.label || monthlyTrendEndMonth} · 6-month window
+            {monthlyTrendEndMonth.slice(0, 4)} · January–{monthlyTrendMonthOptions.find((month) => month.value === monthlyTrendEndMonth)?.label.split(' ')[0] || 'November'}
           </span>
         </div>
         <p className="mb-3 text-xs" style={{ color: mutedColor }}>
@@ -2981,7 +3036,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.month5,
             row.notes,
           ])}
-          onExportPdf={() => exportPdfFile({
+          signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
+          onExportPdf={(signatures, options = {}) => exportPdfFile({
           fileName: 'alawihao-infant-feeding',
           title: 'Infant Feeding (0-5 mo)',
           headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', 'Notes'],
@@ -2998,6 +3054,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.month5,
             row.notes,
           ]),
+          signatures,
+          preview: options.preview,
           })}
         />
       }
@@ -3093,7 +3151,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           fileName="alawihao-lactating-women"
           headers={lactatingExportHeaders}
           rows={lactatingExportRows}
-          signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
+          signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
           onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-lactating-women',
             title: 'Masterlist Lactating Women',
@@ -3185,7 +3243,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.ironFolicAcid,
             row.notes,
           ])}
-          signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
+          signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
           onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-pregnant-women',
             title: 'Masterlist of Pregnant Women',
@@ -3337,6 +3395,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <MonthlyReportTable
       darkMode={darkMode}
       data={autoMonthlyReportData}
+      searchQuery={searchTerm}
       onBatchChange={updateMonthlyReportBatch}
       selectedBatch={monthlyReportBatch}
       onSaveLine={(line) => requestAdminConfirmation(
@@ -3405,7 +3464,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             `Barangay: ${REPORT_META.barangay} | Year: ${REPORT_META.reportYear}`,
             `Batch ${monthlyReportBatch}: ${monthlyReportBatchMonths.join(', ')}`,
           ]}
-          signatureOptions={BNS_RHM_RHMPP_NDP_SIGNATURE_OPTIONS}
+          signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
           enableEmail
           onExportPdf={(signatures, options = {}) => exportPdfFile({
             fileName: 'alawihao-essential-health-services-2026',
@@ -3500,7 +3559,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             darkMode={darkMode}
             adminName={adminName}
             searchTerm={searchTerm}
-            setSearchTerm={setSearchTerm}
+            setTabSearchTerm={setTabSearchTerm}
             performSearch={performSearch}
             searchResults={searchResults}
             setSearchResults={setSearchResults}
@@ -3619,6 +3678,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                     created_by_user_id: record.created_by_user_id || currentUserId,
                     synced: false,
                     status: 'pending',
+                    sync_status: 'pending_sync',
+                    sync_error: null,
                   };
                   await upsertRecord(key, pending);
                   if (adminEditingRecord) {
@@ -3635,10 +3696,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                   setAdminDataStatus('loaded');
                   void (async () => {
                     try {
+                      updateRecordSyncStatus(key, pending.id, 'syncing', '', pending);
                       const syncError = await syncSingleRecord(record.category, pending, {
                         includeShared: true,
                       });
                       if (syncError) {
+                        if (['offline', 'not-signed-in'].includes(syncError)) {
+                          updateRecordSyncStatus(key, pending.id, 'pending_sync', '', pending);
+                        } else {
+                          updateRecordSyncStatus(key, pending.id, 'sync_failed', syncError, pending);
+                        }
                         const message = syncError === 'offline'
                           ? 'Saved locally. The changes will sync to Supabase when you are back online.'
                           : syncError === 'not-signed-in'
@@ -3651,9 +3718,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                         alert(message);
                         return;
                       }
-                      await upsertRecord(key, { ...pending, synced: true, status: 'Synced' });
                       refreshData();
                     } catch (error) {
+                      updateRecordSyncStatus(key, pending.id, 'sync_failed', error.message || 'Unknown error', pending);
                       console.error('Could not sync the admin record to Supabase:', error);
                       setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
                       alert(`Saved locally, but Supabase sync failed: ${error.message || 'request failed'}`);

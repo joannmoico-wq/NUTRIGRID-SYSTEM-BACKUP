@@ -81,6 +81,7 @@ export default function ReportExportActions({
   sectionRowLabels = [],
 }) {
   const signatureInput = useRef(null);
+  const exportMenuRef = useRef(null);
   const [signatureSlots, setSignatureSlots] = useState({});
   const [selectedSigner, setSelectedSigner] = useState(null);
   const [signaturePreviewOpen, setSignaturePreviewOpen] = useState(false);
@@ -99,6 +100,22 @@ export default function ReportExportActions({
     if (!signedPdfUrl) return undefined;
     return () => URL.revokeObjectURL(signedPdfUrl);
   }, [signedPdfUrl]);
+
+  useEffect(() => {
+    if (!menuOpen) return undefined;
+    const closeMenuOnOutsideTap = (event) => {
+      if (!exportMenuRef.current?.contains(event.target)) setMenuOpen(false);
+    };
+    const closeMenuOnEscape = (event) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('pointerdown', closeMenuOnOutsideTap);
+    document.addEventListener('keydown', closeMenuOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeMenuOnOutsideTap);
+      document.removeEventListener('keydown', closeMenuOnEscape);
+    };
+  }, [menuOpen]);
 
   const signatures = signatureOptions.length
     ? signatureOptions.map((option) => signatureSlots[option.id]).filter(Boolean)
@@ -404,7 +421,7 @@ export default function ReportExportActions({
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={exportMenuRef}>
       <button
         type="button"
         onClick={() => setMenuOpen((open) => !open)}
@@ -434,6 +451,7 @@ export default function ReportExportActions({
           onChange={handleSignatureFile}
         />
         <div className="space-y-2">
+          <p className="text-center text-xs font-semibold uppercase tracking-wide text-gray-500">E-signature</p>
           {signatureOptions.length ? (
             <div className="grid grid-cols-2 gap-2">
               {signatureOptions.map((option) => (

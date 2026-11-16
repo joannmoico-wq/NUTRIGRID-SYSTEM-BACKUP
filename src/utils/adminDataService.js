@@ -3,6 +3,7 @@ import {
   getPendingRecordDeletions,
   getDeletedMonthlyReportSlugs,
   getRecords,
+  removePendingRecordDeletion,
   setRecords,
   STORAGE_KEYS,
   toAdminEnvironmental,
@@ -123,24 +124,30 @@ const STORAGE_KEY_BY_CATEGORY = {
   monthlynatal: STORAGE_KEYS.monthlynatal,
 };
 
-function cacheSharedRecords(category, remoteRecords, userId) {
+function cacheSharedRecords(category, remoteRecords) {
   const key = STORAGE_KEY_BY_CATEGORY[category];
   const localRecords = getRecords(key);
-  const deletedIds = new Set(
+  const pendingDeletions =
     getPendingRecordDeletions()
-      .filter((item) =>
-        item.category === category &&
-        String(item.created_by_user_id || '') === String(userId || '')
-      )
-      .map((item) => String(item.recordId))
+      .filter((item) => item.category === category);
+  const isPendingDeletion = (record) => pendingDeletions.some((item) =>
+    String(item.recordId) === String(record.id) &&
+    (!item.created_by_user_id ||
+      String(item.created_by_user_id) === String(record.created_by_user_id || ''))
   );
   const remoteById = new Map(
     remoteRecords
-      .filter((record) => !deletedIds.has(String(record.id)))
+      .filter((record) => !isPendingDeletion(record))
       .map((record) => [String(record.id), record])
   );
   localRecords.forEach((localRecord) => {
+    const recordId = String(localRecord.id);
+    if (isPendingDeletion(localRecord)) return;
     const remoteRecord = remoteById.get(String(localRecord.id));
+    if (!localRecord.synced) {
+      remoteById.set(recordId, localRecord);
+      return;
+    }
     if (!remoteRecord) return;
     const photo = remoteRecord.photo_url ||
       remoteRecord.residents_photo ||
@@ -151,21 +158,107 @@ function cacheSharedRecords(category, remoteRecords, userId) {
     if (photo) remoteById.set(String(localRecord.id), { ...remoteRecord, photo_url: photo });
   });
 
-  const pendingForAdmin = localRecords.filter(
-    (record) =>
-      !record.synced &&
-      String(record.created_by_user_id || '') === String(userId || '') &&
-      !deletedIds.has(String(record.id))
-  );
-  pendingForAdmin
-    .forEach((record) => remoteById.set(String(record.id), record));
-
   const records = Array.from(remoteById.values());
-  const preservedPending = localRecords.filter(
-    (record) => !record.synced && !pendingForAdmin.includes(record)
-  );
-  setRecords(key, [...records, ...preservedPending]);
+  setRecords(key, records);
   return records;
+}
+
+function normalizeAdminRecord(category, row, idColumn) {
+  const payload = row.data && typeof row.data === 'object' ? row.data : {};
+  const record = { ...payload };
+  Object.entries(COLUMN_MAPS[category]).forEach(([column, field]) => {
+    if (row[column] !== null && row[column] !== undefined) {
+      const isLegacyDefaultCount =
+        ['male_count', 'female_count', 'total_population', 'hh_with_occupation'].includes(column) &&
+        Number(row[column]) === 0 &&
+        Number(payload[column]) > 0;
+      const isLegacyDefaultBoolean =
+        row[column] === false &&
+        (payload[column] === true || String(payload[column]).toLowerCase() === 'true');
+      if (category === 'environmental' && (isLegacyDefaultCount || isLegacyDefaultBoolean)) return;
+      record[field] = row[column];
+    }
+  });
+  record.photo_url = record.photo_url ||
+    row.residents_photo ||
+    row.environmental_sanitation_photo ||
+    record.residents_photo ||
+    record.environmental_sanitation_photo ||
+    null;
+
+  record.purok = row.purok ?? record.purok ?? '';
+  record.id = payload.id ?? row.local_id ?? row[idColumn];
+  record.created_at = row.created_at || payload.created_at;
+  const updatedAtCandidates = [row.updated_at, payload.updated_at]
+    .filter((value) => value && !Number.isNaN(Date.parse(value)));
+  record.updated_at = updatedAtCandidates.sort(
+    (left, right) => Date.parse(right) - Date.parse(left)
+  )[0] || '';
+  record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || '';
+  record.status = row.status || payload.status || 'Synced';
+  record.synced = String(row.status || '').toLowerCase() === 'synced';
+  record.sync_status = record.synced ? 'synced' : payload.sync_status || 'pending_sync';
+  record.sync_error = payload.sync_error || null;
+  return record;
+}
+
+export function applyAdminRealtimeRecordChange(category, eventType, row) {
+  const config = ADMIN_TABLES[category];
+  if (!config || !row) return false;
+  const key = STORAGE_KEY_BY_CATEGORY[category];
+  const recordId = row.local_id ?? row.data?.id ?? row[config.idColumn];
+  if (recordId === null || recordId === undefined) return false;
+
+  const localRecords = getRecords(key);
+  const ownerId = row.created_by_user_id || row.user_id || row.data?.created_by_user_id || row.data?.user_id;
+  if (eventType === 'DELETE') {
+    removePendingRecordDeletion(category, recordId);
+    const deletedRecord = localRecords.find((record) =>
+      String(record.id) === String(recordId) &&
+      (!ownerId || String(record.created_by_user_id || '') === String(ownerId))
+    );
+    const remaining = localRecords.filter((record) =>
+      String(record.id) !== String(recordId) ||
+      (ownerId && String(record.created_by_user_id || '') !== String(ownerId))
+    );
+    if (remaining.length === localRecords.length) return true;
+    setRecords(key, remaining, {
+      operation: 'delete',
+      recordId: deletedRecord?.id ?? recordId,
+    });
+    return true;
+  }
+
+  if (getPendingRecordDeletions().some((deletion) =>
+    deletion.category === category &&
+    String(deletion.recordId) === String(recordId) &&
+    (!deletion.created_by_user_id ||
+      String(deletion.created_by_user_id) === String(ownerId || ''))
+  )) return true;
+
+  const remoteRecord = normalizeAdminRecord(category, row, config.idColumn);
+  const existingIndex = localRecords.findIndex(
+    (record) => String(record.id) === String(remoteRecord.id)
+  );
+  const existingRecord = localRecords[existingIndex];
+  if (
+    existingRecord &&
+    !existingRecord.synced &&
+    Date.parse(existingRecord.updated_at || existingRecord.created_at || '') >
+      Date.parse(remoteRecord.updated_at || remoteRecord.created_at || '')
+  ) return true;
+
+  const nextRecords = [...localRecords];
+  if (existingIndex < 0) nextRecords.push(remoteRecord);
+  else {
+    const mergedRecord = { ...existingRecord, ...remoteRecord };
+    if (Object.entries(mergedRecord).every(([field, value]) =>
+      JSON.stringify(existingRecord[field]) === JSON.stringify(value)
+    )) return true;
+    nextRecords[existingIndex] = mergedRecord;
+  }
+  setRecords(key, nextRecords, { operation: 'realtime-upsert', record: remoteRecord });
+  return true;
 }
 
 async function readAllRows(category, { table, idColumn }) {
@@ -185,40 +278,7 @@ async function readAllRows(category, { table, idColumn }) {
     offset += PAGE_SIZE;
   }
 
-  const columnMap = COLUMN_MAPS[category];
-  return rows.map((row) => {
-    const payload = row.data && typeof row.data === 'object' ? row.data : {};
-    const record = { ...payload };
-
-    Object.entries(columnMap).forEach(([column, field]) => {
-      if (row[column] !== null && row[column] !== undefined) {
-        const isLegacyDefaultCount =
-          ['male_count', 'female_count', 'total_population', 'hh_with_occupation'].includes(column) &&
-          Number(row[column]) === 0 &&
-          Number(payload[column]) > 0;
-        const isLegacyDefaultBoolean =
-          row[column] === false &&
-          (payload[column] === true || String(payload[column]).toLowerCase() === 'true');
-        if (category === 'environmental' && (isLegacyDefaultCount || isLegacyDefaultBoolean)) return;
-        record[field] = row[column];
-      }
-    });
-    record.photo_url = record.photo_url ||
-      row.residents_photo ||
-      row.environmental_sanitation_photo ||
-      record.residents_photo ||
-      record.environmental_sanitation_photo ||
-      null;
-
-    record.purok = row.purok ?? record.purok ?? '';
-    record.id = payload.id ?? row.local_id ?? row[idColumn];
-    record.created_at = row.created_at || payload.created_at;
-    record.updated_at = payload.updated_at;
-    record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || '';
-    record.status = row.status || payload.status || 'Synced';
-    record.synced = String(row.status || '').toLowerCase() === 'synced';
-    return record;
-  });
+  return rows.map((row) => normalizeAdminRecord(category, row, idColumn));
 }
 
 function monthlyReportFromRow(row) {
@@ -315,7 +375,7 @@ export async function loadAdminDataFromSupabase(userId, { onRecordsLoaded } = {}
     readAllRows('residents', ADMIN_TABLES.residents).then((records) => {
       onRecordsLoaded?.({
         households: toAdminResidents(
-          cacheSharedRecords('residents', records, activeUserId)
+          cacheSharedRecords('residents', records)
         ),
       });
       return records;
@@ -369,12 +429,12 @@ export async function loadAdminDataFromSupabase(userId, { onRecordsLoaded } = {}
     rowsFor(5, 'monthlynatal'),
   ];
   const coreData = {
-    households: toAdminResidents(cacheSharedRecords('residents', households, activeUserId)),
-    environmentalSanitationData: toAdminEnvironmental(cacheSharedRecords('environmental', environmentalSanitationData, activeUserId)),
-    infantFeedingData: toAdminInfantFeeding(cacheSharedRecords('infantfeeding', infantFeedingData, activeUserId)),
-    lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData, activeUserId)),
-    pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData, activeUserId)),
-    natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData, activeUserId)),
+    households: toAdminResidents(cacheSharedRecords('residents', households)),
+    environmentalSanitationData: toAdminEnvironmental(cacheSharedRecords('environmental', environmentalSanitationData)),
+    infantFeedingData: toAdminInfantFeeding(cacheSharedRecords('infantfeeding', infantFeedingData)),
+    lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData)),
+    pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData)),
+    natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData)),
   };
   onRecordsLoaded?.(coreData);
 

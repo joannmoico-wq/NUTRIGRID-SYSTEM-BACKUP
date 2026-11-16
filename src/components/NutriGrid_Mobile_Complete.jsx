@@ -30,6 +30,7 @@ import {
   upsertRecord,
   deleteRecordById,
   getRecords,
+  updateRecordSyncStatus,
   STORAGE_KEYS,
   storageKeyForCategory,
   filterRecordsBySearch,
@@ -51,8 +52,10 @@ import {
 } from '../utils/supabaseAuth';
 import {
   getSharedHouseholdCountsByPurokForMonth,
+  applyRealtimeRecordChange,
   pullUserRecordsFromSupabase,
   syncPendingRecords,
+  syncPendingRecordDeletions,
   syncSingleRecord,
 } from '../utils/syncService';
 import {
@@ -77,6 +80,7 @@ import SideMenu from './SideMenu';
 import ForgotPassword from './ForgotPassword';
 import { supabase } from '../utils/supabaseClient';
 import ConfirmActionDialog from './ConfirmActionDialog';
+import RecordSyncStatus from './RecordSyncStatus';
 import {
   EnvironmentalSanitationForm,
   ResidentsForm,
@@ -108,9 +112,40 @@ const PWA_READ_NOTIFICATIONS_KEY = 'nutrigrid_pwa_read_notifications';
 const SHARED_PUROK_CACHE_KEY = 'nutrigrid_shared_purok_counts_v1';
 const SHARED_PUROK_CACHE_TTL_MS = 5 * 60 * 1000;
 const PWA_INITIAL_SYNC_KEY = 'nutrigrid_initial_sync';
+const PWA_VIEW_STATE_KEY_PREFIX = 'nutrigrid_pwa_view_state:';
+const PWA_PERSISTED_VIEWS = new Set(['home', 'records', 'profile']);
+const PWA_CATEGORY_IDS = new Set([
+  'residents',
+  'environmental',
+  'infantfeeding',
+  'lactatingwoman',
+  'pregnantwoman',
+  'monthlynatal',
+]);
 
 function getInitialSyncKey(userId) {
   return `${PWA_INITIAL_SYNC_KEY}:${userId}`;
+}
+
+function getPwaViewStateKey(userId) {
+  return `${PWA_VIEW_STATE_KEY_PREFIX}${userId}`;
+}
+
+function readPwaViewState(userId) {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(getPwaViewStateKey(userId)) || 'null');
+    const selectedCategory = PWA_CATEGORY_IDS.has(saved?.selectedCategory)
+      ? saved.selectedCategory
+      : null;
+    const activeView = PWA_PERSISTED_VIEWS.has(saved?.activeView) &&
+      (saved.activeView !== 'records' || selectedCategory)
+      ? saved.activeView
+      : 'home';
+    return { activeView, selectedCategory };
+  } catch (error) {
+    console.error('Could not restore the last PWA view:', error);
+    return { activeView: 'home', selectedCategory: null };
+  }
 }
 
 function hasCompletedInitialSync(userId) {
@@ -474,15 +509,10 @@ const RecordsList = ({
     record.name ||
     '—';
 
-  const statusLabel = (record) => {
-    if (record.synced) return 'Synced';
-    if (record.status === 'completed') return 'Completed';
-    return 'Pending';
-  };
-
   const updatedName = (value, record) => (
     <span className="flex w-full min-w-0 flex-col items-center gap-1">
       <span className="block w-full min-w-0 whitespace-normal break-words">{value || '—'}</span>
+      {selectedCategory !== 'residents' && <RecordSyncStatus record={record} />}
       {record.updated_at && (
         <span className="inline-flex max-w-full items-center justify-center rounded-full bg-pink-100 px-1.5 py-0.5 text-center text-[9px] font-semibold text-pink-700">
           Updated
@@ -533,13 +563,7 @@ const RecordsList = ({
                       <span className="font-medium truncate">{record.purok || '—'}</span>
                       {updatedName(record.household_head, record)}
                       <span>{record.total_members ?? '—'}</span>
-                      <span
-                        className={`text-xs font-semibold ${
-                          record.synced ? 'text-emerald-600' : 'text-amber-600'
-                        }`}
-                      >
-                        {statusLabel(record)}
-                      </span>
+                      <RecordSyncStatus record={record} />
                       <span className="text-xs text-gray-600">{formatLastVisit(record)}</span>
                       <ExpandableNote value={record.notes} />
                       <RecordActions record={record} />
@@ -638,6 +662,11 @@ const RecordsList = ({
                               <span className="text-gray-300" aria-hidden="true">—</span>
                             )}
                           </div>
+                        ) : key === 'purok' ? (
+                          <span key={key} className="flex min-w-0 flex-col items-center gap-1">
+                            {record[key] || '—'}
+                            <RecordSyncStatus record={record._raw || record} />
+                          </span>
                         ) : key === 'notes' ? (
                           <ExpandableNote key={key} value={record.notes} />
                         ) : (
@@ -1147,23 +1176,7 @@ const RecordsList = ({
                   <p className="text-sm text-gray-600">{visit.address}</p>
                 </div>
                 <div className="flex flex-col items-end gap-2">
-                  <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${
-                    visit.synced 
-                      ? 'bg-green-200 text-green-800' 
-                      : 'bg-amber-200 text-amber-800'
-                  }`}>
-                    {visit.synced ? (
-                      <>
-                        <CheckCircle size={14} />
-                        Synced
-                      </>
-                    ) : (
-                      <>
-                        <AlertCircle size={14} />
-                        Pending
-                      </>
-                    )}
-                  </span>
+                  <RecordSyncStatus record={visit} className="px-3 py-1 text-xs" />
                 </div>
               </div>
 
@@ -2337,6 +2350,21 @@ const NutriGridMobile = () => {
     return () => window.clearTimeout(timeout);
   }, [syncNotification]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !currentUser?.id || !PWA_PERSISTED_VIEWS.has(activeView)) return;
+    try {
+      sessionStorage.setItem(
+        getPwaViewStateKey(currentUser.id),
+        JSON.stringify({
+          activeView,
+          selectedCategory: PWA_CATEGORY_IDS.has(selectedCategory) ? selectedCategory : null,
+        })
+      );
+    } catch (error) {
+      console.error('Could not save the current PWA view:', error);
+    }
+  }, [activeView, currentUser?.id, isAuthenticated, selectedCategory]);
+
   // Initialize app
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -2397,9 +2425,10 @@ const NutriGridMobile = () => {
   };
 
   const completeSignIn = (userData) => {
+    const savedView = readPwaViewState(userData.id);
     startLocationUpdates(userData.id);
     setCurrentUser(userData);
-    setActiveView('home');
+    setActiveView(savedView.activeView);
     setShowNotifications(false);
     setShowMenu(false);
     setShowCategoryForm(false);
@@ -2407,7 +2436,7 @@ const NutriGridMobile = () => {
     setSearchQuery('');
     setSearchResults([]);
     setShowSearchSuggestions(false);
-    setSelectedCategory(null);
+    setSelectedCategory(savedView.selectedCategory);
     setRecordsRefresh((version) => version + 1);
     setUserName(
       userData.fullName || (userData.firstName
@@ -2524,13 +2553,14 @@ const NutriGridMobile = () => {
 
   const syncData = async ({ notify = true } = {}) => {
     try {
+      const deletionResult = await syncPendingRecordDeletions();
       const recordResult = await syncPendingRecords();
       let pulledRecords = 0;
       const result = {
-        synced: recordResult.synced || 0,
-        records: recordResult.records || 0,
-        errors: recordResult.errors || [],
-        skipped: recordResult.skipped,
+        synced: (deletionResult.synced || 0) + (recordResult.synced || 0),
+        records: (deletionResult.records || 0) + (recordResult.records || 0),
+        errors: [...(deletionResult.errors || []), ...(recordResult.errors || [])],
+        skipped: deletionResult.skipped || recordResult.skipped,
       };
       if (currentUser?.id) {
         const pullResult = await pullUserRecordsFromSupabase(currentUser.id);
@@ -2639,6 +2669,69 @@ const NutriGridMobile = () => {
   }, [isAuthenticated, currentUser?.id, currentUser?.role]);
 
   useEffect(() => {
+    if (!isAuthenticated || !currentUser?.id || currentUser.role?.toLowerCase() === 'admin') {
+      return undefined;
+    }
+
+    const tableCategories = [
+      ['residents', 'residents'],
+      ['environmental_sanitation', 'environmental'],
+      ['infant_feeding', 'infantfeeding'],
+      ['lactating_women', 'lactatingwoman'],
+      ['pregnant_women', 'pregnantwoman'],
+      ['monthly_natality', 'monthlynatal'],
+    ];
+    const channel = supabase.channel(`pwa-record-updates-${currentUser.id}`);
+    tableCategories.forEach(([table, category]) => {
+      channel.on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table,
+        },
+        (payload) => {
+          const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
+          if (applyRealtimeRecordChange(category, payload.eventType, row, currentUser.id)) {
+            setRecordsRefresh((version) => version + 1);
+          } else if (
+            payload.eventType === 'DELETE' &&
+            [
+              row?.created_by_user_id,
+              row?.user_id,
+              row?.data?.created_by_user_id,
+              row?.data?.user_id,
+            ]
+              .filter(Boolean)
+              .every((ownerId) => String(ownerId) === String(currentUser.id))
+          ) {
+            void pullUserRecordsFromSupabase(currentUser.id)
+              .then((result) => {
+                if (result.errors.length) {
+                  console.error('Could not reconcile a record deletion from Supabase:', result.errors);
+                  return;
+                }
+                setRecordsRefresh((version) => version + 1);
+              })
+              .catch((error) => {
+                console.error('Could not reconcile a record deletion from Supabase:', error);
+              });
+          }
+        }
+      );
+    });
+    channel.subscribe((status, error) => {
+      if (['CHANNEL_ERROR', 'TIMED_OUT'].includes(status)) {
+        console.error('Could not subscribe to Admin Dashboard record updates:', error || status);
+      }
+    });
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+  }, [isAuthenticated, currentUser?.id, currentUser?.role]);
+
+  useEffect(() => {
     const refreshPendingCount = () => setRecordsRefresh((version) => version + 1);
     const handleStorage = (event) => {
       if (
@@ -2669,6 +2762,8 @@ const NutriGridMobile = () => {
       created_by_user_id: currentUser?.id || '',
       synced: false,
       status: 'pending',
+      sync_status: 'pending_sync',
+      sync_error: null,
     };
     const ownedPending = pending;
     try {
@@ -2693,27 +2788,31 @@ const NutriGridMobile = () => {
     if (wasEditingRecord) setActiveView('records');
     setRecordsRefresh((v) => v + 1);
     showSyncNotification('Record saved on this device. Syncing to Supabase…');
+    updateRecordSyncStatus(key, ownedPending.id, 'syncing', '', ownedPending);
 
     void syncSingleRecord(formData.category, ownedPending)
       .then((syncErr) => {
         if (!syncErr) {
-          upsertRecord(key, { ...ownedPending, synced: true, status: 'Synced' });
           setRecordsRefresh((v) => v + 1);
           showSyncNotification('Record synced and saved in the Admin Dashboard and database.');
           return;
         }
         if (syncErr === 'offline') {
+          updateRecordSyncStatus(key, ownedPending.id, 'pending_sync', '', ownedPending);
           showSyncNotification('Record saved on this device. It will sync when you are back online.');
           return;
         }
         if (syncErr === 'not-signed-in') {
+          updateRecordSyncStatus(key, ownedPending.id, 'pending_sync', '', ownedPending);
           showSyncNotification('Record saved on this device. Sign in to sync it to Supabase.');
           return;
         }
+        updateRecordSyncStatus(key, ownedPending.id, 'sync_failed', syncErr, ownedPending);
         console.error('Record sync failed:', syncErr);
         showSyncNotification(`Record saved on this device, but cloud sync failed: ${syncErr}`);
       })
       .catch((error) => {
+        updateRecordSyncStatus(key, ownedPending.id, 'sync_failed', error.message || 'Unknown error', ownedPending);
         console.error('Record sync failed:', error);
         showSyncNotification(`Record saved on this device, but cloud sync failed: ${error.message || 'Unknown error'}`);
       });
@@ -2748,12 +2847,18 @@ const NutriGridMobile = () => {
       return;
     }
 
-    const result = await syncData({ notify: false });
-    if (result.skipped || result.errors?.length) {
-      alert('Deleted locally, but the deletion is still waiting to sync. Check your connection and sign-in, then retry.');
-      return;
-    }
-    showSyncNotification('Record deletion synced to the Admin Dashboard and database.');
+    void syncPendingRecordDeletions()
+      .then((result) => {
+        if (result.skipped || result.errors?.length) {
+          alert('Deleted locally, but the deletion is still waiting to sync. Check your connection and sign-in, then retry.');
+          return;
+        }
+        showSyncNotification('Record deletion synced to the Admin Dashboard and database.');
+      })
+      .catch((error) => {
+        console.error('Record deletion is saved locally and waiting to sync:', error);
+        alert('Deleted locally, but the deletion could not sync. Check your connection and try again.');
+      });
     },
     { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
   );
@@ -2866,7 +2971,9 @@ const NutriGridMobile = () => {
         created_by_user_id: currentUser?.id || '',
         synced: false,
         created_at: new Date().toISOString(),
-        status: 'pending'
+        status: 'pending',
+        sync_status: 'pending_sync',
+        sync_error: null,
       };
 
       const updated = [...pendingVisits, visitData];

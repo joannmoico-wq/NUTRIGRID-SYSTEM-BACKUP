@@ -5,6 +5,7 @@ const TASKS_STORAGE_KEY = 'nutrigrid_tasks';
 const PENDING_TASKS_STORAGE_KEY = 'nutrigrid_pending_task_changes';
 const BHW_PROFILES_STORAGE_KEY = 'nutrigrid_bhw_profiles';
 const TASK_NOTIFICATION_PREFIX = 'nutrigrid_task_notification_';
+const TASK_PAGE_SIZE = 100;
 let syncingTasks = false;
 let syncRequested = false;
 
@@ -199,14 +200,26 @@ export async function loadTasks({ assignedToUserId } = {}) {
     return selectTasks(getLocalTasks());
   }
 
-  let query = supabase.from('tasks').select('*').order('created_at', { ascending: false });
-  if (assignedToUserId) query = query.eq('assigned_to_user_id', assignedToUserId);
-  const { data, error } = await query;
-  if (error) throw new Error(error.message);
+  const remoteTasks = [];
+  let offset = 0;
+  while (true) {
+    let query = supabase
+      .from('tasks')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .range(offset, offset + TASK_PAGE_SIZE - 1);
+    if (assignedToUserId) query = query.eq('assigned_to_user_id', assignedToUserId);
+
+    const { data, error } = await query;
+    if (error) throw new Error(error.message);
+    remoteTasks.push(...(data || []));
+    if (!data || data.length < TASK_PAGE_SIZE) break;
+    offset += TASK_PAGE_SIZE;
+  }
 
   const merged = cacheRemoteTasks([
     ...getLocalTasks().filter((task) => String(task.task_id).startsWith('-')),
-    ...(data || []),
+    ...remoteTasks,
   ]);
   return selectTasks(merged);
 }

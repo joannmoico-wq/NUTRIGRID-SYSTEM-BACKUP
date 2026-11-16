@@ -31,6 +31,10 @@ function displayCount(value) {
   return Number(value) === 0 || value == null || value === '' ? '' : value;
 }
 
+function normalizeSearchText(value) {
+  return String(value ?? '').toLowerCase().replace(/[–—−]/g, '-');
+}
+
 function isSingleValueRow(row) {
   return SINGLE_VALUE_ROW_SLUGS.has(String(row.slug));
 }
@@ -57,6 +61,7 @@ export default function MonthlyReportTable({
   exportActions,
   onBatchChange,
   selectedBatch,
+  searchQuery = '',
 }) {
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -88,8 +93,20 @@ export default function MonthlyReportTable({
     () => data
       .filter((row) => Number(row.reportYear) === Number(selectedYear))
       .filter((row) => Number(row.reportQuarter || 1) === selectedQuarter)
+      .filter((row) => {
+        const query = normalizeSearchText(searchQuery.trim());
+        if (!query) return true;
+        return [
+          row.category,
+          row.groupLabel,
+          row.indicator,
+          row.subcategory,
+          row.slug,
+          ...COUNT_KEYS.map((key) => row[key]),
+        ].some((value) => normalizeSearchText(value).includes(query));
+      })
       .map((row) => sumTotals(row)),
-    [data, selectedQuarter, selectedYear]
+    [data, searchQuery, selectedQuarter, selectedYear]
   );
   const selectableRows = rows.filter((row) => !row.isHeader);
 
@@ -244,7 +261,13 @@ export default function MonthlyReportTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
+            {rows.length === 0 && searchQuery.trim() ? (
+              <tr>
+                <td colSpan={10} className={`${td} py-6 text-center text-gray-500`}>
+                  No records match your search.
+                </td>
+              </tr>
+            ) : rows.map((row) => (
               <tr key={row.id} className={row.isHeader ? 'bg-gray-50/80 dark:bg-white/5' : ''}>
                 <td
                   className={`${td} ${row.isHeader ? 'font-bold text-gray-900 dark:text-white' : 'pl-4'}`}
