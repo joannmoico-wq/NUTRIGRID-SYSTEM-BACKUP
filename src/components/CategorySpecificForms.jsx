@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Check, Camera, MapPin, X } from 'lucide-react';
 import { calculateAgeInMonths as getCompletedAgeInMonths, calculateAgeInYears, calculateWhoGrowthStatuses } from '../utils/childGrowth';
-import { PUROK_OPTIONS } from '../utils/purok';
+import { PUROK_FORM_OPTIONS } from '../utils/purok';
 
 /**
  * CATEGORY-SPECIFIC FORMS FOR NUTRIGRID
@@ -309,7 +309,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
           >
             <option value="">Select Purok</option>
-            {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+            {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
           </select>
         </div>
         <div>
@@ -720,7 +720,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
           className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg"
         >
           <option value="">Select Purok</option>
-          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
         </select>
       </div>
       <div>
@@ -881,7 +881,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
         <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
         <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
           <option value="">Select Purok</option>
-          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
         </select>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -1129,7 +1129,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
         <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
         <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
           <option value="">Select Purok</option>
-          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
         </select>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -1383,7 +1383,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
         <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
           <option value="">Select Purok</option>
-          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
         </select>
       </div>
       <div className="grid grid-cols-2 gap-3">
@@ -1660,7 +1660,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
         <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
         <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
           <option value="">Select Purok</option>
-          {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
         </select>
       </div>
       <div>

@@ -69,7 +69,12 @@ import {
 import ReportRowActions from './ReportRowActions';
 import { ExpandableNote } from './AdminReportTable';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
-import { normalizePurokName, PUROK_OPTIONS } from '../utils/purok';
+import {
+  normalizeEnvironmentalPurokName,
+  normalizePurokName,
+  PUROK_FILTER_OPTIONS,
+  PUROK_FORM_OPTIONS,
+} from '../utils/purok';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
 import { calculateAgeInYears } from '../utils/childGrowth';
 import { recordInformationEdit, syncPendingActivityLogs } from '../utils/activityLogService';
@@ -387,7 +392,7 @@ const PageHeader = ({
           aria-label="Filter records by Purok"
         >
           <option value="">All Puroks</option>
-          {PUROK_OPTIONS.map((purok) => (
+          {PUROK_FILTER_OPTIONS.map((purok) => (
             <option key={purok} value={purok}>{purok}</option>
           ))}
         </select>
@@ -430,7 +435,7 @@ const RecordsList = ({
       searchQuery
     );
     return selectedCategory !== 'environmental' && purokFilter
-      ? records.filter((record) => normalizePurokName(record.purok) === purokFilter)
+      ? records.filter((record) => normalizeEnvironmentalPurokName(record.purok) === purokFilter)
       : records;
   }, [selectedCategory, recordsRefresh, searchQuery, currentUserId, purokFilter]);
 
@@ -446,7 +451,7 @@ const RecordsList = ({
       searchQuery
     ).filter((record) =>
       selectedCategory === 'environmental' ||
-      !purokFilter || normalizePurokName(record.purok) === purokFilter
+      !purokFilter || normalizeEnvironmentalPurokName(record.purok) === purokFilter
     );
     const ids = new Set(canonicalRecords.map((r) => String(r.id)));
     return sortRecordsNewestFirst([
@@ -472,7 +477,7 @@ const RecordsList = ({
     ? pendingVisits
     : pendingVisits.filter((visit) => filter === 'pending' ? !visit.synced : visit.synced)
   ).filter((visit) =>
-    !purokFilter || normalizePurokName(visit.purok) === purokFilter
+    !purokFilter || normalizeEnvironmentalPurokName(visit.purok) === purokFilter
   );
 
   const handleDeleteRecord = (id) => {
@@ -3078,7 +3083,7 @@ const NutriGridMobile = () => {
               className="w-full px-4 py-3 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-300 focus:border-blue-400 text-base shadow-sm"
             >
               <option value="">Select Purok</option>
-              {PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+              {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
             </select>
           </div>
 

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Download, FileText, Plus, X } from 'lucide-react';
 import ReportRowActions from './ReportRowActions';
-import { normalizePurokName, PUROK_OPTIONS } from '../utils/purok';
+import { normalizeEnvironmentalPurokName, PUROK_FILTER_OPTIONS } from '../utils/purok';
 import { isRecordEdited } from '../utils/bnsStorage';
 
 export const REPORT_META = {
@@ -125,7 +125,7 @@ export default function AdminReportTable({
   const purokFilter = controlledPurokFilter ?? localPurokFilter;
   const setPurokFilter = onPurokFilterChange || setLocalPurokFilter;
   const visibleData = showPurokFilter && purokFilter && purokFilter !== '__sorted__'
-    ? data.filter((row) => normalizePurokName(row.purok) === purokFilter)
+    ? data.filter((row) => normalizeEnvironmentalPurokName(row.purok) === purokFilter)
     : data;
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -222,7 +222,7 @@ export default function AdminReportTable({
               >
                 <option value="">All Puroks</option>
                 <option value="__sorted__">Purok 1-10</option>
-                {PUROK_OPTIONS.map((purok) => (
+                {PUROK_FILTER_OPTIONS.map((purok) => (
                   <option key={purok} value={purok}>{purok}</option>
                 ))}
               </select>

@@ -73,7 +73,14 @@ import {
   TrendingUp,
 } from 'lucide-react';
 import { getCategoryForm } from './CategorySpecificForms';
-import { normalizePurokName, PUROK_OPTIONS, sortPurokCounts, getPurokNumber } from '../utils/purok';
+import {
+  ENVIRONMENTAL_PUROK_OPTIONS,
+  normalizeEnvironmentalPurokName,
+  normalizePurokName,
+  PUROK_OPTIONS,
+  sortPurokCounts,
+  getPurokNumber,
+} from '../utils/purok';
 import { isTaskOverdue } from '../utils/taskSyncService';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
 import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
@@ -1268,7 +1275,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       if (adminPurokFilter === '__sorted__') {
         rows = [...rows].sort((a, b) => getPurokNumber(a.purok) - getPurokNumber(b.purok));
       } else if (adminPurokFilter) {
-        rows = rows.filter((record) => normalizePurokName(record.purok) === adminPurokFilter);
+        rows = rows.filter((record) => normalizeEnvironmentalPurokName(record.purok) === adminPurokFilter);
       }
       return rows;
     },
@@ -1796,10 +1803,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const filterAdminTableData = (rows, term, categoryId) => {
     let filteredRows = rows;
-    if (adminPurokFilter === '__sorted__') {
-      filteredRows = [...filteredRows].sort((a, b) => getPurokNumber(a.purok) - getPurokNumber(b.purok));
-    } else if (adminPurokFilter) {
-      filteredRows = filteredRows.filter((row) => normalizePurokName(row.purok) === adminPurokFilter);
+    if (categoryId !== 'environmental') {
+      if (adminPurokFilter === '__sorted__') {
+        filteredRows = [...filteredRows].sort((a, b) => getPurokNumber(a.purok) - getPurokNumber(b.purok));
+      } else if (adminPurokFilter) {
+        filteredRows = filteredRows.filter((row) => normalizeEnvironmentalPurokName(row.purok) === adminPurokFilter);
+      }
     }
     if (!term.trim()) return filteredRows;
     const q = term.trim().toLowerCase();
@@ -2911,7 +2920,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     ];
     const grouped = new Map();
     filteredEnvironmental.forEach((record) => {
-      const purok = normalizePurokName(record.purok) || record.purok || 'Unassigned';
+      const purok = normalizeEnvironmentalPurokName(record.purok) || record.purok || 'Unassigned';
       const current = grouped.get(purok) || {
         purok,
         id: record.id,
@@ -2922,10 +2931,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       });
       grouped.set(purok, current);
     });
-    const tableData = Array.from({ length: 10 }, (_, index) => {
-      const normalizedPurok = `Purok ${index + 1}`;
-      const purok = `P-${index + 1}`;
-      const row = { ...(grouped.get(normalizedPurok) || {}), purok };
+    const tableData = ENVIRONMENTAL_PUROK_OPTIONS.map((purok) => {
+      const row = { ...(grouped.get(purok) || {}), purok };
       numericKeys.forEach((key) => { row[key] = row[key] || 0; });
       return row;
     });
