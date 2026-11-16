@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import ForgotPassword from "./ForgotPassword";
+import ConfirmActionDialog from "./ConfirmActionDialog";
 import { supabase } from "../utils/supabaseClient";
 import { CalendarDays, Lock, Mail, User } from "lucide-react";
 
@@ -219,6 +220,7 @@ function SignInPage({ onSignIn, onRegister, onSocialSignIn }) {
   const [notice, setNotice] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [activeProvider, setActiveProvider] = useState("");
+  const [showAuthConfirmation, setShowAuthConfirmation] = useState(false);
   const registering = mode === "register";
 
   useEffect(() => {
@@ -253,6 +255,17 @@ function SignInPage({ onSignIn, onRegister, onSocialSignIn }) {
       return;
     }
 
+    setShowAuthConfirmation(true);
+  }
+
+  async function confirmAuthentication() {
+    const callback = registering ? onRegister : onSignIn;
+    if (typeof callback !== "function") {
+      setShowAuthConfirmation(false);
+      setError("Supabase authentication is not available. Please try again later.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       await callback({
@@ -279,7 +292,9 @@ function SignInPage({ onSignIn, onRegister, onSocialSignIn }) {
           valid: true,
         });
       }
+      setShowAuthConfirmation(false);
     } catch (authError) {
+      setShowAuthConfirmation(false);
       setError(authError.message || "Could not authenticate with Supabase.");
     } finally {
       setIsSubmitting(false);
@@ -490,6 +505,18 @@ function SignInPage({ onSignIn, onRegister, onSocialSignIn }) {
         </p>
       </section>
       <Notice notice={notice} onClose={() => setNotice(null)} />
+      <ConfirmActionDialog
+        open={showAuthConfirmation}
+        title={registering ? "Confirm account creation" : "Confirm log in"}
+        message={registering
+          ? "Are you sure you want to create an account with these details?"
+          : "Are you sure you want to log in with this account?"}
+        confirmLabel="Save"
+        cancelLabel="Cancel"
+        busy={isSubmitting}
+        onConfirm={confirmAuthentication}
+        onCancel={() => setShowAuthConfirmation(false)}
+      />
     </main>
   );
 }
