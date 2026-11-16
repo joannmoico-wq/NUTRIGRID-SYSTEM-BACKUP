@@ -16,6 +16,7 @@ import {
   storageKeyForCategory,
   categoryIdForStorageKey,
   queueRecordDeletion,
+  getRecordSyncStatus,
   updateRecordSyncStatus,
 } from '../utils/bnsStorage';
 import {
@@ -79,11 +80,12 @@ import {
   normalizePurokName,
   PUROK_OPTIONS,
   sortPurokCounts,
-  getPurokNumber,
+  comparePurokRecords,
 } from '../utils/purok';
 import { isTaskOverdue } from '../utils/taskSyncService';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
 import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
+import { removeNotesColumns } from '../utils/reportExport';
 import {
   getActivityCategoryLabel,
   loadRecordActivityLogs,
@@ -851,14 +853,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
-  const [monthlyTrendEndMonth, setMonthlyTrendEndMonth] = useState(() => {
+  const [monthlyTrendYear, setMonthlyTrendYear] = useState(() => {
     const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
-    if (!reportMonthMatch) {
-      const now = new Date();
-      return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    }
-    const monthIndex = new Date(`${reportMonthMatch[1]} 1, ${reportMonthMatch[2]}`).getMonth();
-    return `${reportMonthMatch[2]}-${String(monthIndex + 1).padStart(2, '0')}`;
+    return reportMonthMatch ? reportMonthMatch[2] : String(new Date().getFullYear());
   });
   const [isExpanded, setIsExpanded] = useState(() => window.matchMedia('(min-width: 768px)').matches);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem(DARK_MODE_KEY) === 'true');
@@ -1112,8 +1109,17 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   useEffect(() => {
     let active = true;
     let loading = false;
+    let syncingPendingRecords = false;
     let refreshAfterLoad = false;
     const realtimeChangesDuringLoad = [];
+    const recordSyncCategories = [
+      { category: 'residents', key: STORAGE_KEYS.residents },
+      { category: 'environmental', key: STORAGE_KEYS.environmental },
+      { category: 'infantfeeding', key: STORAGE_KEYS.infantfeeding },
+      { category: 'lactatingwoman', key: STORAGE_KEYS.lactatingwoman },
+      { category: 'pregnantwoman', key: STORAGE_KEYS.pregnantwoman },
+      { category: 'monthlynatal', key: STORAGE_KEYS.monthlynatal },
+    ];
     const photoStorageKeys = [
       STORAGE_KEYS.residents,
       STORAGE_KEYS.environmental,
@@ -1122,6 +1128,45 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       STORAGE_KEYS.pregnantwoman,
       STORAGE_KEYS.monthlynatal,
     ];
+
+    const retryPendingRecords = async () => {
+      if (!active || !navigator.onLine || syncingPendingRecords) return;
+      const pendingRecords = recordSyncCategories.flatMap(({ category, key }) =>
+        getRecords(key)
+          .filter((record) =>
+            record.created_by_user_id &&
+            ['pending_sync', 'sync_failed'].includes(getRecordSyncStatus(record))
+          )
+          .map((record) => ({ category, key, record }))
+      );
+      if (!pendingRecords.length) return;
+
+      syncingPendingRecords = true;
+      let nextIndex = 0;
+      const worker = async () => {
+        while (active && navigator.onLine && nextIndex < pendingRecords.length) {
+          const item = pendingRecords[nextIndex];
+          nextIndex += 1;
+          try {
+            const error = await syncSingleRecord(item.category, item.record, { includeShared: true });
+            if (error && !['offline', 'not-signed-in'].includes(error)) {
+              console.error(`Could not retry syncing ${item.category} record ${item.record.id}:`, error);
+            }
+          } catch (error) {
+            console.error(`Could not retry syncing ${item.category} record ${item.record.id}:`, error);
+          }
+        }
+      };
+      try {
+        await Promise.all(Array.from(
+          { length: Math.min(4, pendingRecords.length) },
+          () => worker()
+        ));
+        if (active) setAdminData(reloadAllAdminData(currentUserId));
+      } finally {
+        syncingPendingRecords = false;
+      }
+    };
 
     const loadSharedAdminData = async ({ force = false } = {}) => {
       if (!active) return;
@@ -1141,10 +1186,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       loading = true;
       try {
         const sharedData = await loadAdminDataFromSupabase(currentUserId, {
-          onRecordsLoaded: (records) => {
+          onRecordsLoaded: (records, complete = false) => {
             if (!active) return;
             setAdminData((currentData) => ({ ...currentData, ...records }));
-            setAdminDataStatus('loaded');
+            if (complete) setAdminDataStatus('loaded');
           },
         });
         if (active) {
@@ -1201,7 +1246,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     };
 
     const handlePageFocus = () => {
-      if (document.visibilityState === 'visible') void loadSharedAdminData();
+      if (document.visibilityState === 'visible') {
+        void loadSharedAdminData();
+        void retryPendingRecords();
+      }
     };
     let realtimeRefreshTimeout;
     const handleRealtimeChange = (category) => (payload) => {
@@ -1217,7 +1265,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       }
     };
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') void loadSharedAdminData();
+      if (document.visibilityState === 'visible') {
+        void loadSharedAdminData();
+        void retryPendingRecords();
+      }
     };
     const syncQueuedRecordDeletions = () => {
       if (!active || !navigator.onLine) return;
@@ -1246,11 +1297,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       });
 
     void loadSharedAdminData();
+    void retryPendingRecords();
     void hydrateLocalPhotos();
     window.addEventListener('bns-records-changed', handleLocalRecordsChanged);
     window.addEventListener('storage', handleStorageChanged);
     window.addEventListener('focus', handlePageFocus);
     window.addEventListener('online', syncQueuedRecordDeletions);
+    window.addEventListener('online', retryPendingRecords);
     document.addEventListener('visibilitychange', handleVisibilityChange);
     syncQueuedRecordDeletions();
 
@@ -1260,6 +1313,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       window.removeEventListener('storage', handleStorageChanged);
       window.removeEventListener('focus', handlePageFocus);
       window.removeEventListener('online', syncQueuedRecordDeletions);
+      window.removeEventListener('online', retryPendingRecords);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.clearTimeout(realtimeRefreshTimeout);
       void supabase.removeChannel(channel);
@@ -1273,7 +1327,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         ? filteredHouseholds.filter((record) => normalizePurokName(record.purok) === residentPurokFilter)
         : filteredHouseholds;
       if (adminPurokFilter === '__sorted__') {
-        rows = [...rows].sort((a, b) => getPurokNumber(a.purok) - getPurokNumber(b.purok));
+        rows = [...rows].sort(comparePurokRecords);
       } else if (adminPurokFilter) {
         rows = rows.filter((record) => normalizeEnvironmentalPurokName(record.purok) === adminPurokFilter);
       }
@@ -1471,8 +1525,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const maxPurokHouseholdCount = Math.max(1, ...purokData.map(({ value }) => value));
 
   const monthlyTrendData = useMemo(() => {
-    const [reportYear, reportMonthIndex] = monthlyTrendEndMonth.split('-').map(Number);
-    const reportMonth = new Date(reportYear, reportMonthIndex - 1, 1);
+    const reportYear = Number(monthlyTrendYear);
     const parseDate = (value) => {
       if (!value) return null;
       const dateString = String(value);
@@ -1484,8 +1537,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     };
     const monthKeyFor = (date) =>
       `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
-    const months = Array.from({ length: Math.min(reportMonthIndex, 11) }, (_, index) => {
-      const date = new Date(reportMonth.getFullYear(), index, 1);
+    const months = Array.from({ length: 12 }, (_, index) => {
+      const date = new Date(reportYear, index, 1);
       const key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
       return {
         key,
@@ -1575,37 +1628,17 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     });
     return months.map((month, index) => ({
       ...month,
-      vulnerableCases: month.startDate.getMonth() >= 9 ? month.vulnerableCases : 0,
-      pregnantAndLactating: month.startDate.getMonth() >= 9
-        ? pregnantCounts[index] + lactatingCounts[index]
-        : 0,
-      infants: month.startDate.getMonth() >= 9
-        ? infantsByMonth.get(month.key).size
-        : 0,
+      vulnerableCases: month.vulnerableCases,
+      pregnantAndLactating: pregnantCounts[index] + lactatingCounts[index],
+      infants: infantsByMonth.get(month.key).size,
     }));
-  }, [monthlyTrendEndMonth, natalityData, pregnantWomenData, lactatingWomenData]);
-  const monthlyTrendMonthOptions = useMemo(() => {
-    const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
-    const reportMonth = reportMonthMatch
-      ? new Date(`${reportMonthMatch[1]} 1, ${reportMonthMatch[2]}`)
-      : new Date();
-    const now = new Date();
-    const latestMonth = new Date(
-      Math.max(reportMonth.getFullYear(), now.getFullYear()),
-      reportMonth.getFullYear() > now.getFullYear()
-        ? reportMonth.getMonth()
-        : reportMonth.getFullYear() < now.getFullYear()
-          ? now.getMonth()
-          : Math.max(reportMonth.getMonth(), now.getMonth()),
-      1
-    );
-    return Array.from({ length: 24 }, (_, index) => {
-      const date = new Date(latestMonth.getFullYear(), latestMonth.getMonth() - 23 + index, 1);
-      return {
-        value: `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`,
-        label: date.toLocaleDateString('en', { month: 'long', year: 'numeric' }),
-      };
-    });
+  }, [monthlyTrendYear, natalityData, pregnantWomenData, lactatingWomenData]);
+  const monthlyTrendYears = useMemo(() => {
+    const reportYear = Number(String(REPORT_META.monthYear || '').match(/\d{4}/)?.[0]);
+    const currentYear = new Date().getFullYear();
+    const latestYear = Math.max(reportYear || currentYear, currentYear);
+    const earliestYear = Math.min(2020, reportYear || currentYear);
+    return Array.from({ length: latestYear - earliestYear + 1 }, (_, index) => String(earliestYear + index));
   }, []);
   const activeMonthlyTrend = monthlyTrendData.length > 0;
 
@@ -1805,7 +1838,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     let filteredRows = rows;
     if (categoryId !== 'environmental') {
       if (adminPurokFilter === '__sorted__') {
-        filteredRows = [...filteredRows].sort((a, b) => getPurokNumber(a.purok) - getPurokNumber(b.purok));
+        filteredRows = [...filteredRows].sort(comparePurokRecords);
       } else if (adminPurokFilter) {
         filteredRows = filteredRows.filter((row) => normalizeEnvironmentalPurokName(row.purok) === adminPurokFilter);
       }
@@ -1996,7 +2029,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     { id: 'dashboard', icon: LayoutDashboard, label: 'Home Dashboard' },
     { id: 'residents', icon: Users2, label: 'Residents' },
     { id: 'environmentalSanitation', icon: Leaf, label: 'Environmental Sanitation Report' },
-    { id: 'infantFeeding', icon: Baby, label: 'Infant Feeding (0-5 mo)' },
+    { id: 'infantFeeding', icon: Baby, label: 'Infant Feeding (0-8 mo)' },
     { id: 'lactatingWoman', icon: PersonStanding, label: 'Lactating Woman' },
     { id: 'pregnantWoman', icon: Heart, label: 'Pregnant Woman' },
     { id: 'monthlyNatality', icon: CalendarDays, label: 'Monthly Natality' },
@@ -2089,15 +2122,22 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     preview = false,
     sectionRowLabels = [],
     pageFormat = 'a4',
+    orientation,
     fontSize,
     cellPadding = 3,
     horizontalPageBreak,
+    columnStyles,
+    tableMarginBottom = 100,
   }) => {
+    const exportData = removeNotesColumns(headers, rows, columnStyles);
+    headers = exportData.headers;
+    rows = exportData.rows;
+    columnStyles = exportData.columnStyles;
     const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
       import('jspdf'),
       import('jspdf-autotable'),
     ]);
-    const landscape = headers.length > 8;
+    const landscape = orientation ? orientation === 'landscape' : headers.length > 8;
     const document = new jsPDF({ orientation: landscape ? 'landscape' : 'portrait', unit: 'pt', format: pageFormat });
     const pageWidth = document.internal.pageSize.getWidth();
     let startY = 32;
@@ -2125,10 +2165,27 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       head: headRows || [headers],
       body: rows,
       theme: 'grid',
-      margin: { top: 24, right: 18, bottom: 100, left: 18 },
-      styles: { font: 'helvetica', fontSize: fontSize ?? (headers.length > 18 ? 5 : headers.length > 10 ? 6 : 8), cellPadding, overflow: 'linebreak', halign: 'center' },
-      bodyStyles: { halign: 'center', fontStyle: 'bold' },
-      headStyles: { fillColor: [238, 234, 246], textColor: [35, 35, 45], fontStyle: 'bold', halign: 'center' },
+      margin: { top: 24, right: 18, bottom: tableMarginBottom, left: 18 },
+      styles: {
+        font: 'helvetica',
+        fontSize: fontSize ?? (headers.length > 18 ? 5 : headers.length > 10 ? 6 : 8),
+        cellPadding,
+        overflow: 'linebreak',
+        halign: 'center',
+        textColor: [0, 0, 0],
+        lineColor: [100, 100, 105],
+        lineWidth: 0.3,
+      },
+      columnStyles,
+      bodyStyles: { halign: 'center', fontStyle: 'normal', textColor: [0, 0, 0] },
+      headStyles: {
+        fillColor: [238, 234, 246],
+        textColor: [0, 0, 0],
+        fontStyle: 'bold',
+        halign: 'center',
+        lineColor: [100, 100, 105],
+        lineWidth: 0.4,
+      },
       didParseCell: (hookData) => {
         if (
           hookData.section === 'body' &&
@@ -2136,7 +2193,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         ) {
           hookData.cell.styles.fontStyle = 'bold';
           hookData.cell.styles.fillColor = [255, 232, 243];
-          hookData.cell.styles.textColor = [45, 45, 58];
+          hookData.cell.styles.textColor = [0, 0, 0];
         }
       },
       horizontalPageBreak: horizontalPageBreak ?? headers.length > 18,
@@ -2343,9 +2400,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             <div className="overflow-hidden transition-all duration-200">
               <p className="truncate text-lg font-semibold leading-tight" style={{ color: darkMode ? THEME.dark.text : THEME.light.text }}>
                 NutriGrid
-              </p>
-              <p className="mt-1 truncate text-sm" style={{ color: darkMode ? THEME.dark.muted : THEME.light.muted }}>
-                {adminName}
               </p>
             </div>
           )}
@@ -2584,14 +2638,24 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             Total Vulnerable Demographics Trend
           </p>
           <div className="ml-auto">
-            <MonthYearPicker
-              value={monthlyTrendEndMonth}
-              onChange={setMonthlyTrendEndMonth}
-              min={monthlyTrendMonthOptions[0]?.value}
-              max={monthlyTrendMonthOptions[monthlyTrendMonthOptions.length - 1]?.value}
-              darkMode={darkMode}
-              label="Choose the last month shown in the yearly trend"
-            />
+            <label className="relative block">
+              <span className="sr-only">Choose trend year</span>
+              <select
+                value={monthlyTrendYear}
+                onChange={(event) => setMonthlyTrendYear(event.target.value)}
+                className={`min-h-12 min-w-44 appearance-none rounded-xl border bg-white py-2 pl-3.5 pr-10 text-sm font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300 ${
+                  darkMode ? 'border-[#67445F] bg-[#302338] text-[#FCE7F3]' : 'border-gray-300 text-gray-800'
+                }`}
+                aria-label="Choose line chart year"
+              >
+                {monthlyTrendYears.map((year) => <option key={year} value={year}>{year}</option>)}
+              </select>
+              <ChevronDown
+                size={16}
+                className={`pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 ${darkMode ? 'text-slate-300' : 'text-gray-600'}`}
+                aria-hidden="true"
+              />
+            </label>
           </div>
           <span
             className="text-xs px-3 py-1 rounded-full"
@@ -2600,7 +2664,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               backgroundColor: darkMode ? 'rgba(255,255,255,0.06)' : THEME.light.surface,
             }}
           >
-            {monthlyTrendEndMonth.slice(0, 4)} · January–{monthlyTrendMonthOptions.find((month) => month.value === monthlyTrendEndMonth)?.label.split(' ')[0] || 'November'}
+            {monthlyTrendYear} · January–December
           </span>
         </div>
         <p className="mb-3 text-xs" style={{ color: mutedColor }}>
@@ -2613,7 +2677,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={monthlyTrendData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke={darkMode ? '#554153' : '#f0f0f0'} vertical={false} />
-                <XAxis dataKey="month" tick={{ fontSize: 12, fill: darkMode ? '#D8C8D6' : '#9ca3af' }} axisLine={false} tickLine={false} />
+                <XAxis dataKey="month" interval={0} tick={{ fontSize: 12, fill: darkMode ? '#D8C8D6' : '#9ca3af' }} axisLine={false} tickLine={false} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: darkMode ? '#D8C8D6' : '#9ca3af' }} axisLine={false} tickLine={false} />
                 <Tooltip
                   formatter={(value, name) => [value, name]}
@@ -2770,7 +2834,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: 'Purok', rowSpan: 2 },
       { label: 'Pangalan ng Nanay', rowSpan: 2 },
       { label: 'Pangalan ng Bata', rowSpan: 2 },
-      { label: 'Paraan ng Pagpapakain o Pagpapainom', colSpan: 6 },
+      { label: 'Paraan ng Pagpapakain o Pagpapainom', colSpan: 9 },
       { label: 'Notes', rowSpan: 2 },
       ACTIONS_HEAD_CELL,
     ],
@@ -2781,6 +2845,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { label: '3 Buwan' },
       { label: '4 Buwan' },
       { label: '5 Buwan' },
+      { label: '6 Buwan' },
+      { label: '7 Buwan' },
+      { label: '8 Buwan' },
     ],
   ];
 
@@ -2892,12 +2959,22 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             rows={filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit, row.notes])}
             signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
             onExportPdf={(signatures, options = {}) => exportPdfFile({
-            fileName: 'alawihao-residents',
-            title: 'Residents Masterlist',
-            headers: ['Purok', 'Household Head', 'Members', 'Last Visit', 'Notes'],
-            rows: filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit, row.notes]),
-            signatures,
-            preview: options.preview,
+              fileName: 'alawihao-residents',
+              title: 'Residents Masterlist',
+              headers: ['Purok', 'Household Head', 'Members', 'Last Visit', 'Notes'],
+              rows: filteredResidentHouseholds.map((row) => [row.purok, row.head, row.members, row.lastVisit, row.notes]),
+              signatures,
+              preview: options.preview,
+              orientation: 'landscape',
+              fontSize: 7,
+              cellPadding: 1.5,
+              tableMarginBottom: 72,
+              columnStyles: {
+                0: { cellWidth: 110 },
+                1: { cellWidth: 340 },
+                2: { cellWidth: 90 },
+                3: { cellWidth: 260 },
+              },
             })}
           />
         }
@@ -2959,6 +3036,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
           />
         }
         getCellValue={(row, key) => row[key] ?? 0}
+        showSyncStatus={false}
         showPurokFilter={false}
         emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
         minTableWidth={1100}
@@ -3010,10 +3088,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       data={filteredInfantFeeding}
       purokFilter={adminPurokFilter}
       onPurokFilterChange={setAdminPurokFilter}
-      columnKeys={['no', 'purok', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5', 'notes']}
+      columnKeys={['no', 'purok', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5', 'month6', 'month7', 'month8', 'notes']}
       headRows={infantFeedingHeadRows}
       legend="Code: E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding"
-      minTableWidth={980}
+      minTableWidth={1260}
       reportHeader={
         <ReportHeader
           title="Uri ng Paraan ng Pagpapakain sa Sanggol"
@@ -3031,9 +3109,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       emptyMessage={searchTerm.trim() ? 'No records match your search.' : 'No records yet.'}
       exportActions={
         <ReportExportActions
-          title="Infant Feeding (0-5 mo)"
+          title="Infant Feeding (0-8 mo)"
           fileName="alawihao-infant-feeding"
-          headers={['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', 'Notes']}
+          headers={['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', '6 Months', '7 Months', '8 Months', 'Notes']}
           rows={filteredInfantFeeding.map((row) => [
             row.no,
             row.purok,
@@ -3045,13 +3123,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.month3,
             row.month4,
             row.month5,
+            row.month6,
+            row.month7,
+            row.month8,
             row.notes,
           ])}
           signatureOptions={BNS_RHM_SIGNATURE_OPTIONS}
           onExportPdf={(signatures, options = {}) => exportPdfFile({
           fileName: 'alawihao-infant-feeding',
-          title: 'Infant Feeding (0-5 mo)',
-          headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', 'Notes'],
+          title: 'Infant Feeding (0-8 mo)',
+          headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', '6 Months', '7 Months', '8 Months', 'Notes'],
           rows: filteredInfantFeeding.map((row) => [
             row.no,
             row.purok,
@@ -3063,6 +3144,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             row.month3,
             row.month4,
             row.month5,
+            row.month6,
+            row.month7,
+            row.month8,
             row.notes,
           ]),
           signatures,
@@ -3529,7 +3613,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     dashboard: null,
     residents: 'Residents',
     environmentalSanitation: 'Environmental Sanitation Report',
-    infantFeeding: 'Infant Feeding (0-5 mo)',
+    infantFeeding: 'Infant Feeding (0-8 mo)',
     lactatingWoman: 'Lactating Woman',
     pregnantWoman: 'Pregnant Woman',
     monthlyNatality: 'Monthly Natality',

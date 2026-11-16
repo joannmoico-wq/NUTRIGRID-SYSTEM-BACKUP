@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Eye, FileDown, FileUp, Mail, Send, Trash2, X } from 'lucide-react';
+import { removeNotesColumns } from '../utils/reportExport';
 
 function dataUrlToBytes(dataUrl) {
   const base64 = dataUrl.split(',')[1];
@@ -237,6 +238,9 @@ export default function ReportExportActions({
   };
 
   const exportWord = async () => {
+    const exportData = removeNotesColumns(headers, rows);
+    const exportHeaders = exportData.headers;
+    const exportRows = exportData.rows;
     const {
       AlignmentType,
       BorderStyle,
@@ -252,21 +256,21 @@ export default function ReportExportActions({
       WidthType,
     } = await import('docx');
     const wordTableWidth = 14400;
-    const tableColumnWidths = headers.map((_, index) =>
-      Math.floor(wordTableWidth / headers.length) +
-      (index < wordTableWidth % headers.length ? 1 : 0)
+    const tableColumnWidths = exportHeaders.map((_, index) =>
+      Math.floor(wordTableWidth / exportHeaders.length) +
+      (index < wordTableWidth % exportHeaders.length ? 1 : 0)
     );
     const tableCellMargins = { top: 80, bottom: 80, left: 55, right: 55 };
     const tableBorders = Object.fromEntries(
       ['top', 'bottom', 'left', 'right', 'insideHorizontal', 'insideVertical'].map((side) => [
         side,
-        { style: BorderStyle.SINGLE, size: 2, color: 'D9D9D9' },
+        { style: BorderStyle.SINGLE, size: 4, color: '64646A' },
       ])
     );
     const cellParagraph = (value, bold = false) => new Paragraph({
       alignment: AlignmentType.CENTER,
       spacing: { before: 0, after: 0 },
-      children: [new TextRun({ text: String(value ?? ''), bold, size: 14 })],
+      children: [new TextRun({ text: String(value ?? ''), bold, size: 14, color: '000000' })],
     });
     const signatureRuns = await Promise.all(signatures.map(async (signature) => {
       const { width, height } = signature;
@@ -327,7 +331,7 @@ export default function ReportExportActions({
       new TableRow({
         tableHeader: true,
         cantSplit: true,
-        children: headers.map((header, index) => new TableCell({
+        children: exportHeaders.map((header, index) => new TableCell({
           width: { size: tableColumnWidths[index], type: WidthType.DXA },
           margins: tableCellMargins,
           verticalAlignment: 'center',
@@ -336,11 +340,11 @@ export default function ReportExportActions({
           children: [cellParagraph(header, true)],
         })),
       }),
-      ...rows.map((row) => {
+      ...exportRows.map((row) => {
         const isSectionRow = sectionRowLabels.includes(String(row[0] || ''));
         return new TableRow({
         cantSplit: true,
-        children: headers.map((_, index) => new TableCell({
+        children: exportHeaders.map((_, index) => new TableCell({
           width: { size: tableColumnWidths[index], type: WidthType.DXA },
           margins: tableCellMargins,
           verticalAlignment: 'center',

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
-import { ChevronDown, ChevronLeft, FileText, Folder, Image, Trash2, UploadCloud, X } from 'lucide-react';
+import { ChevronLeft, FileText, Folder, Image, Trash2, UploadCloud, X } from 'lucide-react';
+import MonthYearPicker from './MonthYearPicker';
 
 const DATABASE_NAME = 'nutrigrid-admin-documents';
 const STORE_NAME = 'documents';
@@ -111,11 +112,19 @@ function formatFileSize(size) {
 }
 
 function getDocumentMonth(document) {
-  if (document.monthKey) return document.monthKey;
-  if (!document.addedAt) return '';
-  const date = new Date(document.addedAt);
-  if (Number.isNaN(date.getTime())) return '';
-  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  const monthMatch = String(document.monthKey || '').match(/^(\d{4})-(\d{1,2})$/);
+  if (monthMatch) return `${monthMatch[1]}-${monthMatch[2].padStart(2, '0')}`;
+
+  const getMonthFromDate = (value) => {
+    if (!value) return '';
+    const dateOnly = String(value).match(/^(\d{4})[-/](\d{1,2})/);
+    if (dateOnly) return `${dateOnly[1]}-${dateOnly[2].padStart(2, '0')}`;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+  };
+
+  return getMonthFromDate(document.recordDate) || getMonthFromDate(document.addedAt);
 }
 
 function getDocumentTimestamp(document) {
@@ -131,14 +140,6 @@ function getDocumentTimestamp(document) {
 function getDocumentFolderName(document) {
   const category = document.categoryLabel || document.category;
   return RECORD_CATEGORY_FOLDERS.includes(category) ? category : 'Other Documents';
-}
-
-function formatMonth(monthKey) {
-  const [year, month] = monthKey.split('-').map(Number);
-  return new Date(year, month - 1, 1).toLocaleDateString('en', {
-    month: 'long',
-    year: 'numeric',
-  });
 }
 
 function formatDocumentDate(value) {
@@ -198,10 +199,6 @@ export default function AdminDocuments({
     }
     return null;
   }).filter(Boolean), [allDocuments]);
-  const monthOptions = useMemo(
-    () => Array.from(new Set(allDocuments.map(getDocumentMonth).filter(Boolean))).sort().reverse(),
-    [allDocuments]
-  );
   const documentSuggestions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
@@ -400,27 +397,15 @@ export default function AdminDocuments({
           <h2 className={darkMode ? 'font-semibold text-white' : 'font-semibold text-gray-900'}>
             Uploaded files <span className={`text-sm font-normal ${mutedTextClass}`}>({filteredDocuments.length})</span>
           </h2>
-          <label className="relative flex items-center">
-            <span className="sr-only">Filter documents by month</span>
-            <select
-              value={selectedMonth}
-              onChange={(event) => {
-                setSelectedMonth(event.target.value);
-                setOpenedFolder(null);
-              }}
-              className={`appearance-none rounded-lg border py-2 pl-3 pr-9 text-sm shadow-sm focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-200 ${
-                darkMode
-                  ? 'border-slate-600 bg-[#302338] text-white'
-                  : 'border-gray-300 bg-white text-gray-700'
-              }`}
-            >
-              <option value="all">All months</option>
-              {monthOptions.map((month) => (
-                <option key={month} value={month}>{formatMonth(month)}</option>
-              ))}
-            </select>
-            <ChevronDown size={16} className={`pointer-events-none absolute right-3 ${mutedTextClass}`} aria-hidden="true" />
-          </label>
+          <MonthYearPicker
+            value={selectedMonth === 'all' ? '' : selectedMonth}
+            onChange={(month) => {
+              setSelectedMonth(month || 'all');
+              setOpenedFolder(null);
+            }}
+            label="Filter documents by month"
+            darkMode={darkMode}
+          />
         </div>
         {!openedFolder && filteredDocuments.length === 0 && (searchQuery || selectedMonth !== 'all') ? (
           <p className={`mt-3 rounded-xl p-4 text-sm ${darkMode ? 'bg-[#302338] text-slate-300' : 'bg-gray-50 text-gray-500'}`}>
@@ -434,11 +419,11 @@ export default function AdminDocuments({
               <button
                 type="button"
                 onClick={() => setOpenedFolder(null)}
-                className={`mb-3 inline-flex items-center gap-1 rounded-lg px-2 py-1 text-sm font-medium ${
+                className={`mb-3 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-base font-semibold ${
                   darkMode ? 'text-pink-200 hover:bg-white/10' : 'text-violet-700 hover:bg-violet-50'
                 }`}
               >
-                <ChevronLeft size={17} aria-hidden="true" />
+                <ChevronLeft size={20} aria-hidden="true" />
                 All folders
               </button>
               <h3 className={`mb-3 text-sm font-semibold ${darkMode ? 'text-slate-100' : 'text-gray-700'}`}>{openedFolder}</h3>

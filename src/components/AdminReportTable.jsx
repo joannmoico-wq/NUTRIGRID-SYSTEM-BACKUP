@@ -1,8 +1,12 @@
-import { useEffect, useState } from 'react';
-import { Download, FileText, Plus, X } from 'lucide-react';
+import { useState } from 'react';
+import { Download, Plus, X } from 'lucide-react';
 import ReportRowActions from './ReportRowActions';
-import { normalizeEnvironmentalPurokName, PUROK_FILTER_OPTIONS } from '../utils/purok';
-import { isRecordEdited } from '../utils/bnsStorage';
+import {
+  comparePurokRecords,
+  normalizeEnvironmentalPurokName,
+  PUROK_FILTER_OPTIONS,
+} from '../utils/purok';
+import { getRecordSyncStatus, isRecordEdited } from '../utils/bnsStorage';
 
 export const REPORT_META = {
   barangay: 'ALAWIHAO',
@@ -23,6 +27,23 @@ const thClass =
   'border border-gray-200 bg-[#F3EEF9] px-2 py-2.5 text-[10px] font-bold uppercase leading-tight text-gray-700 dark:border-gray-600 dark:bg-gray-700/60 dark:text-gray-200';
 const tdClass =
   'border border-gray-200 px-2 py-2 text-xs font-semibold text-gray-800 dark:border-gray-600 dark:text-gray-200';
+const SYNC_STATUS_DETAILS = {
+  pending_sync: {
+    label: 'Pending Sync',
+    className: 'bg-amber-100 text-amber-800',
+    rowClassName: 'border-l-4 border-amber-500 bg-amber-50/70 dark:bg-amber-950/20',
+  },
+  syncing: {
+    label: 'Syncing',
+    className: 'bg-blue-100 text-blue-800',
+    rowClassName: 'border-l-4 border-blue-500 bg-blue-50/70 dark:bg-blue-950/20',
+  },
+  sync_failed: {
+    label: 'Sync Failed',
+    className: 'bg-red-100 text-red-800',
+    rowClassName: 'border-l-4 border-red-500 bg-red-50/70 dark:bg-red-950/20',
+  },
+};
 
 export function ExpandableNote({ value, darkMode = false }) {
   const [open, setOpen] = useState(false);
@@ -117,27 +138,18 @@ export default function AdminReportTable({
   emptyMessage = 'No records yet.',
   minTableWidth = 720,
   showPurokFilter = true,
+  showSyncStatus = true,
   purokFilter: controlledPurokFilter,
   onPurokFilterChange,
 }) {
-  const [isOnline, setIsOnline] = useState(() => navigator.onLine);
   const [localPurokFilter, setLocalPurokFilter] = useState('');
   const purokFilter = controlledPurokFilter ?? localPurokFilter;
   const setPurokFilter = onPurokFilterChange || setLocalPurokFilter;
-  const visibleData = showPurokFilter && purokFilter && purokFilter !== '__sorted__'
-    ? data.filter((row) => normalizeEnvironmentalPurokName(row.purok) === purokFilter)
-    : data;
-  useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
-  }, []);
-
+  const visibleData = showPurokFilter && purokFilter === '__sorted__'
+    ? [...data].sort(comparePurokRecords)
+    : showPurokFilter && purokFilter
+      ? data.filter((row) => normalizeEnvironmentalPurokName(row.purok) === purokFilter)
+      : data;
   const showActions = Boolean(onEdit || onDelete);
   const totalColumns = columnKeys.length + (showActions ? 1 : 0);
   const nameColumnNames = new Set([
@@ -291,21 +303,12 @@ export default function AdminReportTable({
               </tr>
             ) : (
               visibleData.map((row) => {
-                const hasSyncFlag = typeof row.synced === 'boolean' || typeof row._raw?.synced === 'boolean';
-                const status = String(row.status || row._raw?.status || '').toLowerCase();
-                const isDraft = row.synced === false ||
-                  row._raw?.synced === false ||
-                  (!hasSyncFlag && status === 'pending');
+                const syncStatus = showSyncStatus ? getRecordSyncStatus(row._raw || row) : null;
+                const syncStatusDetails = SYNC_STATUS_DETAILS[syncStatus];
                 return (
                 <tr
                   key={row.id}
-                  className={`hover:bg-violet-50/40 dark:hover:bg-violet-900/10 ${
-                    isDraft
-                      ? isOnline
-                        ? 'border-l-4 border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/20'
-                        : 'border-l-4 border-red-500 bg-red-50/70 dark:bg-red-950/20'
-                      : ''
-                  }`}
+                  className={`hover:bg-violet-50/40 dark:hover:bg-violet-900/10 ${syncStatusDetails?.rowClassName || ''}`}
                 >
                   {columnKeys.map((key) => (
                     <td
@@ -320,19 +323,12 @@ export default function AdminReportTable({
                             key === updatedColumn ? 'whitespace-normal break-words' : 'truncate'
                           }`}>{cellValue(row, key)}</span>
                           <span className="flex max-w-full flex-wrap items-center justify-center gap-1">
-                            {key === columnKeys[0] && isDraft && (
+                            {key === columnKeys[0] && syncStatusDetails && (
                               <span
-                                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${
-                                  isOnline
-                                    ? 'bg-emerald-100 text-emerald-800'
-                                    : 'bg-red-100 text-red-800'
-                                }`}
-                                title={isOnline
-                                  ? 'This offline draft is ready to open, finish, and save.'
-                                  : 'This record is saved as a draft on this device.'}
+                                className={`inline-flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[9px] font-bold ${syncStatusDetails.className}`}
+                                title={row._raw?.sync_error || syncStatusDetails.label}
                               >
-                                <FileText size={10} aria-hidden="true" />
-                                {isOnline ? 'Ready to save' : 'Draft'}
+                                {syncStatusDetails.label}
                               </span>
                             )}
                             {key === updatedColumn && isRecordEdited(row._raw || row) && (

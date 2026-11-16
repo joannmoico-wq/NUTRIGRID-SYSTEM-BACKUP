@@ -83,6 +83,9 @@ const COLUMN_MAPS = {
     feeding_3_month: 'feeding_3_month',
     feeding_4_month: 'feeding_4_month',
     feeding_5_month: 'feeding_5_month',
+    feeding_6_month: 'feeding_6_month',
+    feeding_7_month: 'feeding_7_month',
+    feeding_8_month: 'feeding_8_month',
     notes: 'notes',
   },
   lactatingwoman: {
@@ -371,21 +374,22 @@ export async function loadAdminDataFromSupabase(userId, { onRecordsLoaded } = {}
     sessionUserId = session?.user?.id || '';
   }
   const activeUserId = userId || sessionUserId;
-  const categoryResultsPromise = Promise.allSettled([
-    readAllRows('residents', ADMIN_TABLES.residents).then((records) => {
-      onRecordsLoaded?.({
-        households: toAdminResidents(
-          cacheSharedRecords('residents', records)
-        ),
-      });
-      return records;
-    }),
-    readAllRows('environmental', ADMIN_TABLES.environmental),
-    readAllRows('infantfeeding', ADMIN_TABLES.infantfeeding),
-    readAllRows('lactatingwoman', ADMIN_TABLES.lactatingwoman),
-    readAllRows('pregnantwoman', ADMIN_TABLES.pregnantwoman),
-    readAllRows('monthlynatal', ADMIN_TABLES.monthlynatal),
-  ]);
+  const categories = [
+    { category: 'residents', key: 'households', convert: toAdminResidents },
+    { category: 'environmental', key: 'environmentalSanitationData', convert: toAdminEnvironmental },
+    { category: 'infantfeeding', key: 'infantFeedingData', convert: toAdminInfantFeeding },
+    { category: 'lactatingwoman', key: 'lactatingWomenData', convert: toAdminLactating },
+    { category: 'pregnantwoman', key: 'pregnantWomenData', convert: toAdminPregnant },
+    { category: 'monthlynatal', key: 'natalityData', convert: toAdminNatality },
+  ];
+  const categoryResultsPromise = Promise.allSettled(
+    categories.map(async ({ category, key, convert }) => {
+      const records = await readAllRows(category, ADMIN_TABLES[category]);
+      const sharedRecords = cacheSharedRecords(category, records);
+      onRecordsLoaded?.({ [key]: convert(sharedRecords) });
+      return sharedRecords;
+    })
+  );
   const monthlyReportPromise = readMonthlyReportLines()
     .then((data) => ({ data }), (error) => ({ error }));
   const results = await categoryResultsPromise;
@@ -410,7 +414,7 @@ export async function loadAdminDataFromSupabase(userId, { onRecordsLoaded } = {}
     const result = results[index];
     if (result.status === 'fulfilled') return result.value;
     console.error(`Could not load ${category} records from Supabase:`, result.reason);
-    return localFallbacks[index];
+    return cacheSharedRecords(category, localFallbacks[index]);
   };
 
   const [
@@ -429,14 +433,14 @@ export async function loadAdminDataFromSupabase(userId, { onRecordsLoaded } = {}
     rowsFor(5, 'monthlynatal'),
   ];
   const coreData = {
-    households: toAdminResidents(cacheSharedRecords('residents', households)),
-    environmentalSanitationData: toAdminEnvironmental(cacheSharedRecords('environmental', environmentalSanitationData)),
-    infantFeedingData: toAdminInfantFeeding(cacheSharedRecords('infantfeeding', infantFeedingData)),
-    lactatingWomenData: toAdminLactating(cacheSharedRecords('lactatingwoman', lactatingWomenData)),
-    pregnantWomenData: toAdminPregnant(cacheSharedRecords('pregnantwoman', pregnantWomenData)),
-    natalityData: toAdminNatality(cacheSharedRecords('monthlynatal', natalityData)),
+    households: toAdminResidents(households),
+    environmentalSanitationData: toAdminEnvironmental(environmentalSanitationData),
+    infantFeedingData: toAdminInfantFeeding(infantFeedingData),
+    lactatingWomenData: toAdminLactating(lactatingWomenData),
+    pregnantWomenData: toAdminPregnant(pregnantWomenData),
+    natalityData: toAdminNatality(natalityData),
   };
-  onRecordsLoaded?.(coreData);
+  onRecordsLoaded?.(coreData, true);
 
   const monthlyReportResult = await monthlyReportPromise;
   const remoteMonthlyReportData = 'error' in monthlyReportResult

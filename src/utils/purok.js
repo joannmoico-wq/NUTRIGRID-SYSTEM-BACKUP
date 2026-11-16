@@ -33,6 +33,26 @@ export function normalizeEnvironmentalPurokName(value) {
   return `Purok ${number}${suffix}`;
 }
 
+export function comparePurokNames(left, right) {
+  const leftName = normalizeEnvironmentalPurokName(left);
+  const rightName = normalizeEnvironmentalPurokName(right);
+  const leftMatch = leftName.match(/^Purok (\d+)([AB]?)$/);
+  const rightMatch = rightName.match(/^Purok (\d+)([AB]?)$/);
+
+  if (!leftMatch || !rightMatch) {
+    if (leftMatch) return -1;
+    if (rightMatch) return 1;
+    return String(left || '').localeCompare(String(right || ''), undefined, { numeric: true });
+  }
+
+  return Number(leftMatch[1]) - Number(rightMatch[1]) ||
+    leftMatch[2].localeCompare(rightMatch[2]);
+}
+
+export function comparePurokRecords(left, right) {
+  return comparePurokNames(left.purok, right.purok);
+}
+
 export function sortPurokCounts(counts) {
   const groupedCounts = new Map();
   counts.forEach(({ purok, count }) => {

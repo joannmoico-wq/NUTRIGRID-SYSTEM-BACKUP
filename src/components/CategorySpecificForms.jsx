@@ -1604,6 +1604,9 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
       feeding_3_month: '',
       feeding_4_month: '',
       feeding_5_month: '',
+      feeding_6_month: '',
+      feeding_7_month: '',
+      feeding_8_month: '',
       notes: '',
       visited_by: userName,
       ...initialData,
@@ -1617,6 +1620,9 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
         'feeding_3_month',
         'feeding_4_month',
         'feeding_5_month',
+        'feeding_6_month',
+        'feeding_7_month',
+        'feeding_8_month',
       ].map((key) => [key, normalizeFeedingMethod(initial[key])]),
     ]);
   });
@@ -1648,6 +1654,9 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
     { key: 'feeding_3_month', label: '3 Buwan (3 Months)' },
     { key: 'feeding_4_month', label: '4 Buwan (4 Months)' },
     { key: 'feeding_5_month', label: '5 Buwan (5 Months)' },
+    { key: 'feeding_6_month', label: '6 Buwan (6 Months)' },
+    { key: 'feeding_7_month', label: '7 Buwan (7 Months)' },
+    { key: 'feeding_8_month', label: '8 Buwan (8 Months)' },
   ];
 
   return (

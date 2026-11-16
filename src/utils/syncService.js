@@ -455,6 +455,9 @@ function buildTableRecord(category, record, deviceId, localId, userId) {
       feeding_3_month: record.feeding_3_month || null,
       feeding_4_month: record.feeding_4_month || null,
       feeding_5_month: record.feeding_5_month || null,
+      feeding_6_month: record.feeding_6_month || null,
+      feeding_7_month: record.feeding_7_month || null,
+      feeding_8_month: record.feeding_8_month || null,
       notes: record.notes || null,
     },
     lactatingwoman: {

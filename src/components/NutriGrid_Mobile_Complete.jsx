@@ -70,6 +70,7 @@ import ReportRowActions from './ReportRowActions';
 import { ExpandableNote } from './AdminReportTable';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
 import {
+  comparePurokRecords,
   normalizeEnvironmentalPurokName,
   normalizePurokName,
   PUROK_FILTER_OPTIONS,
@@ -342,19 +343,6 @@ const FieldSearchInput = ({
     tone="field"
   />
 );
-
-const comparePurokRecords = (a, b) => {
-  const normalizeForSort = (value) => {
-    const name = normalizeEnvironmentalPurokName(value);
-    const match = name.match(/^Purok (\d+)([AB]?)$/);
-    return match
-      ? { number: Number(match[1]), suffix: match[2] }
-      : { number: Number.MAX_SAFE_INTEGER, suffix: String(value || '').toUpperCase() };
-  };
-  const aPurok = normalizeForSort(a.purok);
-  const bPurok = normalizeForSort(b.purok);
-  return aPurok.number - bPurok.number || aPurok.suffix.localeCompare(bPurok.suffix);
-};
 
 const PageHeader = ({
   title,
@@ -1067,6 +1055,9 @@ const RecordsList = ({
       '3 Buwan',
       '4 Buwan',
       '5 Buwan',
+      '6 Buwan',
+      '7 Buwan',
+      '8 Buwan',
       'Notes',
     ];
 
@@ -1090,8 +1081,8 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1030px]">
-                <div className="grid grid-cols-[repeat(12,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
+              <div className="min-w-[1320px]">
+                <div className="grid grid-cols-[repeat(15,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
                   {[...ifHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
@@ -1104,7 +1095,7 @@ const RecordsList = ({
                   allIfRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(12,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className="grid grid-cols-[repeat(15,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{record.purok || '—'}</span>
                       <span>{String(idx + 1).padStart(2, '0')}</span>
@@ -1116,6 +1107,9 @@ const RecordsList = ({
                       <span>{record.feeding_3_month || '—'}</span>
                       <span>{record.feeding_4_month || '—'}</span>
                       <span>{record.feeding_5_month || '—'}</span>
+                      <span>{record.feeding_6_month || '—'}</span>
+                      <span>{record.feeding_7_month || '—'}</span>
+                      <span>{record.feeding_8_month || '—'}</span>
                       <ExpandableNote value={record.notes} />
                       <RecordActions record={record} />
                     </div>

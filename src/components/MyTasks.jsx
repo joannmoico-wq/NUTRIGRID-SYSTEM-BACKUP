@@ -14,6 +14,7 @@ import { Calendar, MapPin, Bell, CheckCircle2, Circle, Clock, PartyPopper, X } f
 import BnsSearchBar from './BnsSearchBar';
 import TaskIcon from './TaskIcon';
 import ConfirmActionDialog from './ConfirmActionDialog';
+import MonthYearPicker from './MonthYearPicker';
 
 const NEXT_STATUS = { Pending: 'In Progress', 'In Progress': 'Completed', Completed: 'Pending' };
 
@@ -36,6 +37,7 @@ export default function MyTasks() {
   const [registeringPush, setRegisteringPush] = useState(false);
   const [expandedNotes, setExpandedNotes] = useState({});
   const [taskSearch, setTaskSearch] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState('');
   const [showTaskSuggestions, setShowTaskSuggestions] = useState(false);
   const pushRegistrationAttempted = useRef(false);
   const completionTaskIdRef = useRef(null);
@@ -250,9 +252,12 @@ export default function MyTasks() {
     }
   };
 
+  const monthFilteredTasks = selectedMonth
+    ? tasks.filter((task) => String(task.due_date || '').slice(0, 7) === selectedMonth)
+    : tasks;
   const query = taskSearch.trim().toLowerCase();
   const taskSuggestions = query
-    ? tasks
+    ? monthFilteredTasks
         .filter((task) =>
           [task.title, task.description, task.purok, task.status, task.priority, task.due_date]
             .some((value) => String(value || '').toLowerCase().includes(query))
@@ -269,11 +274,11 @@ export default function MyTasks() {
         }))
     : [];
   const filteredTasks = query
-    ? tasks.filter((task) =>
+    ? monthFilteredTasks.filter((task) =>
         [task.title, task.description, task.purok, task.status, task.priority, task.due_date]
           .some((value) => String(value || '').toLowerCase().includes(query))
       )
-    : tasks;
+    : monthFilteredTasks;
   const activeTasks = filteredTasks.filter((task) =>
     task.status !== 'Completed' || task.task_id === completionTaskId
   );
@@ -285,6 +290,7 @@ export default function MyTasks() {
     ? activeTasks.filter((task) => task.status === taskStatusFilter)
     : activeTasks;
   const orderedTasks = visibleTasks
+    .slice()
     .sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
 
   return (
@@ -377,7 +383,7 @@ export default function MyTasks() {
 
       <div className="flex items-center justify-between">
         <h2 className="text-base font-bold text-gray-900">
-          My tasks <span className="text-sm font-semibold text-violet-600">· {open.length} open</span>
+          My tasks <span className="text-sm font-semibold text-violet-600">· {activeTasks.filter((task) => task.status !== 'Completed').length} open</span>
         </h2>
         {permission !== 'unsupported' && permission !== 'denied' && (
           <button
@@ -414,6 +420,26 @@ export default function MyTasks() {
         tone="field"
         portalSuggestions
       />
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
+          <Calendar size={16} />
+          Month
+          <MonthYearPicker
+            value={selectedMonth}
+            onChange={setSelectedMonth}
+            label="Filter tasks by month"
+          />
+        </label>
+        {selectedMonth && (
+          <button
+            type="button"
+            onClick={() => setSelectedMonth('')}
+            className="rounded-full border border-[#E8DCEF] px-3 py-2 text-xs font-semibold text-gray-600"
+          >
+            All months
+          </button>
+        )}
+      </div>
       {permission === 'denied' && (
         <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
           Notifications are blocked. Allow them for NutriGrid in your browser settings to receive task alerts.

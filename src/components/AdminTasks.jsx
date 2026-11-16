@@ -15,6 +15,7 @@ import {
 import { Plus, Trash2, Calendar, MapPin, Flag, X, Edit } from 'lucide-react';
 import TaskIcon from './TaskIcon';
 import ConfirmActionDialog from './ConfirmActionDialog';
+import MonthYearPicker from './MonthYearPicker';
 import { TASK_PUROK_OPTIONS } from '../utils/purok';
 
 const PRIORITIES = ['High', 'Normal', 'Low'];
@@ -60,6 +61,7 @@ export default function AdminTasks({
   const [bhws, setBhws] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [filter, setFilter] = useState('All');
+  const [selectedMonth, setSelectedMonth] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
@@ -184,21 +186,28 @@ export default function AdminTasks({
     return b ? b.full_name || b.email : 'Unassigned';
   };
 
+  const monthFilteredTasks = useMemo(
+    () => selectedMonth
+      ? tasks.filter((task) => String(task.due_date || '').slice(0, 7) === selectedMonth)
+      : tasks,
+    [tasks, selectedMonth]
+  );
+
   const counts = useMemo(
     () => ({
-      All: tasks.length,
-      Pending: tasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t)).length,
-      Overdue: tasks.filter((t) => isTaskOverdue(t)).length,
-      'In Progress': tasks.filter((t) => t.status === 'In Progress').length,
-      Completed: tasks.filter((t) => t.status === 'Completed').length,
+      All: monthFilteredTasks.length,
+      Pending: monthFilteredTasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t)).length,
+      Overdue: monthFilteredTasks.filter((t) => isTaskOverdue(t)).length,
+      'In Progress': monthFilteredTasks.filter((t) => t.status === 'In Progress').length,
+      Completed: monthFilteredTasks.filter((t) => t.status === 'Completed').length,
     }),
-    [tasks]
+    [monthFilteredTasks]
   );
 
   const taskSuggestions = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
     if (!query) return [];
-    return tasks
+    return monthFilteredTasks
       .filter((task) => {
         const values = [
           task.title,
@@ -221,13 +230,13 @@ export default function AdminTasks({
         timestamp: task.due_date,
         synced: true,
       }));
-  }, [tasks, searchQuery, bhws]);
+  }, [monthFilteredTasks, searchQuery, bhws]);
   useEffect(() => {
     onSearchResultsChange?.(taskSuggestions);
   }, [taskSuggestions, onSearchResultsChange]);
 
   const searchedTasks = searchQuery.trim()
-    ? tasks.filter((task) =>
+    ? monthFilteredTasks.filter((task) =>
         [
           task.title,
           task.description,
@@ -238,7 +247,7 @@ export default function AdminTasks({
           bhwName(task.assigned_to_user_id),
         ].some((value) => String(value || '').toLowerCase().includes(searchQuery.trim().toLowerCase()))
       )
-    : tasks;
+    : monthFilteredTasks;
   const visible = (searchQuery.trim()
     ? searchedTasks
     : filter === 'All'
@@ -248,7 +257,7 @@ export default function AdminTasks({
         : filter === 'Pending'
           ? searchedTasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t))
           : searchedTasks.filter((t) => t.status === filter)
-  ).sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
+  ).slice().sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
 
   const saveTask = async (e) => {
     e.preventDefault();
@@ -421,6 +430,30 @@ export default function AdminTasks({
         >
           <Plus size={18} /> New task
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <label className={`flex items-center gap-2 text-sm font-semibold ${mutedTextClass}`}>
+          <Calendar size={16} />
+          Month
+          <MonthYearPicker
+            value={selectedMonth}
+            onChange={setSelectedMonth}
+            label="Filter tasks by month"
+            darkMode={darkMode}
+          />
+        </label>
+        {selectedMonth && (
+          <button
+            type="button"
+            onClick={() => setSelectedMonth('')}
+            className={`rounded-full border px-3 py-2 text-xs font-semibold ${
+              darkMode ? 'border-[#67445F] text-slate-200' : 'border-[#E8DCEF] text-gray-600'
+            }`}
+          >
+            All months
+          </button>
+        )}
       </div>
 
       {message && (

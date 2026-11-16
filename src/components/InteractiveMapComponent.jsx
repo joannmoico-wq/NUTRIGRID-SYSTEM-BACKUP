@@ -367,12 +367,18 @@ function makePurokStats(name, datasets) {
       raw.feeding_3_month,
       raw.feeding_4_month,
       raw.feeding_5_month,
+      raw.feeding_6_month,
+      raw.feeding_7_month,
+      raw.feeding_8_month,
       record.week1,
       record.month1,
       record.month2,
       record.month3,
       record.month4,
       record.month5,
+      record.month6,
+      record.month7,
+      record.month8,
     ].map((value) => String(value || '').trim().toLowerCase());
     if (values.some((value) => ['e', 'ebf'].includes(value) || value.includes('exclusive'))) {
       stats.exclusiveBreastfeeding += 1;
@@ -494,6 +500,17 @@ function MapZoomTracker({ onZoomChange }) {
   useMapEvents({
     zoomend(event) {
       onZoomChange(event.target.getZoom());
+    },
+  });
+  return null;
+}
+
+function MapColorKeyDismiss({ onMapClick }) {
+  useMapEvents({
+    click(event) {
+      const target = event.originalEvent?.target;
+      if (target instanceof Element && target.closest('[data-map-key], [data-map-key-toggle]')) return;
+      onMapClick();
     },
   });
   return null;
@@ -658,14 +675,7 @@ const InteractiveMapComponent = ({
           Purok outlines are illustrative guides based on marker locations, not official surveyed boundaries.
         </p>
         <div>
-          <div
-            className={`relative z-0 isolate overflow-hidden rounded-lg border shadow-lg ${panelClass}`}
-            onClickCapture={(event) => {
-              if (!(event.target instanceof Element)) return;
-              if (event.target.closest('[data-map-key], [data-map-key-toggle]')) return;
-              setShowMapColorKey(false);
-            }}
-          >
+          <div className={`relative z-0 isolate overflow-hidden rounded-lg border shadow-lg ${panelClass}`}>
             <MapContainer
               center={[14.1093473, 122.9291014]}
               zoom={17}
@@ -679,6 +689,7 @@ const InteractiveMapComponent = ({
               className="rounded-lg"
             >
               <MapZoomTracker onZoomChange={setMapZoom} />
+              <MapColorKeyDismiss onMapClick={() => setShowMapColorKey(false)} />
               <ZoomControl position="topright" />
               <TileLayer
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
