@@ -19,7 +19,7 @@ import {
   X,
 } from 'lucide-react';
 import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
-import { normalizePurokName, PUROK_OPTIONS } from '../utils/purok';
+import { normalizeEnvironmentalPurokName, normalizePurokName, PUROK_OPTIONS } from '../utils/purok';
 
 const COLORS = {
   green: '#22c55e',
@@ -189,6 +189,12 @@ function numericCount(value) {
   return Number.isFinite(count) && count >= 0 ? count : null;
 }
 
+function normalizeMapPurokName(value) {
+  const normalized = normalizeEnvironmentalPurokName(value);
+  if (!normalized) return normalizePurokName(value);
+  return normalized.replace(/[AB]$/, '');
+}
+
 function getChildKey(record, index) {
   const raw = unwrap(record);
   const birthDate = raw.dob || '';
@@ -196,7 +202,7 @@ function getChildKey(record, index) {
   const childKey = birthDate && childName
     ? `${birthDate}:${childName.toLowerCase()}`
     : String(record.id ?? `${raw.dow || ''}:${index}`);
-  return `${normalizePurokName(raw.purok) || ''}:${childKey}`;
+  return `${normalizeMapPurokName(raw.purok) || ''}:${childKey}`;
 }
 
 function getNutritionClassification(record) {
@@ -256,7 +262,7 @@ function getNutritionClassification(record) {
 
 function makePurokStats(name, datasets) {
   const recordsForPurok = (records) =>
-    records.filter((record) => normalizePurokName(record.purok) === name);
+    records.filter((record) => normalizeMapPurokName(record.purok) === name);
   const residents = recordsForPurok(datasets.households);
   const children = recordsForPurok(datasets.natality);
   const pregnant = recordsForPurok(datasets.pregnant);
@@ -509,7 +515,7 @@ const InteractiveMapComponent = ({
   const [showMapColorKey, setShowMapColorKey] = useState(true);
   const [selectedPurokId, setSelectedPurokId] = useState(null);
   const highlightedPurokNames = useMemo(
-    () => new Set(highlightedPuroks.map(normalizePurokName).filter(Boolean)),
+    () => new Set(highlightedPuroks.map(normalizeMapPurokName).filter(Boolean)),
     [highlightedPuroks]
   );
   const panelClass = darkMode ? 'bg-[#26263B] border-[#333348]' : 'bg-white border-gray-200';
@@ -829,7 +835,11 @@ const InteractiveMapComponent = ({
                     </span>
                   </div>
                 )}
-                {mapMode === 'nutritional' && selectedPurok.stats.normal > 0 && (
+                {mapMode === 'nutritional' &&
+                  selectedPurok.stats.normal >
+                    selectedPurok.stats.categoryCounts.yellow +
+                    selectedPurok.stats.categoryCounts.red +
+                    selectedPurok.stats.categoryCounts.orange && (
                   <div
                     role="status"
                     className="mx-3 mb-3 flex items-center gap-2 rounded-xl border border-emerald-200 bg-[#e6f4ea] p-2.5 text-[12px] font-extrabold text-[#137333]"

@@ -343,6 +343,19 @@ const FieldSearchInput = ({
   />
 );
 
+const comparePurokRecords = (a, b) => {
+  const normalizeForSort = (value) => {
+    const name = normalizeEnvironmentalPurokName(value);
+    const match = name.match(/^Purok (\d+)([AB]?)$/);
+    return match
+      ? { number: Number(match[1]), suffix: match[2] }
+      : { number: Number.MAX_SAFE_INTEGER, suffix: String(value || '').toUpperCase() };
+  };
+  const aPurok = normalizeForSort(a.purok);
+  const bPurok = normalizeForSort(b.purok);
+  return aPurok.number - bPurok.number || aPurok.suffix.localeCompare(bPurok.suffix);
+};
+
 const PageHeader = ({
   title,
   subtitle,
@@ -392,6 +405,7 @@ const PageHeader = ({
           aria-label="Filter records by Purok"
         >
           <option value="">All Puroks</option>
+          <option value="__sorted__">Purok 1-10</option>
           {PUROK_FILTER_OPTIONS.map((purok) => (
             <option key={purok} value={purok}>{purok}</option>
           ))}
@@ -434,7 +448,8 @@ const RecordsList = ({
       storedRecords,
       searchQuery
     );
-    return selectedCategory !== 'environmental' && purokFilter
+    if (purokFilter === '__sorted__') return [...records].sort(comparePurokRecords);
+    return purokFilter
       ? records.filter((record) => normalizeEnvironmentalPurokName(record.purok) === purokFilter)
       : records;
   }, [selectedCategory, recordsRefresh, searchQuery, currentUserId, purokFilter]);
@@ -450,14 +465,15 @@ const RecordsList = ({
       legacy.filter((record) => isOwnedByUser(record, currentUserId)),
       searchQuery
     ).filter((record) =>
-      selectedCategory === 'environmental' ||
-      !purokFilter || normalizeEnvironmentalPurokName(record.purok) === purokFilter
+      !purokFilter || purokFilter === '__sorted__' ||
+      normalizeEnvironmentalPurokName(record.purok) === purokFilter
     );
     const ids = new Set(canonicalRecords.map((r) => String(r.id)));
-    return sortRecordsNewestFirst([
+    const merged = [
       ...canonicalRecords,
       ...filteredLegacy.filter((r) => !ids.has(String(r.id))),
-    ]);
+    ];
+    return purokFilter === '__sorted__' ? merged.sort(comparePurokRecords) : sortRecordsNewestFirst(merged);
   };
 
   const recordsSubtitle = (count, label = 'record(s)') =>
@@ -477,8 +493,12 @@ const RecordsList = ({
     ? pendingVisits
     : pendingVisits.filter((visit) => filter === 'pending' ? !visit.synced : visit.synced)
   ).filter((visit) =>
-    !purokFilter || normalizeEnvironmentalPurokName(visit.purok) === purokFilter
+    !purokFilter || purokFilter === '__sorted__' ||
+    normalizeEnvironmentalPurokName(visit.purok) === purokFilter
   );
+  const sortedFilteredRecords = purokFilter === '__sorted__'
+    ? [...filteredRecords].sort(comparePurokRecords)
+    : filteredRecords;
 
   const handleDeleteRecord = (id) => {
     requestConfirmation(
@@ -557,6 +577,8 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
+          purokFilter={purokFilter}
+          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -650,6 +672,8 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
+          purokFilter={purokFilter}
+          setPurokFilter={setPurokFilter}
         />
         <div className="px-3 pt-4">
           <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">
@@ -722,9 +746,9 @@ const RecordsList = ({
     const allPwRecords = mergeWithLegacyFiltered(categoryRecords, 'records_pregnant_woman');
 
     const pwHeader = [
+      'Purok',
       'Date Reg',
       'FSN',
-      'Purok',
       'Last',
       'First',
       'Middle',
@@ -784,9 +808,9 @@ const RecordsList = ({
                       key={record.id ?? idx}
                       className="grid grid-cols-[repeat(23,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
+                      <span>{record.purok || '—'}</span>
                       <span>{formatTableDate(record.date_of_registration)}</span>
                       <span className="truncate">{record.family_serial_number || '—'}</span>
-                      <span>{record.purok || '—'}</span>
                       {updatedName(record.last_name, record)}
                       <span className="truncate">{record.first_name || '—'}</span>
                       <span className="truncate">{record.middle_name || '—'}</span>
@@ -828,12 +852,12 @@ const RecordsList = ({
 
     const lwHeader = [
       'No',
+      'Purok',
       'Date Reg',
       'FSN',
       'Last',
       'First',
       'Middle',
-      'Purok',
       'Spouse',
       'Contact',
       'Birthday',
@@ -889,12 +913,12 @@ const RecordsList = ({
                       className="grid grid-cols-[repeat(22,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
                       <span>{idx + 1}</span>
+                      <span>{record.purok || '—'}</span>
                       <span>{formatTableDate(record.date_of_registration)}</span>
                       <span className="truncate">{record.family_serial_number || '—'}</span>
                       {updatedName(record.last_name, record)}
                       <span className="truncate">{record.first_name || '—'}</span>
                       <span className="truncate">{record.middle_name || '—'}</span>
-                      <span>{record.purok || '—'}</span>
                       <span className="truncate">{record.spouse_name || '—'}</span>
                       <span className="truncate">{record.contact_number || '—'}</span>
                       <span>{formatTableDate(record.birthday)}</span>
@@ -1033,8 +1057,8 @@ const RecordsList = ({
     const allIfRecords = mergeWithLegacyFiltered(categoryRecords, 'records_infant_feeding');
 
     const ifHeader = [
-      'No',
       'Purok',
+      'No',
       'Nanay',
       'Bata',
       '1 Linggo',
@@ -1082,8 +1106,8 @@ const RecordsList = ({
                       key={record.id ?? idx}
                       className="grid grid-cols-[repeat(12,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
                     >
-                      <span>{String(idx + 1).padStart(2, '0')}</span>
                       <span>{record.purok || '—'}</span>
+                      <span>{String(idx + 1).padStart(2, '0')}</span>
                       {updatedName(record.mother_name, record)}
                       <span className="truncate">{record.child_name || '—'}</span>
                       <span>{record.feeding_1_week || '—'}</span>
@@ -1114,7 +1138,7 @@ const RecordsList = ({
     <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
       <PageHeader
         title={categoryMeta ? categoryMeta.name : 'Collected Records'}
-        subtitle={recordsSubtitle(categoryRecords.length || filteredRecords.length)}
+        subtitle={recordsSubtitle(categoryRecords.length || sortedFilteredRecords.length)}
         onBack={() => setActiveView('home')}
         showSearch
         searchQuery={searchQuery}
@@ -1175,14 +1199,14 @@ const RecordsList = ({
       </div>
 
       <div className="px-4 space-y-3">
-        {filteredRecords.length === 0 ? (
+        {sortedFilteredRecords.length === 0 ? (
           <div className="text-center py-12">
             <List size={48} className="mx-auto mb-3 text-gray-300" />
             <p className="text-gray-500 text-lg">No records yet</p>
             <p className="text-gray-400 text-sm mt-1">Start by creating a new visit</p>
           </div>
         ) : (
-          filteredRecords.map((visit) => (
+          sortedFilteredRecords.map((visit) => (
             <div 
               key={visit.id} 
               className={`p-4 rounded-lg border-2 ${
