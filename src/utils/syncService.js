@@ -145,7 +145,11 @@ function normalizeRemoteRecord(category, row, userId) {
   record.category = payload.category || category;
   record.purok = row.purok ?? record.purok ?? '';
   record.created_at = row.created_at || payload.created_at;
-  record.updated_at = payload.updated_at;
+  const updatedAtCandidates = [row.updated_at, payload.updated_at]
+    .filter((value) => value && !Number.isNaN(Date.parse(value)));
+  record.updated_at = updatedAtCandidates.sort(
+    (left, right) => Date.parse(right) - Date.parse(left)
+  )[0] || '';
   record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || userId;
   record.status = 'Synced';
   record.synced = true;

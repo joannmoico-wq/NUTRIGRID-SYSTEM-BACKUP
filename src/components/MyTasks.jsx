@@ -9,7 +9,7 @@ import {
   isTaskOverdue,
   notifyTaskOnce,
 } from '../utils/taskSyncService';
-import { registerPushToken } from '../utils/pushNotifications';
+import { preparePushNotifications, registerPushToken } from '../utils/pushNotifications';
 import { Calendar, MapPin, Bell, CheckCircle2, Circle, Clock, PartyPopper, X } from 'lucide-react';
 import BnsSearchBar from './BnsSearchBar';
 import TaskIcon from './TaskIcon';
@@ -106,6 +106,13 @@ export default function MyTasks() {
       if (channel) supabase.removeChannel(channel);
     };
   }, [load]);
+
+  useEffect(() => {
+    if (permission === 'unsupported' || permission === 'denied') return;
+    preparePushNotifications().catch((error) => {
+      console.error('Could not prepare push notifications:', error);
+    });
+  }, [permission]);
 
   useEffect(() => {
     if (permission !== 'granted' || pushRegistrationAttempted.current) return;

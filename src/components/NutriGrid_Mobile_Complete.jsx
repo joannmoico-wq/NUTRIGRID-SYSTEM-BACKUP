@@ -38,6 +38,7 @@ import {
   buildSavedRecords,
   performRecordSearch,
   getRecordDisplayTitle,
+  isRecordEdited,
   queueRecordDeletion,
   sortRecordsNewestFirst,
   toAdminEnvironmental,
@@ -227,6 +228,21 @@ function getLocalRecordMonth(record) {
   ].find((value) => /\b20\d{2}[-/]\d{1,2}/.test(String(value || '')));
   const match = String(dateValue || '').match(/\b(20\d{2})[-/](\d{1,2})/);
   return match ? `${match[1]}-${match[2].padStart(2, '0')}` : '';
+}
+
+function getLocalSharedPurokCounts(monthKey) {
+  const counts = new Map();
+  getRecords(STORAGE_KEYS.residents).forEach((record) => {
+    if (getLocalRecordMonth(record) !== monthKey) return;
+    const purok = normalizePurokName(record.purok);
+    if (purok) counts.set(purok, (counts.get(purok) || 0) + 1);
+  });
+  return Array.from(counts, ([purok, count]) => ({ purok, count }))
+    .sort((left, right) =>
+      right.count - left.count ||
+      left.purok.localeCompare(right.purok, undefined, { numeric: true })
+    )
+    .slice(0, 10);
 }
 
 function isOwnedByUser(record, userId) {
@@ -513,7 +529,7 @@ const RecordsList = ({
     <span className="flex w-full min-w-0 flex-col items-center gap-1">
       <span className="block w-full min-w-0 whitespace-normal break-words">{value || '—'}</span>
       {selectedCategory !== 'residents' && <RecordSyncStatus record={record} />}
-      {record.updated_at && (
+      {isRecordEdited(record) && (
         <span className="inline-flex max-w-full items-center justify-center rounded-full bg-pink-100 px-1.5 py-0.5 text-center text-[9px] font-semibold text-pink-700">
           Updated
         </span>
@@ -1299,11 +1315,15 @@ const HomeScreen = ({
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
   const [initialSharedPurokCache] = useState(() => readSharedPurokCache(sharedPurokMonth));
+  const [initialLocalPurokCounts] = useState(() =>
+    getLocalSharedPurokCounts(sharedPurokMonth)
+  );
+  const initialPurokCounts = initialSharedPurokCache?.counts || initialLocalPurokCounts;
   const [sharedHouseholdsByPurok, setSharedHouseholdsByPurok] = useState(
-    () => initialSharedPurokCache?.counts || []
+    () => initialPurokCounts
   );
   const [sharedPurokStatus, setSharedPurokStatus] = useState(
-    () => initialSharedPurokCache ? 'loaded' : 'loading'
+    () => initialSharedPurokCache || initialLocalPurokCounts.length ? 'loaded' : 'loading'
   );
   const [showSharedPurokPicker, setShowSharedPurokPicker] = useState(false);
   const sharedPurokPickerRef = useRef(null);
@@ -1395,9 +1415,10 @@ const HomeScreen = ({
     let active = true;
     let loading = false;
     const cachedEntry = readSharedPurokCache(sharedPurokMonth);
-    const cachedCounts = cachedEntry?.counts || null;
-    if (cachedCounts) {
-      setSharedHouseholdsByPurok(cachedCounts);
+    const localCounts = getLocalSharedPurokCounts(sharedPurokMonth);
+    const fallbackCounts = cachedEntry?.counts || localCounts;
+    if (cachedEntry || localCounts.length) {
+      setSharedHouseholdsByPurok(fallbackCounts);
       setSharedPurokStatus('loaded');
     } else {
       setSharedHouseholdsByPurok([]);
@@ -1420,7 +1441,7 @@ const HomeScreen = ({
       }
       if (loading) return;
       if (!navigator.onLine) {
-        if (active && !cachedCounts?.length) setSharedPurokStatus('offline');
+        if (active && !fallbackCounts.length) setSharedPurokStatus('offline');
         return;
       }
 
@@ -1434,12 +1455,20 @@ const HomeScreen = ({
         }
       } catch (error) {
         console.error('Could not load shared Purok totals from Supabase:', error);
-        if (active && !cachedCounts?.length) setSharedPurokStatus('error');
+        if (active && !fallbackCounts.length) setSharedPurokStatus('error');
       } finally {
         loading = false;
       }
     };
 
+    const refreshFromLocalRecords = (event) => {
+      if (event?.detail?.key && event.detail.key !== STORAGE_KEYS.residents) return;
+      if ('key' in (event || {}) && event.key !== STORAGE_KEYS.residents) return;
+      const currentLocalCounts = getLocalSharedPurokCounts(sharedPurokMonth);
+      setSharedHouseholdsByPurok(currentLocalCounts);
+      setSharedPurokStatus(currentLocalCounts.length ? 'loaded' : 'loading');
+      void loadSharedPurokCounts({ force: true });
+    };
     let realtimeRefreshTimeout;
     const handleRealtimeChange = () => {
       window.clearTimeout(realtimeRefreshTimeout);
@@ -1452,6 +1481,8 @@ const HomeScreen = ({
     void loadSharedPurokCounts();
     window.addEventListener('online', loadSharedPurokCounts);
     window.addEventListener('focus', loadSharedPurokCounts);
+    window.addEventListener('bns-records-changed', refreshFromLocalRecords);
+    window.addEventListener('storage', refreshFromLocalRecords);
     const handleVisibilityChange = () => {
       if (!document.hidden) void loadSharedPurokCounts();
     };
@@ -1465,6 +1496,8 @@ const HomeScreen = ({
       active = false;
       window.removeEventListener('online', loadSharedPurokCounts);
       window.removeEventListener('focus', loadSharedPurokCounts);
+      window.removeEventListener('bns-records-changed', refreshFromLocalRecords);
+      window.removeEventListener('storage', refreshFromLocalRecords);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.clearTimeout(realtimeRefreshTimeout);
       void supabase.removeChannel(channel);
@@ -2488,6 +2521,11 @@ const NutriGridMobile = () => {
         } catch (error) {
           console.error('Could not clear the location prompt preference:', error);
         }
+        try {
+          sessionStorage.removeItem(getPwaViewStateKey(currentUser.id));
+        } catch (error) {
+          console.error('Could not clear the saved PWA view:', error);
+        }
       }
       if (locationWatchId.current !== null) {
         navigator.geolocation?.clearWatch(locationWatchId.current);
@@ -2756,9 +2794,11 @@ const NutriGridMobile = () => {
   const saveCategoryForm = async (formData) => {
     const wasEditingRecord = Boolean(editingRecord);
     const key = storageKeyForCategory(formData.category);
+    const editedAt = new Date().toISOString();
     const pending = {
       ...formData,
-      updated_at: editingRecord ? new Date().toISOString() : formData.updated_at,
+      updated_at: editingRecord ? editedAt : formData.updated_at,
+      last_edited_at: editingRecord ? editedAt : formData.last_edited_at,
       created_by_user_id: currentUser?.id || '',
       synced: false,
       status: 'pending',

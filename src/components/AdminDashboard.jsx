@@ -12,6 +12,7 @@ import {
   buildSavedRecords,
   performRecordSearch,
   getRecordDisplayTitle,
+  isRecordEdited,
   storageKeyForCategory,
   categoryIdForStorageKey,
   queueRecordDeletion,
@@ -1667,11 +1668,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     requestAdminConfirmation(
       `Remove the photo from "${photo.name}"? The rest of the record will be kept.`,
       async () => {
+        const editedAt = new Date().toISOString();
         const updatedRecord = {
           ...record,
           photo_url: null,
           residents_photo: null,
           environmental_sanitation_photo: null,
+          updated_at: editedAt,
+          last_edited_at: editedAt,
           synced: false,
           status: 'pending',
         };
@@ -2266,7 +2270,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                               ? 'whitespace-normal break-words'
                               : 'truncate'
                           }`}>{row[getColumnKey(col)]}</span>
-                          {getColumnKey(col).toLowerCase() === updatedColumn && row._raw?.updated_at && (
+                          {getColumnKey(col).toLowerCase() === updatedColumn && isRecordEdited(row._raw) && (
                             <span className="inline-flex max-w-full items-center justify-center rounded-full bg-pink-100 px-1.5 py-0.5 text-center text-[9px] font-semibold text-pink-700">
                               Updated
                             </span>
@@ -3670,11 +3674,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                   `Are you sure you want to ${adminEditingRecord ? 'edit' : 'save'} this record?`,
                   async () => {
                   const key = storageKeyForCategory(record.category);
+                  const editedAt = new Date().toISOString();
                   const pending = {
                     ...record,
-                    updated_at: adminEditingRecord
-                      ? new Date().toISOString()
-                      : record.updated_at,
+                    updated_at: adminEditingRecord ? editedAt : record.updated_at,
+                    last_edited_at: adminEditingRecord ? editedAt : record.last_edited_at,
                     created_by_user_id: record.created_by_user_id || currentUserId,
                     synced: false,
                     status: 'pending',

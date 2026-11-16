@@ -161,11 +161,26 @@ export async function initializeLocalDatabase() {
         return record;
       });
       replaceCachedRecordPhotos(key, localRecords);
-      localStorage.setItem(key, JSON.stringify(withoutPhotos(localRecords)));
-      await bnsDatabase.transaction('rw', table, async () => {
-        await table.clear();
-        if (localRecords.length) await table.bulkPut(localRecords);
+      const localStorageRecords = JSON.stringify(withoutPhotos(localRecords));
+      if (localStorageValue !== localStorageRecords) {
+        localStorage.setItem(key, localStorageRecords);
+      }
+      const localIds = new Set(localRecords.map((record) => String(record.id)));
+      const recordsToPersist = localRecords.filter((record) => {
+        const indexedRecord = indexedById.get(String(record.id));
+        return !indexedRecord ||
+          JSON.stringify(withoutPhotos([record])[0]) !==
+            JSON.stringify(withoutPhotos([indexedRecord])[0]);
       });
+      const staleIds = indexedRecords
+        .filter((record) => !localIds.has(String(record.id)))
+        .map((record) => record.id);
+      if (recordsToPersist.length || staleIds.length) {
+        await bnsDatabase.transaction('rw', table, async () => {
+          if (recordsToPersist.length) await table.bulkPut(recordsToPersist);
+          if (staleIds.length) await table.bulkDelete(staleIds);
+        });
+      }
       return;
     }
 
@@ -696,6 +711,33 @@ export function sortRecordsNewestFirst(records) {
     timestamp(right) - timestamp(left) ||
     String(right.id ?? '').localeCompare(String(left.id ?? ''), undefined, { numeric: true })
   );
+}
+
+export function isRecordEdited(record) {
+  const explicitEdit = [
+    record?.last_edited_at,
+    record?._raw?.last_edited_at,
+    record?.data?.last_edited_at,
+  ].some((value) => value && !Number.isNaN(Date.parse(value)));
+  if (explicitEdit) return true;
+
+  const updatedAt = [
+    record?.updated_at,
+    record?._raw?.updated_at,
+    record?.data?.updated_at,
+  ]
+    .filter((value) => value && !Number.isNaN(Date.parse(value)))
+    .map((value) => Date.parse(value));
+  const createdAt = [
+    record?.created_at,
+    record?._raw?.created_at,
+    record?.data?.created_at,
+  ]
+    .filter((value) => value && !Number.isNaN(Date.parse(value)))
+    .map((value) => Date.parse(value));
+
+  if (!updatedAt.length || !createdAt.length) return false;
+  return Math.max(...updatedAt) - Math.min(...createdAt) > 1000;
 }
 
 export function toAdminResidents(records) {

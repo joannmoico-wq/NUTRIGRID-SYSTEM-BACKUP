@@ -10,9 +10,40 @@ const firebaseConfig = {
 };
 
 const app = getApps()[0] || initializeApp(firebaseConfig);
+let messagingSupportPromise;
+let serviceWorkerRegistrationPromise;
+
+const isMessagingSupported = () => {
+  if (!messagingSupportPromise) messagingSupportPromise = isSupported();
+  return messagingSupportPromise;
+};
+
+const getMessagingServiceWorker = () => {
+  if (!serviceWorkerRegistrationPromise) {
+    serviceWorkerRegistrationPromise = navigator.serviceWorker
+      .register('/firebase-messaging-sw.js', {
+        scope: '/firebase-cloud-messaging-push-scope/',
+      })
+      .catch((error) => {
+        serviceWorkerRegistrationPromise = null;
+        throw error;
+      });
+  }
+  return serviceWorkerRegistrationPromise;
+};
+
+export async function preparePushNotifications() {
+  if (
+    typeof Notification === 'undefined' ||
+    !navigator.serviceWorker ||
+    !(await isMessagingSupported())
+  ) return false;
+
+  await getMessagingServiceWorker();
+  return true;
+}
 
 export async function registerPushToken({ requestPermission = true } = {}) {
-  if (!(await isSupported())) return { ok: false, reason: 'unsupported' };
   if (typeof Notification === 'undefined') return { ok: false, reason: 'unsupported' };
 
   if (
@@ -30,9 +61,8 @@ export async function registerPushToken({ requestPermission = true } = {}) {
     : Notification.permission;
   if (permission !== 'granted') return { ok: false, reason: 'denied' };
 
-  const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', {
-    scope: '/firebase-cloud-messaging-push-scope/',
-  });
+  if (!(await preparePushNotifications())) return { ok: false, reason: 'unsupported' };
+  const registration = await getMessagingServiceWorker();
   const token = await getToken(getMessaging(app), {
     vapidKey: import.meta.env.VITE_FIREBASE_VAPID_KEY,
     serviceWorkerRegistration: registration,

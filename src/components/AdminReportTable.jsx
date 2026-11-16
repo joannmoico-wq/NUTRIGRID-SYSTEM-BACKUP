@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Download, FileText, Plus, X } from 'lucide-react';
 import ReportRowActions from './ReportRowActions';
 import { normalizePurokName, PUROK_OPTIONS } from '../utils/purok';
+import { isRecordEdited } from '../utils/bnsStorage';
 
 export const REPORT_META = {
   barangay: 'ALAWIHAO',
@@ -334,7 +335,7 @@ export default function AdminReportTable({
                                 {isOnline ? 'Ready to save' : 'Draft'}
                               </span>
                             )}
-                            {key === updatedColumn && (row._raw?.updated_at || row.updated_at) && (
+                            {key === updatedColumn && isRecordEdited(row._raw || row) && (
                               <span className="inline-flex shrink-0 items-center justify-center rounded-full bg-pink-100 px-1.5 py-0.5 text-[9px] font-semibold text-pink-700">
                                 Updated
                               </span>
