@@ -48,6 +48,14 @@ code {
   color: #f8fafc;
 }
 
+.pwa-ui-labels :is(h1, h2, h3, h4, label, button, select, th, [role='tab']) {
+  text-transform: uppercase;
+}
+
+.pwa-ui-labels .task-side-menu button {
+  text-transform: none;
+}
+
 /* Leaflet panes default to z-index 400+; keep maps below app modals */
 .leaflet-container {
   z-index: 0 !important;

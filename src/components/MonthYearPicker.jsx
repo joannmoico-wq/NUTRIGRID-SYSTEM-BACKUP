@@ -17,6 +17,7 @@ export default function MonthYearPicker({
   darkMode = false,
   minYear = 2000,
   maxYear,
+  buttonClassName = '',
 }) {
   const [open, setOpen] = useState(false);
   const pickerRef = useRef(null);
@@ -57,7 +58,7 @@ export default function MonthYearPicker({
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className={`inline-flex min-h-12 min-w-44 items-center justify-between gap-3 rounded-xl border px-3.5 py-2 text-sm font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300 ${
+        className={`inline-flex min-h-12 min-w-44 items-center justify-between gap-3 rounded-xl border px-3.5 py-2 text-sm font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300 ${buttonClassName} ${
           darkMode
             ? 'border-[#67445F] bg-[#302338] text-[#FCE7F3]'
             : 'border-gray-300 bg-white text-gray-800'

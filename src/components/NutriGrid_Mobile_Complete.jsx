@@ -25,6 +25,7 @@ import {
   FileText,
   Edit,
   Trash2,
+  Download,
 } from 'lucide-react';
 import {
   upsertRecord,
@@ -38,6 +39,7 @@ import {
   buildSavedRecords,
   performRecordSearch,
   getRecordDisplayTitle,
+  getRecordSyncStatus,
   isRecordEdited,
   queueRecordDeletion,
   sortRecordsNewestFirst,
@@ -46,11 +48,16 @@ import {
 import {
   registerWithSupabase,
   signInWithSupabase,
-  signInWithSupabaseOAuth,
   restoreSupabaseSession,
   signOutSupabase,
   updateSupabaseProfile,
 } from '../utils/supabaseAuth';
+import {
+  checkSessionTimeout,
+  clearSessionTimeout,
+  recordSessionActivity,
+  startSessionTimeout,
+} from '../utils/sessionTimeout';
 import {
   getSharedHouseholdCountsByPurokForMonth,
   applyRealtimeRecordChange,
@@ -68,6 +75,8 @@ import {
 } from '../utils/taskSyncService';
 import ReportRowActions from './ReportRowActions';
 import { ExpandableNote } from './AdminReportTable';
+import RecordDetailsDialog from './RecordDetailsDialog';
+import { exportTableToExcel } from '../utils/recordExcel';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
 import {
   comparePurokRecords,
@@ -78,7 +87,12 @@ import {
 } from '../utils/purok';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
 import { calculateAgeInYears } from '../utils/childGrowth';
-import { recordInformationEdit, syncPendingActivityLogs } from '../utils/activityLogService';
+import {
+  recordInformationCreate,
+  recordInformationDelete,
+  recordInformationEdit,
+  syncPendingActivityLogs,
+} from '../utils/activityLogService';
 import BnsSearchBar from './BnsSearchBar';
 import WelcomePage from './WelcomePage';
 import SignInPage from './SignInPage';
@@ -276,6 +290,19 @@ const fieldHeaderStyle = {
   color: NUTRI_GRID_THEME.text,
 };
 
+function getSessionTimeoutMessage(reason) {
+  if (reason === 'idle') {
+    return 'You were signed out after 15 minutes of inactivity. Please sign in again.';
+  }
+  if (reason === 'absolute') {
+    return 'You were signed out after 8 hours. Please sign in again.';
+  }
+  if (reason === 'signed_out') {
+    return 'You were signed out in another tab. Please sign in again.';
+  }
+  return 'Please sign in again to start a secure session.';
+}
+
 // Responsive sizing for different phone widths. The app keeps the same layout,
 // but scales the entire field-worker UI so compact phones (320-359px),
 // standard phones (360-429px), and larger phones/tablets remain comfortable.
@@ -358,6 +385,10 @@ const PageHeader = ({
   setActiveView,
   purokFilter,
   setPurokFilter,
+  excelRecords,
+  excelHeaders,
+  excelRows,
+  excelFileName,
 }) => (
   <div className="px-5 pt-5 pb-8 rounded-b-[2rem] shadow-md" style={fieldHeaderStyle}>
     {onBack && (
@@ -383,22 +414,37 @@ const PageHeader = ({
         className="mt-4"
       />
     )}
-    {setPurokFilter && (
-      <label className="mt-3 flex items-center gap-2 text-sm font-medium text-slate-700">
-        <span>Filter:</span>
-        <select
-          value={purokFilter || ''}
-          onChange={(event) => setPurokFilter(event.target.value)}
-          className="min-w-36 rounded-xl border border-[#E8DCEF] bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100"
-          aria-label="Filter records by Purok"
+    {(setPurokFilter || excelRecords) && (
+      <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+        {setPurokFilter && (
+          <label className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-700">
+            <span>Filter:</span>
+            <select
+              value={purokFilter || ''}
+              onChange={(event) => setPurokFilter(event.target.value)}
+              className="min-w-36 rounded-xl border border-[#E8DCEF] bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100"
+              aria-label="Filter records by Purok"
+            >
+              <option value="">All Puroks</option>
+              <option value="__sorted__">Purok 1-10</option>
+              {PUROK_FILTER_OPTIONS.map((purok) => (
+                <option key={purok} value={purok}>{purok}</option>
+              ))}
+            </select>
+          </label>
+        )}
+        {excelRecords && (
+        <button
+          type="button"
+          onClick={() => exportTableToExcel(excelHeaders, excelRows, excelFileName)}
+          disabled={!excelRecords.length}
+          className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold uppercase tracking-wide text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <option value="">All Puroks</option>
-          <option value="__sorted__">Purok 1-10</option>
-          {PUROK_FILTER_OPTIONS.map((purok) => (
-            <option key={purok} value={purok}>{purok}</option>
-          ))}
-        </select>
-      </label>
+          <Download size={16} />
+          SAVE AS EXCEL
+        </button>
+        )}
+      </div>
     )}
   </div>
 );
@@ -421,9 +467,99 @@ const RecordsList = ({
   setSelectedCategory,
   currentUserId,
   requestConfirmation,
+  deleteCategoryRecords,
 }) => {
   const [filter, setFilter] = useState('all');
   const [purokFilter, setPurokFilter] = useState('');
+  const [selectedRecordIds, setSelectedRecordIds] = useState(() => new Set());
+
+  useEffect(() => {
+    setSelectedRecordIds(new Set());
+  }, [selectedCategory, recordsRefresh, searchQuery, purokFilter]);
+
+  const selectionKey = (record, index) => String(record.id ?? `row-${index}`);
+  const selectedFrom = (records) => records.filter((record, index) =>
+    selectedRecordIds.has(selectionKey(record, index))
+  );
+  const toggleSelection = (record, index) => {
+    const key = selectionKey(record, index);
+    setSelectedRecordIds((current) => {
+      const next = new Set(current);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+  const selectionHeader = (records) => {
+    const selected = selectedFrom(records);
+    const allSelected = records.length > 0 && selected.length === records.length;
+    return (
+      <span className="flex items-center justify-center">
+        <input
+          type="checkbox"
+          checked={allSelected}
+          onChange={() => setSelectedRecordIds(
+            allSelected ? new Set() : new Set(records.map(selectionKey))
+          )}
+          aria-label={allSelected ? 'Deselect all visible records' : 'Select all visible records'}
+          className="h-4 w-4 cursor-pointer accent-violet-600"
+        />
+      </span>
+    );
+  };
+  const selectionCell = (record, index) => (
+    <span className="flex items-center justify-center">
+      <input
+        type="checkbox"
+        checked={selectedRecordIds.has(selectionKey(record, index))}
+        onChange={() => toggleSelection(record, index)}
+        aria-label={`Select record ${record.id ?? index + 1}`}
+        className="h-4 w-4 cursor-pointer accent-violet-600"
+      />
+    </span>
+  );
+  const renderSelectionBar = (records, headers, rows, fileName) => {
+    const selectedRecords = selectedFrom(records);
+    if (selectedRecords.length === 0) return null;
+    const selectedRows = records.flatMap((record, index) =>
+      selectedRecordIds.has(selectionKey(record, index)) ? [rows[index]] : []
+    );
+    return (
+      <div className="mx-3 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-violet-950">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <span className="rounded-full bg-violet-600 px-2.5 py-1 text-xs font-bold text-white">
+            {selectedRecords.length}
+          </span>
+          rows selected
+        </div>
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setSelectedRecordIds(new Set())}
+            className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100"
+          >
+            Clear Selection
+          </button>
+          <button
+            type="button"
+            onClick={() => exportTableToExcel(headers, selectedRows, `${fileName}-selected`)}
+            className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-700"
+          >
+            <Download size={14} />
+            Export Selected
+          </button>
+          <button
+            type="button"
+            onClick={() => deleteCategoryRecords(selectedCategory, selectedRecords)}
+            className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700"
+          >
+            <Trash2 size={14} />
+            Delete Selected
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   const categoryMeta = DASHBOARD_CATEGORIES.find((c) => c.id === selectedCategory);
   const categoryRecords = useMemo(() => {
@@ -470,12 +606,22 @@ const RecordsList = ({
   const emptyRecordsMessage = (defaultMsg) =>
     searchQuery.trim() || purokFilter ? 'No records match the current filters.' : defaultMsg;
 
-  const RecordActions = ({ record }) => (
-    <ReportRowActions
-      onEdit={() => startEditRecord(record, selectedCategory)}
-      onDelete={() => deleteCategoryRecord(selectedCategory, record)}
-    />
-  );
+  const RecordActions = ({ record, allowView = true }) => {
+    const [viewingRecord, setViewingRecord] = useState(null);
+    return (
+      <>
+        <ReportRowActions
+          onView={allowView ? () => setViewingRecord(record) : undefined}
+          onEdit={() => startEditRecord(record, selectedCategory)}
+          onDelete={() => deleteCategoryRecord(selectedCategory, record)}
+        />
+        <RecordDetailsDialog
+          record={viewingRecord}
+          onClose={() => setViewingRecord(null)}
+        />
+      </>
+    );
+  };
 
   const filteredRecords = (filter === 'all'
     ? pendingVisits
@@ -512,6 +658,21 @@ const RecordsList = ({
       day: 'numeric',
       year: 'numeric',
     });
+  };
+
+  const formatPurokCell = (value) => {
+    const purok = String(value ?? '').trim();
+    return purok.replace(/^purok\s*/i, '') || '—';
+  };
+
+  const getExportSyncStatus = (record) => {
+    const status = getRecordSyncStatus(record);
+    return ({
+      pending_sync: 'Pending Sync',
+      syncing: 'Syncing',
+      synced: 'Synced',
+      sync_failed: 'Sync Failed',
+    })[status];
   };
 
   const formatTableDate = (raw) => {
@@ -551,6 +712,16 @@ const RecordsList = ({
   );
 
   if (selectedCategory === 'residents') {
+    const residentHeaders = ['Purok', 'Head', 'Members', 'Status', 'Last Visit', 'Notes'];
+    const residentRows = categoryRecords.map((record) => [
+      formatPurokCell(record.purok),
+      record.household_head || '—',
+      record.total_members ?? '—',
+      getExportSyncStatus(record),
+      formatLastVisit(record),
+      record.notes || '—',
+    ]);
+
     return (
       <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
         <PageHeader
@@ -567,12 +738,18 @@ const RecordsList = ({
           setActiveView={setActiveView}
           purokFilter={purokFilter}
           setPurokFilter={setPurokFilter}
+          excelRecords={categoryRecords}
+          excelHeaders={residentHeaders}
+          excelRows={residentRows}
+          excelFileName="nutrigrid-residents"
         />
+        {renderSelectionBar(categoryRecords, residentHeaders, residentRows, 'nutrigrid-residents')}
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[620px]">
-                <div className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_1.2fr_4.5rem] gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+              <div className="min-w-[660px]">
+                <div className="grid grid-cols-[2rem_1fr_1.2fr_0.6fr_0.7fr_1fr_1.2fr_4.5rem] gap-2 px-4 py-3 bg-gray-50 border-b border-gray-200 text-[11px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                  {selectionHeader(categoryRecords)}
                   <span>Purok</span>
                   <span>Head</span>
                   <span>Members</span>
@@ -586,12 +763,13 @@ const RecordsList = ({
                     {emptyRecordsMessage('No resident records yet. Tap New Visit to add one.')}
                   </div>
                 ) : (
-                  categoryRecords.map((record) => (
+                  categoryRecords.map((record, idx) => (
                     <div
                       key={record.id}
-                      className="grid grid-cols-[1fr_1.2fr_0.6fr_0.7fr_1fr_1.2fr_4.5rem] gap-2 px-4 py-3 border-b border-gray-100 text-sm text-gray-800 items-center text-center"
+                      className={`grid grid-cols-[2rem_1fr_1.2fr_0.6fr_0.7fr_1fr_1.2fr_4.5rem] gap-2 px-4 py-3 border-b border-gray-100 text-sm text-gray-800 items-center text-center ${selectedRecordIds.has(selectionKey(record, idx)) ? 'bg-violet-50' : ''}`}
                     >
-                      <span className="font-medium truncate">{record.purok || '—'}</span>
+                      {selectionCell(record, idx)}
+                      <span className="font-medium truncate">{formatPurokCell(record.purok)}</span>
                       {updatedName(record.household_head, record)}
                       <span>{record.total_members ?? '—'}</span>
                       <RecordSyncStatus record={record} />
@@ -690,14 +868,14 @@ const RecordsList = ({
                         key === 'actions' ? (
                           <div key={key} className="flex min-w-[4.5rem] items-center justify-center">
                             {record._raw ? (
-                              <RecordActions record={record._raw} />
+                              <RecordActions record={record._raw} allowView={false} />
                             ) : (
                               <span className="text-gray-300" aria-hidden="true">—</span>
                             )}
                           </div>
                         ) : key === 'purok' ? (
                           <span key={key} className="flex min-w-0 flex-col items-center gap-1">
-                            {record[key] || '—'}
+                            {key === 'purok' ? formatPurokCell(record[key]) : record[key] || '—'}
                             <RecordSyncStatus record={record._raw || record} />
                           </span>
                         ) : key === 'notes' ? (
@@ -757,6 +935,30 @@ const RecordsList = ({
       'Amount of Tabs',
       'Notes',
     ];
+    const pwRows = allPwRecords.map((record) => [
+      formatPurokCell(record.purok),
+      formatTableDate(record.date_of_registration),
+      record.family_serial_number || '—',
+      record.last_name || '—',
+      record.first_name || '—',
+      record.middle_name || '—',
+      record.spouse_name || '—',
+      record.contact_number || '—',
+      formatTableDate(record.birthday),
+      record.age ?? '—',
+      record.civil_status || '—',
+      formatTableDate(record.lmp),
+      formatTableDate(record.expected_date_of_delivery),
+      record.philhealth_member || '—',
+      record.four_ps_beneficiary || '—',
+      record.weight ?? '—',
+      record.height ?? '—',
+      record.bmi ?? '—',
+      record.muac ?? '—',
+      record.iron_folic_acid_type || '—',
+      record.iron_folic_acid || '—',
+      record.notes || '—',
+    ]);
 
     return (
       <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
@@ -774,12 +976,18 @@ const RecordsList = ({
           setActiveView={setActiveView}
           purokFilter={purokFilter}
           setPurokFilter={setPurokFilter}
+          excelRecords={allPwRecords}
+          excelHeaders={pwHeader}
+          excelRows={pwRows}
+          excelFileName="nutrigrid-pregnant-women"
         />
+        {renderSelectionBar(allPwRecords, pwHeader, pwRows, 'nutrigrid-pregnant-women')}
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[1700px]">
-                <div className="grid grid-cols-[repeat(23,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                <div className="grid grid-cols-[repeat(24,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                  {selectionHeader(allPwRecords)}
                   {[...pwHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">
                       {label}
@@ -794,9 +1002,10 @@ const RecordsList = ({
                   allPwRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(23,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className={`grid grid-cols-[repeat(24,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center ${selectedRecordIds.has(selectionKey(record, idx)) ? 'bg-violet-50' : ''}`}
                     >
-                      <span>{record.purok || '—'}</span>
+                      {selectionCell(record, idx)}
+                      <span>{formatPurokCell(record.purok)}</span>
                       <span>{formatTableDate(record.date_of_registration)}</span>
                       <span className="truncate">{record.family_serial_number || '—'}</span>
                       {updatedName(record.last_name, record)}
@@ -861,6 +1070,29 @@ const RecordsList = ({
       'Date Delivered',
       'Notes',
     ];
+    const lwRows = allLwRecords.map((record, index) => [
+      index + 1,
+      formatPurokCell(record.purok),
+      formatTableDate(record.date_of_registration),
+      record.family_serial_number || '—',
+      record.last_name || '—',
+      record.first_name || '—',
+      record.middle_name || '—',
+      record.spouse_name || '—',
+      record.contact_number || '—',
+      formatTableDate(record.birthday),
+      record.age ?? '—',
+      record.civil_status || '—',
+      record.philhealth_member || '—',
+      record.four_ps_beneficiary || '—',
+      record.weight ?? '—',
+      record.height ?? '—',
+      record.bmi ?? '—',
+      record.muac ?? '—',
+      record.iron_folic_acid || '—',
+      formatTableDate(record.date_delivered),
+      record.notes || '—',
+    ]);
 
     return (
       <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
@@ -878,12 +1110,18 @@ const RecordsList = ({
           setActiveView={setActiveView}
           purokFilter={purokFilter}
           setPurokFilter={setPurokFilter}
+          excelRecords={allLwRecords}
+          excelHeaders={lwHeader}
+          excelRows={lwRows}
+          excelFileName="nutrigrid-lactating-women"
         />
+        {renderSelectionBar(allLwRecords, lwHeader, lwRows, 'nutrigrid-lactating-women')}
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[1600px]">
-                <div className="grid grid-cols-[repeat(22,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                <div className="grid grid-cols-[repeat(23,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-gray-50 border-b border-gray-200 text-[10px] font-semibold text-gray-500 uppercase tracking-wide text-center">
+                  {selectionHeader(allLwRecords)}
                   {[...lwHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">
                       {label}
@@ -898,10 +1136,11 @@ const RecordsList = ({
                   allLwRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(22,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className={`grid grid-cols-[repeat(23,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center ${selectedRecordIds.has(selectionKey(record, idx)) ? 'bg-violet-50' : ''}`}
                     >
+                      {selectionCell(record, idx)}
                       <span>{idx + 1}</span>
-                      <span>{record.purok || '—'}</span>
+                      <span>{formatPurokCell(record.purok)}</span>
                       <span>{formatTableDate(record.date_of_registration)}</span>
                       <span className="truncate">{record.family_serial_number || '—'}</span>
                       {updatedName(record.last_name, record)}
@@ -964,6 +1203,31 @@ const RecordsList = ({
       'Newborn Babies',
       'Remarks',
     ];
+    const natalityRows = categoryRecords.map((record) => [
+      formatMonth(record.month),
+      formatPurokCell(record.purok),
+      record.mother_name || '—',
+      formatTableDate(record.mother_birthday),
+      calculateAgeInYears(record.mother_birthday) || record.mother_age || '—',
+      record.child_name || '—',
+      record.sex === 'boys' ? 'Male' : record.sex === 'girls' ? 'Female' : '—',
+      formatTableDate(record.dob),
+      record.birth_weight ?? record.birth_weight_kg ?? '—',
+      formatTableDate(record.dow),
+      record.weight_kg ?? '—',
+      record.height_cm ?? '—',
+      record.aim ?? '—',
+      record.length_cm ?? '—',
+      record.w_a || '—',
+      record.h_a || '—',
+      record.w_l_h || '—',
+      record.iron_status || record.iron_given || '—',
+      record.vitamin_a || '—',
+      record.vitamin_a_count || '—',
+      record.fully_immunized ? '✓' : '',
+      record.newborn_babies ? '✓' : '',
+      record.remarks || record.notes || '—',
+    ]);
 
     return (
       <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
@@ -981,12 +1245,18 @@ const RecordsList = ({
           setActiveView={setActiveView}
           purokFilter={purokFilter}
           setPurokFilter={setPurokFilter}
+          excelRecords={categoryRecords}
+          excelHeaders={natalityHeader}
+          excelRows={natalityRows}
+          excelFileName="nutrigrid-monthly-natality"
         />
+        {renderSelectionBar(categoryRecords, natalityHeader, natalityRows, 'nutrigrid-monthly-natality')}
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[1900px]">
-                <div className="grid grid-cols-[repeat(24,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
+                <div className="grid grid-cols-[repeat(25,minmax(4.5rem,1fr))] gap-1 px-3 py-3 bg-amber-50 border-b border-amber-200 text-[10px] font-semibold text-amber-900 uppercase tracking-wide text-center">
+                  {selectionHeader(categoryRecords)}
                   {[...natalityHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
@@ -999,10 +1269,11 @@ const RecordsList = ({
                   categoryRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(24,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className={`grid grid-cols-[repeat(25,minmax(4.5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center ${selectedRecordIds.has(selectionKey(record, idx)) ? 'bg-violet-50' : ''}`}
                     >
+                      {selectionCell(record, idx)}
                       <span className="truncate">{formatMonth(record.month)}</span>
-                      <span>{record.purok || '—'}</span>
+                      <span>{formatPurokCell(record.purok)}</span>
                       {updatedName(record.mother_name, record)}
                       <span>{formatTableDate(record.mother_birthday)}</span>
                       <span>{calculateAgeInYears(record.mother_birthday) || record.mother_age || '—'}</span>
@@ -1060,6 +1331,22 @@ const RecordsList = ({
       '8 Buwan',
       'Notes',
     ];
+    const ifRows = allIfRecords.map((record, index) => [
+      formatPurokCell(record.purok),
+      String(index + 1).padStart(2, '0'),
+      record.mother_name || '—',
+      record.child_name || '—',
+      record.feeding_1_week || '—',
+      record.feeding_1_month || '—',
+      record.feeding_2_month || '—',
+      record.feeding_3_month || '—',
+      record.feeding_4_month || '—',
+      record.feeding_5_month || '—',
+      record.feeding_6_month || '—',
+      record.feeding_7_month || '—',
+      record.feeding_8_month || '—',
+      record.notes || '—',
+    ]);
 
     return (
       <div className="pb-8 min-h-screen" style={{ backgroundColor: MOBILE.bg }}>
@@ -1077,12 +1364,18 @@ const RecordsList = ({
           setActiveView={setActiveView}
           purokFilter={purokFilter}
           setPurokFilter={setPurokFilter}
+          excelRecords={allIfRecords}
+          excelHeaders={ifHeader}
+          excelRows={ifRows}
+          excelFileName="nutrigrid-infant-feeding"
         />
+        {renderSelectionBar(allIfRecords, ifHeader, ifRows, 'nutrigrid-infant-feeding')}
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
               <div className="min-w-[1320px]">
-                <div className="grid grid-cols-[repeat(15,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
+                <div className="grid grid-cols-[repeat(16,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
+                  {selectionHeader(allIfRecords)}
                   {[...ifHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
                   ))}
@@ -1095,9 +1388,10 @@ const RecordsList = ({
                   allIfRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className="grid grid-cols-[repeat(15,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center"
+                      className={`grid grid-cols-[repeat(16,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center ${selectedRecordIds.has(selectionKey(record, idx)) ? 'bg-violet-50' : ''}`}
                     >
-                      <span>{record.purok || '—'}</span>
+                      {selectionCell(record, idx)}
+                      <span>{formatPurokCell(record.purok)}</span>
                       <span>{String(idx + 1).padStart(2, '0')}</span>
                       {updatedName(record.mother_name, record)}
                       <span className="truncate">{record.child_name || '—'}</span>
@@ -1635,18 +1929,6 @@ const HomeScreen = ({
                 </span>
               )}
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setShowNotifications(false);
-                setActiveView('profile');
-              }}
-              className="p-2.5 rounded-full bg-white/50 hover:bg-white/70 transition"
-              style={{ color: NUTRI_GRID_THEME.text }}
-              aria-label="Open profile menu"
-            >
-              <UserCircle size={20} />
-            </button>
             {showNotifications && (
               <>
                 <button
@@ -1779,7 +2061,7 @@ const HomeScreen = ({
                   <Icon size={19} strokeWidth={2.2} aria-hidden="true" />
                 </span>
                 <span className="relative z-10 w-full min-w-0 text-center">
-                  <span className="block truncate text-[10px] font-semibold leading-tight text-gray-700">{label}</span>
+                  <span className="block truncate text-[10px] font-semibold uppercase leading-tight text-gray-700">{label}</span>
                   <span className="mt-1 block w-full translate-y-1 text-center text-xl font-bold leading-none text-gray-900">{value}</span>
                   {subtitle && (
                     <span className="mt-0.5 block text-[9px] leading-tight text-gray-500">{subtitle}</span>
@@ -2346,6 +2628,7 @@ const NutriGridMobile = () => {
   const [syncNotificationIsError, setSyncNotificationIsError] = useState(false);
   const [pendingConfirmation, setPendingConfirmation] = useState(null);
   const [confirmationBusy, setConfirmationBusy] = useState(false);
+  const [sessionTimeoutMessage, setSessionTimeoutMessage] = useState('');
   const lastBackgroundSyncError = useRef('');
   const syncInFlight = useRef(false);
   const wasOffline = useRef(!navigator.onLine);
@@ -2428,11 +2711,26 @@ const NutriGridMobile = () => {
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
+    const restoreUser = async (userData) => {
+      const timeoutReason = checkSessionTimeout(userData.id);
+      if (timeoutReason) {
+        try {
+          await signOutSupabase(userData.id);
+        } catch (error) {
+          console.error('Could not fully sign out the expired session:', error);
+        }
+        setSessionTimeoutMessage(getSessionTimeoutMessage(timeoutReason));
+        setAppState('signin');
+        return;
+      }
+      completeSignIn(userData, { restoring: true });
+    };
+
     const restoreAuthentication = async () => {
       try {
         if (!navigator.onLine) {
           const cachedUser = await restoreSupabaseSession(null, { allowCachedProfile: true });
-          if (cachedUser) completeSignIn(cachedUser);
+          if (cachedUser) await restoreUser(cachedUser);
           else setAppState('welcome');
           return;
         }
@@ -2443,7 +2741,7 @@ const NutriGridMobile = () => {
         const userData = session
           ? await restoreSupabaseSession(session)
           : await restoreSupabaseSession(null, { allowCachedProfile: true });
-        if (userData) completeSignIn(userData);
+        if (userData) await restoreUser(userData);
         else setAppState('welcome');
       } catch (error) {
         console.error('Could not restore Supabase sign-in:', error);
@@ -2451,7 +2749,7 @@ const NutriGridMobile = () => {
           try {
             const cachedUser = await restoreSupabaseSession(null, { allowCachedProfile: true });
             if (cachedUser) {
-              completeSignIn(cachedUser);
+              await restoreUser(cachedUser);
               return;
             }
           } catch (offlineError) {
@@ -2480,7 +2778,14 @@ const NutriGridMobile = () => {
     setAppState('signin');
   };
 
-  const completeSignIn = (userData) => {
+  const completeSignIn = (userData, { restoring = false } = {}) => {
+    try {
+      if (!restoring) startSessionTimeout(userData.id);
+      setSessionTimeoutMessage('');
+    } catch (error) {
+      console.error('Could not initialize sign-in timeout tracking:', error);
+      throw new Error('Secure sign-in session could not be initialized. Please try again.');
+    }
     const savedView = readPwaViewState(userData.id);
     startLocationUpdates(userData.id);
     setCurrentUser(userData);
@@ -2512,10 +2817,6 @@ const NutriGridMobile = () => {
     completeSignIn(await signInWithSupabase(credentials));
   };
 
-  const handleSocialSignIn = async (provider) => {
-    await signInWithSupabaseOAuth(provider);
-  };
-
   const handleRegister = async (accountData) => {
     await registerWithSupabase(accountData);
   };
@@ -2532,12 +2833,17 @@ const NutriGridMobile = () => {
     { title: 'Save profile changes', confirmLabel: 'Save changes' }
   );
 
-  const performLogout = async () => {
+  const performLogout = async (timeoutReason = '') => {
     try {
       await signOutSupabase(currentUser?.id);
     } catch (error) {
       console.error('Could not fully sign out from Supabase; local app access was cleared:', error);
     } finally {
+      try {
+        clearSessionTimeout(currentUser?.id);
+      } catch (error) {
+        console.error('Could not clear sign-in timeout tracking:', error);
+      }
       if (currentUser?.id) {
         try {
           localStorage.removeItem(`nutrigrid_location_requested:${currentUser.id}`);
@@ -2567,8 +2873,57 @@ const NutriGridMobile = () => {
       setShowCategoryForm(false);
       setEditingRecord(null);
       setAppState('signin');
+      setSessionTimeoutMessage(timeoutReason);
     }
   };
+
+  useEffect(() => {
+    const userId = currentUser?.id;
+    if (!isAuthenticated || !userId) return undefined;
+    let logoutStarted = false;
+    const enforceTimeout = () => {
+      if (logoutStarted) return;
+      try {
+        const reason = checkSessionTimeout(userId);
+        if (!reason) return;
+        logoutStarted = true;
+        void performLogout(getSessionTimeoutMessage(reason));
+      } catch (error) {
+        console.error('Could not verify sign-in timeout:', error);
+        logoutStarted = true;
+        void performLogout('Your session could not be verified. Please sign in again.');
+      }
+    };
+    const recordActivity = () => {
+      enforceTimeout();
+      if (logoutStarted) return;
+      try {
+        recordSessionActivity(userId);
+      } catch (error) {
+        console.error('Could not record sign-in activity:', error);
+        logoutStarted = true;
+        void performLogout('Your session could not be verified. Please sign in again.');
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') enforceTimeout();
+    };
+    const interval = window.setInterval(enforceTimeout, 15000);
+    const activityEvents = ['pointermove', 'keydown', 'click', 'touchstart', 'wheel', 'scroll'];
+    activityEvents.forEach((eventName) =>
+      document.addEventListener(eventName, recordActivity, { passive: true })
+    );
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('storage', enforceTimeout);
+    return () => {
+      window.clearInterval(interval);
+      activityEvents.forEach((eventName) =>
+        document.removeEventListener(eventName, recordActivity)
+      );
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('storage', enforceTimeout);
+    };
+  }, [isAuthenticated, currentUser?.id]);
 
   const handleLogout = () => requestConfirmation(
     'Are you sure you want to log out?',
@@ -2844,6 +3199,12 @@ const NutriGridMobile = () => {
         after: formData,
         actorRole: currentUser?.role,
       });
+    } else {
+      void recordInformationCreate({
+        category: formData.category,
+        record: ownedPending,
+        actorRole: currentUser?.role,
+      });
     }
     removeLegacyRecord(formData.category, ownedPending.id);
     setEditingRecord(null);
@@ -2887,44 +3248,57 @@ const NutriGridMobile = () => {
     { confirmLabel: editingRecord ? 'Save changes' : 'Save' }
   );
 
-  const deleteCategoryRecord = (categoryId, record) => requestConfirmation(
-    'Are you sure you want to delete this record? This removes it from Field Worker and Admin.',
+  const deleteCategoryRecords = (categoryId, records) => requestConfirmation(
+    `Are you sure you want to delete ${records.length === 1 ? 'this record' : `these ${records.length} selected records`}? This removes them from Field Worker and Admin.`,
     async () => {
-    const id = record.id;
-    queueRecordDeletion(
-      categoryId,
-      id,
-      Boolean(record.synced || String(record.status || '').toLowerCase() === 'synced'),
-      record.created_by_user_id || currentUser?.id
-    );
-    deleteRecordById(storageKeyForCategory(categoryId), id);
-    removeLegacyRecord(categoryId, id);
-    if (String(editingRecord?.id) === String(id)) {
-      setEditingRecord(null);
-      setShowCategoryForm(false);
-    }
-    setRecordsRefresh((v) => v + 1);
+      records.forEach((record) => {
+        const id = record.id;
+        void recordInformationDelete({
+          category: categoryId,
+          record,
+          actorRole: currentUser?.role,
+        });
+        queueRecordDeletion(
+          categoryId,
+          id,
+          Boolean(record.synced || String(record.status || '').toLowerCase() === 'synced'),
+          record.created_by_user_id || currentUser?.id
+        );
+        deleteRecordById(storageKeyForCategory(categoryId), id);
+        removeLegacyRecord(categoryId, id);
+        if (String(editingRecord?.id) === String(id)) {
+          setEditingRecord(null);
+          setShowCategoryForm(false);
+        }
+      });
+      setRecordsRefresh((v) => v + 1);
 
-    if (!navigator.onLine) {
-      alert('Deleted on this device. The deletion will sync to Supabase when you are back online.');
-      return;
-    }
+      if (!navigator.onLine) {
+        alert(`${records.length} record(s) deleted on this device. The deletions will sync when you are back online.`);
+        return;
+      }
 
-    void syncPendingRecordDeletions()
-      .then((result) => {
+      try {
+        const result = await syncPendingRecordDeletions();
         if (result.skipped || result.errors?.length) {
-          alert('Deleted locally, but the deletion is still waiting to sync. Check your connection and sign-in, then retry.');
+          alert('Records deleted locally, but some deletions are still waiting to sync. Check your connection and sign-in, then retry.');
           return;
         }
         showSyncNotification('Record deletion synced to the Admin Dashboard and database.');
-      })
-      .catch((error) => {
-        console.error('Record deletion is saved locally and waiting to sync:', error);
-        alert('Deleted locally, but the deletion could not sync. Check your connection and try again.');
-      });
+      } catch (error) {
+        console.error('Record deletions are saved locally and waiting to sync:', error);
+        alert('Records deleted locally, but the deletions could not sync. Check your connection and try again.');
+      }
     },
-    { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
+    {
+      title: records.length === 1 ? 'Delete record' : 'Delete selected records',
+      confirmLabel: records.length === 1 ? 'Delete' : 'Delete records',
+      destructive: true,
+    }
   );
+
+  const deleteCategoryRecord = (categoryId, record) =>
+    deleteCategoryRecords(categoryId, [record]);
 
   const startEditRecord = (record, categoryId) => {
     setSelectedCategory(record.category || categoryId);
@@ -3340,7 +3714,7 @@ const NutriGridMobile = () => {
       <SignInPage
         onSignIn={handleSignIn}
         onRegister={handleRegister}
-        onSocialSignIn={handleSocialSignIn}
+        timeoutMessage={sessionTimeoutMessage}
       />
     );
   }
@@ -3359,7 +3733,7 @@ const NutriGridMobile = () => {
   // Show Main App
   if (appState === 'app' && isAuthenticated) {
     return (
-      <>
+      <div className="pwa-ui-labels">
         {syncNotification && (
           <div
             role="status"
@@ -3463,6 +3837,7 @@ const NutriGridMobile = () => {
               setPendingVisits={setPendingVisits}
               startEditRecord={startEditRecord}
               deleteCategoryRecord={deleteCategoryRecord}
+              deleteCategoryRecords={deleteCategoryRecords}
               setActiveView={setActiveView}
               MOBILE={MOBILE}
               searchResults={searchResults}
@@ -3486,7 +3861,7 @@ const NutriGridMobile = () => {
           onCancel={() => setPendingConfirmation(null)}
           onConfirm={() => void runConfirmedAction()}
         />
-      </>
+      </div>
     );
   }
 

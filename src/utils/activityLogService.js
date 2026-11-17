@@ -11,6 +11,10 @@ const INTERNAL_FIELDS = new Set([
   'synced',
   'status',
   '_raw',
+  'gps_lat',
+  'gps_lng',
+  'gps_latitude',
+  'gps_longitude',
 ]);
 const CATEGORY_LABELS = {
   residents: 'Residents',
@@ -120,7 +124,14 @@ async function uploadActivityLog(log) {
   removePendingActivityLog(log.id);
 }
 
-export async function recordInformationEdit({ category, recordId, before, after, actorRole }) {
+export async function recordInformationChange({
+  action,
+  category,
+  recordId,
+  before,
+  after,
+  actorRole,
+}) {
   const changes = getActivityChanges(before, after);
   if (!changes.length) return null;
 
@@ -130,6 +141,7 @@ export async function recordInformationEdit({ category, recordId, before, after,
       id: createId(),
       ...actor,
       category,
+      action,
       record_id: String(recordId ?? after.id ?? before.id ?? ''),
       field_changes: changes,
       created_at: new Date().toISOString(),
@@ -146,6 +158,32 @@ export async function recordInformationEdit({ category, recordId, before, after,
     console.error('Record edit was saved, but its activity could not be recorded:', error);
     return null;
   }
+}
+
+export function recordInformationEdit(details) {
+  return recordInformationChange({ ...details, action: 'edited' });
+}
+
+export function recordInformationCreate({ category, record, actorRole }) {
+  return recordInformationChange({
+    category,
+    recordId: record?.id,
+    before: {},
+    after: record || {},
+    actorRole,
+    action: 'created',
+  });
+}
+
+export function recordInformationDelete({ category, record, actorRole }) {
+  return recordInformationChange({
+    category,
+    recordId: record?.id,
+    before: record || {},
+    after: {},
+    actorRole,
+    action: 'deleted',
+  });
 }
 
 export async function syncPendingActivityLogs() {
@@ -172,7 +210,7 @@ export async function syncPendingActivityLogs() {
 export async function loadRecordActivityLogs(limit = 100) {
   const { data, error } = await supabase
     .from(ACTIVITY_TABLE)
-    .select('id, actor_user_id, actor_name, actor_role, category, record_id, field_changes, created_at')
+    .select('id, actor_user_id, actor_name, actor_role, category, action, record_id, field_changes, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (error) throw new Error(error.message);

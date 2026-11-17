@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, Camera, MapPin, X } from 'lucide-react';
 import { calculateAgeInMonths as getCompletedAgeInMonths, calculateAgeInYears, calculateWhoGrowthStatuses } from '../utils/childGrowth';
 import { PUROK_FORM_OPTIONS } from '../utils/purok';
@@ -19,6 +19,116 @@ const FormNotes = ({ title, entries }) => (
     </ul>
   </section>
 );
+
+const FormValidationStyles = () => {
+  useEffect(() => {
+    const addPlaceholders = () => {
+      document.querySelectorAll('.category-record-form input, .category-record-form textarea').forEach((control) => {
+        if (control.placeholder || ['checkbox', 'file', 'hidden', 'radio', 'submit', 'button'].includes(control.type)) return;
+        const label = control.closest('label')?.textContent?.replace(/\*/g, '').trim();
+        const fieldName = label || control.getAttribute('aria-label') || 'value';
+        control.placeholder = control.type === 'date'
+          ? `Select ${fieldName.toLowerCase()}`
+          : `Enter ${fieldName.toLowerCase()}`;
+      });
+    };
+
+    addPlaceholders();
+    const observer = new MutationObserver(addPlaceholders);
+    observer.observe(document.body, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <style>{`
+      .category-record-form.show-validation-errors :is(input, select, textarea):invalid {
+        border-color: #dc2626 !important;
+        background-color: #fef2f2 !important;
+      }
+      .category-record-form.show-validation-errors input:is([type="checkbox"], [type="radio"]):invalid {
+        outline: 2px solid #dc2626;
+        outline-offset: 2px;
+      }
+      .category-record-form.show-validation-errors [data-required-checkbox-group]:has(input:invalid) {
+        border-color: #dc2626 !important;
+        box-shadow: 0 0 0 1px #dc2626;
+      }
+    `}</style>
+  );
+};
+
+const setExclusiveChoice = (formData, keys, selectedKey, additionalValues = {}) => ({
+  ...formData,
+  ...keys.reduce((choices, key) => ({ ...choices, [key]: key === selectedKey }), {}),
+  ...additionalValues,
+});
+
+function getIncompleteFormControls(form) {
+  const controls = Array.from(form.elements);
+  const incompleteControls = controls.filter((control) => {
+    if (
+      control.disabled ||
+      control.readOnly ||
+      control.dataset.optional === 'true' ||
+      ['button', 'checkbox', 'file', 'hidden', 'radio', 'reset', 'submit'].includes(control.type)
+    ) {
+      return false;
+    }
+
+    return !String(control.value ?? '').trim();
+  });
+
+  const checkboxGroups = new Map();
+  controls.forEach((control) => {
+    const group = control.dataset.requiredCheckboxGroup;
+    if (!group || control.disabled) return;
+    const groupControls = checkboxGroups.get(group) || [];
+    groupControls.push(control);
+    checkboxGroups.set(group, groupControls);
+  });
+
+  checkboxGroups.forEach((groupControls) => {
+    if (!groupControls.some((control) => control.checked)) {
+      incompleteControls.push(...groupControls);
+    }
+  });
+
+  return incompleteControls;
+}
+
+function highlightIncompleteFormControls(form) {
+  const incompleteControls = new Set(getIncompleteFormControls(form));
+  Array.from(form.elements).forEach((control) => {
+    if (typeof control.setCustomValidity === 'function') {
+      control.setCustomValidity(
+        incompleteControls.has(control) ? 'Complete this field before saving.' : ''
+      );
+    }
+  });
+  form.classList.add('show-validation-errors');
+}
+
+function validateCompleteForm(event) {
+  const form = event.currentTarget;
+  const incompleteControls = getIncompleteFormControls(form);
+  if (incompleteControls.length > 0) {
+    highlightIncompleteFormControls(form);
+    incompleteControls[0].focus();
+    incompleteControls[0].reportValidity();
+    return false;
+  }
+
+  form.classList.remove('show-validation-errors');
+  Array.from(form.elements).forEach((control) => {
+    if (typeof control.setCustomValidity === 'function') control.setCustomValidity('');
+  });
+  return true;
+}
+
+function updateVisibleFormValidation(form) {
+  if (!form.classList.contains('show-validation-errors')) return;
+  highlightIncompleteFormControls(form);
+}
 
 const ResidentNotes = () => (
   <FormNotes title="Residents" entries={[['HH', 'Household']]} />
@@ -250,7 +360,45 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
 
   React.useEffect(() => {
     if (initialData) {
-      setFormData((prev) => ({ ...prev, ...initialData }));
+      setFormData((prev) => {
+        const restoredData = { ...prev, ...initialData };
+        [
+          ['water_level_i', 'water_level_ii', 'water_level_iii', 'without_potable_water'],
+          ['electricity_owned', 'electricity_connected'],
+          ['toilet_sanitary', 'toilet_not_sanitary', 'toilet_communal', 'toilet_none'],
+          ['compost_pit', 'garbage_collect', 'garbage_others'],
+          [
+            'selling_iodized_sari',
+            'selling_iodized_grocery',
+            'selling_iodized_bakery',
+            'selling_iodized_carenderia',
+            'selling_iodized_restaurant',
+            'selling_iodized_hotel',
+          ],
+          [
+            'selling_fortified_grocery',
+            'selling_fortified_bakery',
+            'selling_fortified_restaurant',
+            'selling_fortified_sari',
+            'selling_fortified_carenderia',
+            'selling_fortified_hotel',
+          ],
+          [
+            'establishments_hotel',
+            'establishments_restaurant',
+            'establishments_carenderia',
+            'establishments_bakery',
+            'establishments_grocery',
+            'establishments_sari',
+          ],
+        ].forEach((group) => {
+          const selectedKey = group.find((key) => restoredData[key]);
+          group.forEach((key) => {
+            restoredData[key] = key === selectedKey;
+          });
+        });
+        return restoredData;
+      });
       setPhotoPreview(initialData.photo_url || null);
     }
   }, [initialData]);
@@ -280,6 +428,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (!validateCompleteForm(e)) return;
     setIsSubmitting(true);
     
     const visitData = {
@@ -298,7 +447,17 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      onInvalidCapture={(event) => highlightIncompleteFormControls(event.currentTarget)}
+      onChangeCapture={(event) => {
+        event.target.setCustomValidity('');
+        updateVisibleFormValidation(event.currentTarget);
+      }}
+      className="category-record-form space-y-4"
+    >
+      <FormValidationStyles />
+      <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
@@ -358,7 +517,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       </div>
 
       <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-lg border-2 border-cyan-200 bg-cyan-50 p-4">
+        <div data-required-checkbox-group="water-source" className="rounded-lg border-2 border-cyan-200 bg-cyan-50 p-4">
           <h3 className="mb-3 font-semibold text-cyan-900">Water Source</h3>
           <div className="space-y-2">
             {[
@@ -369,15 +528,16 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             ].map(([key, label]) => (
               <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
                 <input
-                  type="checkbox"
+                  type="radio"
+                  name="water-source"
+                  data-required-checkbox-group="water-source"
                   checked={formData[key]}
-                  onChange={(e) => setFormData({
-                    ...formData,
-                    [key]: e.target.checked,
-                    ...(key === 'water_level_i' ? { water_source: 'Level I' } : {}),
-                    ...(key === 'water_level_ii' ? { water_source: 'Level II' } : {}),
-                    ...(key === 'water_level_iii' ? { water_source: 'Level III' } : {}),
-                  })}
+                  onChange={() => setFormData(setExclusiveChoice(formData, [
+                    'water_level_i',
+                    'water_level_ii',
+                    'water_level_iii',
+                    'without_potable_water',
+                  ], key, { water_source: label }))}
                   className="h-5 w-5 rounded text-cyan-600"
                 />
                 {label}
@@ -385,7 +545,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             ))}
           </div>
         </div>
-        <div className="rounded-lg border-2 border-yellow-200 bg-yellow-50 p-4">
+        <div data-required-checkbox-group="electricity" className="rounded-lg border-2 border-yellow-200 bg-yellow-50 p-4">
           <h3 className="mb-3 font-semibold text-yellow-900">Electricity</h3>
           <div className="space-y-2">
             {[
@@ -394,9 +554,14 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             ].map(([key, label]) => (
               <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
                 <input
-                  type="checkbox"
+                  type="radio"
+                  name="electricity"
+                  data-required-checkbox-group="electricity"
                   checked={formData[key]}
-                  onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })}
+                  onChange={() => setFormData(setExclusiveChoice(formData, [
+                    'electricity_owned',
+                    'electricity_connected',
+                  ], key))}
                   className="h-5 w-5 rounded text-yellow-600"
                 />
                 {label}
@@ -404,7 +569,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             ))}
           </div>
         </div>
-        <div className="rounded-lg border-2 border-purple-200 bg-purple-50 p-4">
+        <div data-required-checkbox-group="toilet-type" className="rounded-lg border-2 border-purple-200 bg-purple-50 p-4">
           <h3 className="mb-3 font-semibold text-purple-900">Toilet Type</h3>
           <div className="space-y-2">
             {[
@@ -415,9 +580,16 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             ].map(([key, label]) => (
               <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
                 <input
-                  type="checkbox"
+                  type="radio"
+                  name="toilet-type"
+                  data-required-checkbox-group="toilet-type"
                   checked={formData[key]}
-                  onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })}
+                  onChange={() => setFormData(setExclusiveChoice(formData, [
+                    'toilet_sanitary',
+                    'toilet_not_sanitary',
+                    'toilet_communal',
+                    'toilet_none',
+                  ], key))}
                   className="h-5 w-5 rounded text-purple-600"
                 />
                 {label}
@@ -427,7 +599,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
         </div>
       </div>
 
-      <div className="rounded-lg border-2 border-green-200 bg-green-50 p-4">
+      <div data-required-checkbox-group="food-production" className="rounded-lg border-2 border-green-200 bg-green-50 p-4">
         <h3 className="mb-3 font-semibold text-green-900">Food Production</h3>
         <div className="grid grid-cols-2 gap-2">
           {[
@@ -442,6 +614,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             <label key={key} className="flex items-center gap-2 text-sm text-gray-700">
               <input
                 type="checkbox"
+                data-required-checkbox-group="food-production"
                 checked={formData[key]}
                 onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })}
                 className="h-5 w-5 rounded text-green-600"
@@ -453,32 +626,50 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       </div>
 
       {/* Garbage Disposal Section */}
-      <div className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
+      <div data-required-checkbox-group="garbage-disposal" className="bg-blue-50 p-4 rounded-lg border-2 border-blue-200">
         <h3 className="font-semibold text-blue-900 mb-3">🗑️ Garbage Disposal</h3>
         <div className="space-y-2">
           <label className="flex items-center gap-3 cursor-pointer">
             <input
-              type="checkbox"
+              type="radio"
+              name="garbage-disposal"
+              data-required-checkbox-group="garbage-disposal"
               checked={formData.compost_pit}
-              onChange={(e) => setFormData({...formData, compost_pit: e.target.checked})}
+              onChange={() => setFormData(setExclusiveChoice(formData, [
+                'compost_pit',
+                'garbage_collect',
+                'garbage_others',
+              ], 'compost_pit'))}
               className="w-5 h-5 text-blue-600 rounded"
             />
             <span className="text-gray-700">Compost Pit</span>
           </label>
           <label className="flex items-center gap-3 cursor-pointer">
             <input
-              type="checkbox"
+              type="radio"
+              name="garbage-disposal"
+              data-required-checkbox-group="garbage-disposal"
               checked={formData.garbage_collect}
-              onChange={(e) => setFormData({...formData, garbage_collect: e.target.checked})}
+              onChange={() => setFormData(setExclusiveChoice(formData, [
+                'compost_pit',
+                'garbage_collect',
+                'garbage_others',
+              ], 'garbage_collect'))}
               className="w-5 h-5 text-blue-600 rounded"
             />
             <span className="text-gray-700">Collect by Barangay</span>
           </label>
           <label className="flex items-center gap-3 cursor-pointer">
             <input
-              type="checkbox"
+              type="radio"
+              name="garbage-disposal"
+              data-required-checkbox-group="garbage-disposal"
               checked={formData.garbage_others}
-              onChange={(e) => setFormData({...formData, garbage_others: e.target.checked})}
+              onChange={() => setFormData(setExclusiveChoice(formData, [
+                'compost_pit',
+                'garbage_collect',
+                'garbage_others',
+              ], 'garbage_others'))}
               className="w-5 h-5 text-blue-600 rounded"
             />
             <span className="text-gray-700">Burned</span>
@@ -487,14 +678,23 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       </div>
 
       {/* Selling Iodized Salt Section */}
-      <div className="bg-yellow-50 p-4 rounded-lg border-2 border-yellow-200">
+      <div data-required-checkbox-group="iodized-salt-selling" className="bg-yellow-50 p-4 rounded-lg border-2 border-yellow-200">
         <h3 className="font-semibold text-yellow-900 mb-3">🧂 Selling Iodized Salt</h3>
         <div className="space-y-2">
           <label className="flex items-center gap-3 cursor-pointer">
             <input
-              type="checkbox"
+              type="radio"
+              name="iodized-salt-selling"
+              data-required-checkbox-group="iodized-salt-selling"
               checked={formData.selling_iodized_sari}
-              onChange={(e) => setFormData({...formData, selling_iodized_sari: e.target.checked})}
+              onChange={() => setFormData(setExclusiveChoice(formData, [
+                'selling_iodized_sari',
+                'selling_iodized_grocery',
+                'selling_iodized_bakery',
+                'selling_iodized_carenderia',
+                'selling_iodized_restaurant',
+                'selling_iodized_hotel',
+              ], 'selling_iodized_sari'))}
               className="w-5 h-5 text-yellow-600 rounded"
             />
             <span className="text-gray-700">Sari-Sari Store</span>
@@ -507,7 +707,14 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             ['selling_iodized_hotel', 'Hotel'],
           ].map(([key, label]) => (
             <label key={key} className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={formData[key]} onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })} className="w-5 h-5 text-yellow-600 rounded" />
+              <input type="radio" name="iodized-salt-selling" data-required-checkbox-group="iodized-salt-selling" checked={formData[key]} onChange={() => setFormData(setExclusiveChoice(formData, [
+                'selling_iodized_sari',
+                'selling_iodized_grocery',
+                'selling_iodized_bakery',
+                'selling_iodized_carenderia',
+                'selling_iodized_restaurant',
+                'selling_iodized_hotel',
+              ], key))} className="w-5 h-5 text-yellow-600 rounded" />
               <span className="text-gray-700">{label}</span>
             </label>
           ))}
@@ -515,14 +722,23 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       </div>
 
       {/* Selling Fortified Foods Section */}
-      <div className="bg-orange-50 p-4 rounded-lg border-2 border-orange-200">
+      <div data-required-checkbox-group="fortified-foods-selling" className="bg-orange-50 p-4 rounded-lg border-2 border-orange-200">
         <h3 className="font-semibold text-orange-900 mb-3">🍞 Selling Fortified Foods</h3>
         <div className="space-y-2">
           <label className="flex items-center gap-3 cursor-pointer">
             <input
-              type="checkbox"
+              type="radio"
+              name="fortified-foods-selling"
+              data-required-checkbox-group="fortified-foods-selling"
               checked={formData.selling_fortified_grocery}
-              onChange={(e) => setFormData({...formData, selling_fortified_grocery: e.target.checked})}
+              onChange={() => setFormData(setExclusiveChoice(formData, [
+                'selling_fortified_grocery',
+                'selling_fortified_bakery',
+                'selling_fortified_restaurant',
+                'selling_fortified_sari',
+                'selling_fortified_carenderia',
+                'selling_fortified_hotel',
+              ], 'selling_fortified_grocery'))}
               className="w-5 h-5 text-orange-600 rounded"
             />
             <span className="text-gray-700">Grocery Stores</span>
@@ -535,7 +751,14 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             ['selling_fortified_hotel', 'Hotel'],
           ].map(([key, label]) => (
             <label key={key} className="flex items-center gap-3 cursor-pointer">
-              <input type="checkbox" checked={formData[key]} onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })} className="w-5 h-5 text-orange-600 rounded" />
+              <input type="radio" name="fortified-foods-selling" data-required-checkbox-group="fortified-foods-selling" checked={formData[key]} onChange={() => setFormData(setExclusiveChoice(formData, [
+                'selling_fortified_grocery',
+                'selling_fortified_bakery',
+                'selling_fortified_restaurant',
+                'selling_fortified_sari',
+                'selling_fortified_carenderia',
+                'selling_fortified_hotel',
+              ], key))} className="w-5 h-5 text-orange-600 rounded" />
               <span className="text-gray-700">{label}</span>
             </label>
           ))}
@@ -543,7 +766,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       </div>
 
       {/* Establishments Using Iodized Salt Section */}
-      <div className="bg-pink-50 p-4 rounded-lg border-2 border-pink-200">
+      <div data-required-checkbox-group="iodized-salt-establishments" className="bg-pink-50 p-4 rounded-lg border-2 border-pink-200">
         <h3 className="font-semibold text-pink-900 mb-3">🏢 Establishments Using Iodized Salt</h3>
         <div className="space-y-2">
           {[
@@ -556,9 +779,18 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
           ].map(([key, label]) => (
             <label key={key} className="flex items-center gap-3 cursor-pointer">
               <input
-                type="checkbox"
+                type="radio"
+                name="iodized-salt-establishments"
+                data-required-checkbox-group="iodized-salt-establishments"
                 checked={formData[key]}
-                onChange={(e) => setFormData({ ...formData, [key]: e.target.checked })}
+                onChange={() => setFormData(setExclusiveChoice(formData, [
+                  'establishments_hotel',
+                  'establishments_restaurant',
+                  'establishments_carenderia',
+                  'establishments_bakery',
+                  'establishments_grocery',
+                  'establishments_sari',
+                ], key))}
                 className="w-5 h-5 text-pink-600 rounded"
               />
               <span className="text-gray-700">{label}</span>
@@ -582,6 +814,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Additional Notes</label>
         <textarea
+          data-optional="true"
           value={formData.notes}
           onChange={(e) => setFormData({...formData, notes: e.target.value})}
           className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
@@ -691,6 +924,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!validateCompleteForm(e)) return;
     try {
       onSubmit({
         ...formData,
@@ -710,7 +944,17 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      onInvalidCapture={(event) => highlightIncompleteFormControls(event.currentTarget)}
+      onChangeCapture={(event) => {
+        event.target.setCustomValidity('');
+        updateVisibleFormValidation(event.currentTarget);
+      }}
+      className="category-record-form space-y-4"
+    >
+      <FormValidationStyles />
+      <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
         <select
@@ -763,7 +1007,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
       </p>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg" rows="3" />
+        <textarea data-optional="true" value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg" rows="3" />
       </div>
       {showPhotoCapture && <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Household Photo (optional)</label>
@@ -860,6 +1104,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!validateCompleteForm(e)) return;
     setIsSubmitting(true);
     onSubmit({
       ...formData,
@@ -876,7 +1121,17 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      onInvalidCapture={(event) => highlightIncompleteFormControls(event.currentTarget)}
+      onChangeCapture={(event) => {
+        event.target.setCustomValidity('');
+        updateVisibleFormValidation(event.currentTarget);
+      }}
+      className="category-record-form space-y-4"
+    >
+      <FormValidationStyles />
+      <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
         <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
@@ -1037,7 +1292,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
       </div>
       {showPhotoCapture && (
         <OptionalPhotoField
@@ -1108,6 +1363,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!validateCompleteForm(e)) return;
     setIsSubmitting(true);
     onSubmit({
       ...formData,
@@ -1124,7 +1380,17 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      onInvalidCapture={(event) => highlightIncompleteFormControls(event.currentTarget)}
+      onChangeCapture={(event) => {
+        event.target.setCustomValidity('');
+        updateVisibleFormValidation(event.currentTarget);
+      }}
+      className="category-record-form space-y-4"
+    >
+      <FormValidationStyles />
+      <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
         <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
@@ -1262,7 +1528,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
       </div>
       {showPhotoCapture && (
         <OptionalPhotoField
@@ -1356,6 +1622,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!validateCompleteForm(e)) return;
     setIsSubmitting(true);
     onSubmit({
       ...formData,
@@ -1374,7 +1641,17 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
   };
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      onInvalidCapture={(event) => highlightIncompleteFormControls(event.currentTarget)}
+      onChangeCapture={(event) => {
+        event.target.setCustomValidity('');
+        updateVisibleFormValidation(event.currentTarget);
+      }}
+      className="category-record-form space-y-4"
+    >
+      <FormValidationStyles />
+      <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
       <p className="text-xs font-bold text-amber-800 uppercase tracking-wide">
         Monthly Natality with Weight, Length &amp; Height — Barangay Alawihao
       </p>
@@ -1547,7 +1824,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         </div>
         <div className="sm:col-span-2">
           <label className="block text-sm font-semibold text-gray-700 mb-2">Remarks</label>
-          <textarea rows="1" value={formData.remarks} onChange={(e) => updateField('remarks', e.target.value)} className={`${fieldClass} resize-none`} placeholder="Additional notes" />
+          <textarea data-optional="true" rows="1" value={formData.remarks} onChange={(e) => updateField('remarks', e.target.value)} className={`${fieldClass} resize-none`} placeholder="Additional notes" />
         </div>
       </div>
 
@@ -1633,6 +1910,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    if (!validateCompleteForm(e)) return;
     setIsSubmitting(true);
     onSubmit({
       ...formData,
@@ -1660,7 +1938,17 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
   ];
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form
+      onSubmit={handleSubmit}
+      onInvalidCapture={(event) => highlightIncompleteFormControls(event.currentTarget)}
+      onChangeCapture={(event) => {
+        event.target.setCustomValidity('');
+        updateVisibleFormValidation(event.currentTarget);
+      }}
+      className="category-record-form space-y-4"
+    >
+      <FormValidationStyles />
+      <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
       <p className="text-xs font-bold text-violet-800 uppercase tracking-wide">
         Edad ng Sanggol sa Pagbisita — Paraan ng Pagpapakain o Pagpapainom
       </p>
@@ -1694,6 +1982,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
               onChange={(e) => updateField(key, e.target.value)}
               className={fieldClass}
             >
+              <option value="" disabled>Select feeding method</option>
               {FEEDING_METHODS.map((method) => (
                 <option key={method.value || `blank-${key}`} value={method.value}>{method.label}</option>
               ))}
@@ -1704,7 +1993,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
       </div>
       {showPhotoCapture && (
         <OptionalPhotoField

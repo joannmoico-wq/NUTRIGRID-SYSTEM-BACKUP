@@ -170,7 +170,7 @@ export default function SideMenu({ open, onClose, taskNavigationDate }) {
         role="dialog"
         aria-modal="true"
         aria-label="Calendar and tasks"
-        className={`fixed left-0 top-0 z-[70] flex h-full w-[88%] max-w-sm flex-col overflow-hidden bg-gradient-to-b from-[#DDEBFF] via-[#F4E8FF] to-[#FFE9F3] shadow-2xl transition-transform duration-300 ${
+        className={`task-side-menu fixed left-0 top-0 z-[70] flex h-full w-[88%] max-w-sm flex-col overflow-hidden bg-gradient-to-b from-[#DDEBFF] via-[#F4E8FF] to-[#FFE9F3] shadow-2xl transition-transform duration-300 ${
           open ? 'translate-x-0 pointer-events-auto' : '-translate-x-full pointer-events-none'
         }`}
       >
@@ -229,7 +229,7 @@ export default function SideMenu({ open, onClose, taskNavigationDate }) {
                       }`}
                     >
                       <span
-                        className={`text-[10px] font-bold uppercase ${
+                        className={`text-[10px] font-bold ${
                           isSel ? 'text-white/90' : isWeekend ? 'text-rose-500' : 'text-[#8F65FF]'
                         }`}
                       >
@@ -340,7 +340,7 @@ export default function SideMenu({ open, onClose, taskNavigationDate }) {
                       <p className="truncate text-sm font-bold text-gray-900">{t.title}</p>
                       <p className="mt-1 flex items-center gap-1 text-xs text-gray-600">
                         <Clock size={11} />
-                        {t.status}
+                        <span>{t.status}</span>
                         {t.purok ? ` · ${t.purok}` : ''}
                       </p>
                       <span

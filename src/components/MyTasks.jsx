@@ -453,7 +453,7 @@ export default function MyTasks() {
             type="button"
             aria-pressed={taskStatusFilter === status}
             onClick={() => setTaskStatusFilter((current) => current === status ? null : status)}
-            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold transition ${
+            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold uppercase transition ${
               taskStatusFilter === status
                 ? 'border-transparent bg-gradient-to-r from-[#8F65FF] to-[#FF75C3] text-white shadow'
                 : 'border-[#E8DCEF] bg-white text-gray-700 hover:bg-purple-50'
@@ -467,7 +467,7 @@ export default function MyTasks() {
       {orderedTasks.length === 0 ? (
         <div className="rounded-2xl border-2 border-dashed border-[#E8C4F0] bg-white/70 p-6 text-center">
           <TaskIcon size={44} className="mx-auto text-[#8F65FF]/70" />
-          <p className="mt-2 text-sm text-gray-600">
+          <p className="mt-2 text-sm uppercase text-gray-600">
             {query
               ? 'No tasks match your search.'
               : taskStatusFilter
@@ -527,7 +527,7 @@ export default function MyTasks() {
                           <Calendar size={11} /> {t.due_date}
                         </span>
                       )}
-                      {overdue && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-rose-700">Overdue</span>}
+                      {overdue && <span className="rounded-full bg-rose-100 px-2 py-0.5 uppercase text-rose-700">Overdue</span>}
                       <span
                         className={`rounded-full px-2 py-0.5 ${
                           t.priority === 'High' ? 'bg-rose-100 text-rose-700' : 'bg-violet-100 text-violet-700'
@@ -554,7 +554,7 @@ export default function MyTasks() {
                     )}
                   </div>
                 )}
-                <div className="mt-3 flex gap-1 rounded-full bg-gray-100 p-1 text-[11px] font-bold">
+                <div className="mt-3 flex gap-1 rounded-full bg-gray-100 p-1 text-[11px] font-bold uppercase">
                   {['Pending', 'In Progress', 'Completed'].map((s) => (
                     <span
                       key={s}

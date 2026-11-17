@@ -634,7 +634,6 @@ const InteractiveMapComponent = ({
         <div className="mb-4 flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
             <h2 className={`text-2xl font-bold ${mapCardTextClass}`}>Barangay Alawihao, Daet, Camarines Norte</h2>
-            <p className={`${mapCardMutedTextClass} mt-1`}>{dataStatus === 'loaded' ? 'Shared Supabase data loaded' : dataStatus === 'offline' ? 'Showing saved Admin data offline' : 'Loading shared records'}</p>
           </div>
           <div className="flex shrink-0 gap-2" role="group" aria-label="Map view">
             {[

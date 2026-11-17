@@ -44,6 +44,7 @@ create table if not exists public.record_activity_logs (
   actor_name text not null,
   actor_role text not null default 'unknown',
   category text not null,
+  action text not null default 'edited',
   record_id text not null,
   field_changes jsonb not null default '[]'::jsonb,
   created_at timestamptz not null default now()
@@ -51,6 +52,8 @@ create table if not exists public.record_activity_logs (
 
 alter table public.record_activity_logs
   add column if not exists actor_role text not null default 'unknown';
+alter table public.record_activity_logs
+  add column if not exists action text not null default 'edited';
 
 create index if not exists record_activity_logs_created_at_idx
   on public.record_activity_logs (created_at desc);

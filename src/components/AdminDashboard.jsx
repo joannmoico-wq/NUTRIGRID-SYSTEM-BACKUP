@@ -40,10 +40,11 @@ import AdminDocuments from './AdminDocuments';
 import ReportExportActions from './ReportExportActions';
 import ConfirmActionDialog from './ConfirmActionDialog';
 import RecordSyncStatus from './RecordSyncStatus';
+import { ImportRecordsExcelButton } from './RecordExcelActions';
+import { normalizeImportedRecordHeaders } from '../utils/recordExcel';
 import {
   Home,
   Users,
-  Archive,
   FileText,
   Settings,
   LogOut,
@@ -70,6 +71,7 @@ import {
   BarChart3,
   Folder,
   ClipboardCheck,
+  ClipboardList,
   TrendingDown,
   TrendingUp,
 } from 'lucide-react';
@@ -89,9 +91,10 @@ import { removeNotesColumns } from '../utils/reportExport';
 import {
   getActivityCategoryLabel,
   loadRecordActivityLogs,
+  recordInformationCreate,
+  recordInformationDelete,
   recordInformationEdit,
 } from '../utils/activityLogService';
-import nutrigridIcon from '../public/icon-192.png';
 import {
   PieChart,
   Pie,
@@ -134,6 +137,7 @@ const THEME = {
 
 const DARK_MODE_KEY = 'bns_admin_dark_mode';
 const READ_NOTIFICATIONS_KEY = 'nutrigrid_admin_read_notifications';
+const NEW_RECORD_NOTIFICATIONS_KEY = 'nutrigrid_admin_new_record_notifications';
 const ADMIN_DATA_CACHE_KEY = 'nutrigrid_admin_data_last_loaded';
 const ADMIN_DATA_CACHE_TTL_MS = 5 * 60 * 1000;
 const ADMIN_DATA_STORAGE_KEYS = [
@@ -292,25 +296,11 @@ const AdminHeader = ({
   activeTab,
   adminEmail,
   onLogout,
-  showActivityLogs,
-  setShowActivityLogs,
-  activityLogs,
-  activityLogLoading,
-  activityLogError,
-  currentUserId,
-  showOnlyMyActivity,
-  setShowOnlyMyActivity,
-  selectedActivityId,
 }) => {
   const [showAccountMenu, setShowAccountMenu] = useState(false);
   const [accountMessage, setAccountMessage] = useState('');
   const [accountBusy, setAccountBusy] = useState(false);
-  const [activityMonth, setActivityMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
   const accountRef = useRef(null);
-  const activityRef = useRef(null);
   const textColor = darkMode ? THEME.dark.text : THEME.light.text;
   const mutedColor = darkMode ? THEME.dark.muted : THEME.light.muted;
   const iconButtonStyle = {
@@ -323,67 +313,66 @@ const AdminHeader = ({
       if (accountRef.current && !accountRef.current.contains(event.target)) {
         setShowAccountMenu(false);
       }
-      if (activityRef.current && !activityRef.current.contains(event.target)) {
-        setShowActivityLogs(false);
-      }
     };
     document.addEventListener('mousedown', closeAccountMenu);
     return () => document.removeEventListener('mousedown', closeAccountMenu);
-  }, [setShowActivityLogs]);
+  }, []);
 
   return (
     <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-5 sm:py-4 lg:px-8 lg:py-5">
       <h1 className="text-xl font-bold sm:text-2xl" style={{ color: textColor }}>
-        {title || `Welcome ${adminName.split(' ')[0]} !`}
+        {title || 'WELCOME ADMIN!'}
       </h1>
 
       <div className="flex min-w-0 flex-wrap items-center justify-end gap-2 sm:gap-4">
-        <BnsSearchBar
-          query={searchTerm}
-          onSearch={performSearch}
-          results={searchResults}
-          showSuggestions={showSearchSuggestions}
-          onSelectResult={(record) => {
-            if (record.isNav) {
-              setActiveTab(record.tab);
-            } else if (record.categoryId === 'tasks') {
-              const task = record.data;
-              setSelectedTaskFilter(
-                isTaskOverdue(task)
-                  ? 'Overdue'
-                  : task.status === 'In Progress'
-                    ? 'In Progress'
-                    : task.status === 'Completed'
-                      ? 'Completed'
-                      : 'Pending'
-              );
-              setTabSearchTerm('tasks', '');
-              setSearchResults([]);
-              setActiveTab('tasks');
-            } else if (record.categoryId === 'documents') {
-              setTabSearchTerm('documents', record.data.name || '');
-              setActiveTab('documents');
-              setShowSearchSuggestions(false);
-            } else {
-              if (record.tab) setTabSearchTerm(record.tab, searchTerm);
-              setShowSearchSuggestions(false);
-              if (record.tab) setActiveTab(record.tab);
+        {activeTab !== 'activityLogs' && (
+          <BnsSearchBar
+            query={searchTerm}
+            onSearch={performSearch}
+            results={searchResults}
+            showSuggestions={showSearchSuggestions}
+            onSelectResult={(record) => {
+              if (record.isNav) {
+                setActiveTab(record.tab);
+              } else if (record.categoryId === 'tasks') {
+                const task = record.data;
+                setSelectedTaskFilter(
+                  isTaskOverdue(task)
+                    ? 'Overdue'
+                    : task.status === 'In Progress'
+                      ? 'In Progress'
+                      : task.status === 'Completed'
+                        ? 'Completed'
+                        : 'Pending'
+                );
+                setTabSearchTerm('tasks', '');
+                setSearchResults([]);
+                setActiveTab('tasks');
+              } else if (record.categoryId === 'documents') {
+                setTabSearchTerm('documents', record.data.name || '');
+                setActiveTab('documents');
+                setShowSearchSuggestions(false);
+              } else {
+                if (record.tab) setTabSearchTerm(record.tab, searchTerm);
+                setShowSearchSuggestions(false);
+                if (record.tab) setActiveTab(record.tab);
+              }
+            }}
+            onFocusSuggestions={() => setShowSearchSuggestions(true)}
+            onBlurSuggestions={() => setShowSearchSuggestions(false)}
+            placeholder={
+              activeTab === 'tasks'
+                ? 'Search tasks...'
+                : activeTab === 'documents'
+                  ? 'Search documents...'
+                  : 'Search records...'
             }
-          }}
-          onFocusSuggestions={() => setShowSearchSuggestions(true)}
-          onBlurSuggestions={() => setShowSearchSuggestions(false)}
-          placeholder={
-            activeTab === 'tasks'
-              ? 'Search tasks...'
-              : activeTab === 'documents'
-                ? 'Search documents...'
-                : 'Search records...'
-          }
-          emptyMessage="No matching records"
-          widthClass="w-36 sm:w-56 md:w-72 lg:w-80"
-          tone="admin"
-          darkMode={darkMode}
-        />
+            emptyMessage="No matching records"
+            widthClass="w-36 sm:w-56 md:w-72 lg:w-80"
+            tone="admin"
+            darkMode={darkMode}
+          />
+        )}
 
         <button
           type="button"
@@ -403,7 +392,6 @@ const AdminHeader = ({
           <button
             type="button"
             onClick={() => {
-              setShowActivityLogs(false);
               setShowNotifications((open) => !open);
             }}
             className={`relative w-10 h-10 rounded-2xl flex items-center justify-center hover:opacity-95 transition shadow-sm ${
@@ -464,51 +452,10 @@ const AdminHeader = ({
             </div>
           )}
         </div>
-        <div className="relative" ref={activityRef}>
-          <button
-            type="button"
-            onClick={() => {
-              setShowNotifications(false);
-              setShowActivityLogs((open) => !open);
-            }}
-            className={`relative flex h-10 w-10 items-center justify-center rounded-2xl shadow-sm transition hover:opacity-95 ${
-              showActivityLogs ? 'ring-2 ring-[#8F65FF]/40' : ''
-            }`}
-            style={iconButtonStyle}
-            aria-label="Activity logs"
-            title="Activity logs"
-            aria-expanded={showActivityLogs}
-          >
-            <Archive size={18} style={{ color: mutedColor }} />
-          </button>
-          {showActivityLogs && (
-            <div
-              className="absolute right-0 z-50 mt-2 max-h-[min(30rem,75vh)] w-[min(22rem,calc(100vw-2rem))] overflow-visible rounded-3xl shadow-xl"
-              style={{
-                backgroundColor: darkMode ? THEME.dark.card : THEME.light.card,
-                border: `1px solid ${darkMode ? THEME.dark.border : THEME.light.border}`,
-              }}
-            >
-              <ActivityLogsView
-                logs={activityLogs}
-                loading={activityLogLoading}
-                error={activityLogError}
-                darkMode={darkMode}
-                currentUserId={currentUserId}
-                showOnlyMine={showOnlyMyActivity}
-                onToggleMine={setShowOnlyMyActivity}
-                selectedMonth={activityMonth}
-                onMonthChange={setActivityMonth}
-                selectedActivityId={selectedActivityId}
-              />
-            </div>
-          )}
-        </div>
         <div className="relative" ref={accountRef}>
           <button
             type="button"
             onClick={() => {
-              setShowActivityLogs(false);
               setShowAccountMenu((open) => !open);
               setShowNotifications(false);
               setAccountMessage('');
@@ -595,54 +542,122 @@ function ActivityLogsView({
   error,
   darkMode,
   currentUserId,
-  showOnlyMine,
-  onToggleMine,
+  selectedActorType,
+  onActorTypeChange,
+  actionFilter,
+  onActionFilter,
+  searchQuery,
+  onSearch,
+  searchResults,
+  showSearchSuggestions,
+  setShowSearchSuggestions,
   selectedMonth,
   onMonthChange,
-  selectedActivityId,
+  standalone = false,
 }) {
-  const actorLogs = showOnlyMine
-    ? logs.filter((log) => log.actor_user_id === currentUserId)
-    : logs.filter((log) => ['field_worker', 'bhw'].includes(String(log.actor_role || '').toLowerCase()));
-  const visibleLogs = actorLogs.filter((log) => {
+  const visibleLogs = logs.filter((log) => {
+    const action = String(log.action || 'edited').toLowerCase();
+    if (actionFilter !== 'all' && action !== actionFilter) return false;
+    const isBhw = ['field_worker', 'bhw'].includes(String(log.actor_role || '').toLowerCase());
+    if (selectedActorType === 'bhw' && !isBhw) return false;
+    if (selectedActorType === 'mine' && String(log.actor_user_id || '') !== String(currentUserId || '')) return false;
     const date = new Date(log.created_at);
     if (Number.isNaN(date.getTime())) return false;
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` === selectedMonth;
+    if (`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` !== selectedMonth) {
+      return false;
+    }
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) return true;
+    const changes = Array.isArray(log.field_changes) ? log.field_changes : [];
+    return [
+      log.actor_name,
+      getActivityCategoryLabel(log.category),
+      log.action,
+      log.record_id,
+      date.toLocaleString(),
+      ...changes.flatMap((change) => [
+        change.label,
+        change.field,
+        change.old_value,
+        change.new_value,
+      ]),
+    ].some((value) => String(value ?? '').toLowerCase().includes(query));
   });
 
   return (
     <section className="space-y-2">
       <div className="flex w-full flex-col gap-2 border-b px-3 py-2.5" style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}>
-        <h2 className={`text-sm font-bold ${darkMode ? 'text-white' : 'text-gray-900'}`}>Activity Logs</h2>
-        <div className="flex min-w-0 items-center gap-2">
-          <label className="relative block min-w-0 flex-1">
-            <span className="sr-only">Choose whose edits to show</span>
-            <select
-              value={showOnlyMine ? 'mine' : 'bhw'}
-              onChange={(event) => onToggleMine(event.target.value === 'mine')}
-              className={`w-full appearance-none rounded-lg border py-1.5 pl-2 pr-7 text-center text-[11px] font-bold tracking-wide shadow-sm transition focus:outline-none focus:ring-2 focus:ring-violet-400 ${
-                darkMode
-                  ? 'border-slate-600 bg-[#26263B] text-slate-100'
-                  : 'border-[#E8DCEF] bg-white text-gray-800'
-              }`}
-            >
-              <option value="bhw">BHW Modified</option>
-              <option value="mine">User Revised</option>
-            </select>
-            <ChevronDown
-              size={13}
-              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2"
-              aria-hidden="true"
+        <h2 className={`text-sm font-bold uppercase ${darkMode ? 'text-white' : 'text-gray-900'}`}>Activity Logs</h2>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="w-full min-w-0 flex-1 sm:min-w-[17rem] sm:max-w-[30rem]">
+            <BnsSearchBar
+              query={searchQuery}
+              onSearch={onSearch}
+              results={searchResults}
+              showSuggestions={showSearchSuggestions}
+              onSelectResult={(result) => onSearch(result.searchText)}
+              onFocusSuggestions={() => setShowSearchSuggestions(true)}
+              onBlurSuggestions={() => setShowSearchSuggestions(false)}
+              placeholder="SEARCH ACTIVITY LOGS..."
+              emptyMessage="No matching activity logs"
+              widthClass="w-full"
+              tone="admin"
+              darkMode={darkMode}
             />
-          </label>
-          <MonthYearPicker
-            value={selectedMonth}
-            onChange={onMonthChange}
-            max={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`}
-            darkMode={darkMode}
-            compact
-            label="Filter activity logs by month and year"
-          />
+          </div>
+          <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+            <label className="relative w-48 flex-none">
+              <span className="sr-only">FILTER ACTIVITY BY BHW OR USER</span>
+              <select
+                value={selectedActorType}
+                onChange={(event) => onActorTypeChange(event.target.value)}
+                className={`h-11 w-full appearance-none rounded-xl border py-2 pl-3 pr-9 text-center text-xs font-bold tracking-wide shadow-sm transition focus:outline-none focus:ring-2 focus:ring-violet-400 ${
+                  darkMode
+                    ? 'border-slate-600 bg-[#26263B] text-slate-100'
+                    : 'border-gray-300 bg-white text-gray-800'
+                }`}
+              >
+                <option value="bhw">BHW MODIFIED</option>
+                <option value="mine">USER REVISED</option>
+              </select>
+              <ChevronDown
+                size={15}
+                className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2"
+                aria-hidden="true"
+              />
+            </label>
+            <MonthYearPicker
+              value={selectedMonth}
+              onChange={onMonthChange}
+              max={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`}
+              darkMode={darkMode}
+              compact
+              label="Filter activity logs by month and year"
+              buttonClassName="h-11 w-48 justify-between px-3 text-xs uppercase"
+            />
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter activity by action">
+          {[['all', 'ALL'], ['created', 'CREATED'], ['edited', 'EDITED'], ['deleted', 'DELETED']].map(([value, label]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => onActionFilter(value)}
+              aria-pressed={actionFilter === value}
+              className={`whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold transition ${
+                actionFilter === value
+                  ? 'text-white shadow-md'
+                  : darkMode
+                    ? 'border border-[#67445F] bg-[#302338] text-slate-200 hover:bg-[#392A45]'
+                    : 'border border-[#E8DCEF] bg-white text-gray-600 hover:bg-purple-50'
+              }`}
+              style={actionFilter === value
+                ? { background: darkMode ? 'linear-gradient(90deg,#A66AD1,#D94E9F)' : 'linear-gradient(90deg,#8F65FF,#FF75C3)' }
+                : {}}
+            >
+              {label}
+            </button>
+          ))}
         </div>
       </div>
       {error && (
@@ -656,32 +671,26 @@ function ActivityLogsView({
         </p>
       ) : visibleLogs.length === 0 ? (
         <p className={`p-4 text-center text-xs ${darkMode ? 'text-slate-300' : 'text-gray-500'}`}>
-          {showOnlyMine
-            ? 'You have not edited any records in this month.'
-            : 'No BHW record edits have been logged for this month.'}
+          {searchQuery.trim()
+            ? 'No activity logs match this search.'
+            : `No ${actionFilter === 'all' ? 'ACTIVITY' : actionFilter.toUpperCase()} records have been logged for this month.`}
         </p>
       ) : (
-        <div className="max-h-[min(20rem,55vh)] space-y-2 overflow-y-auto px-2 pb-2">
+        <div className={`${standalone ? 'max-h-[calc(100vh-15rem)]' : 'max-h-[min(20rem,55vh)]'} space-y-2 overflow-y-auto px-2 pb-2`}>
           {visibleLogs.map((log) => {
             const changes = Array.isArray(log.field_changes) ? log.field_changes : [];
             return (
               <article
                 key={log.id}
-                className={`rounded-xl border p-2.5 ${
-                  log.id === selectedActivityId
-                    ? 'border-violet-400 ring-2 ring-violet-300/70'
-                    : darkMode
-                      ? 'border-slate-700 bg-[#26263B]'
-                      : 'border-[#E8DCEF] bg-white'
-                }`}
+                className={`rounded-xl border p-2.5 ${darkMode ? 'border-slate-700 bg-[#26263B]' : 'border-[#E8DCEF] bg-white'}`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
                     <h3 className={`text-xs font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
-                      BHW {getActivityActorDisplayName(log.actor_name)} updated {getActivityCategoryLabel(log.category)}
+                      {String(log.action || 'edited').toUpperCase()} BY {getActivityActorDisplayName(log.actor_name).toUpperCase()} · {getActivityCategoryLabel(log.category).toUpperCase()}
                     </h3>
                     <p className={`mt-0.5 text-[10px] ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                      Record {log.record_id} · {new Date(log.created_at).toLocaleString()}
+                      RECORD {log.record_id} · {new Date(log.created_at).toLocaleString()}
                       {log.pending_sync ? ' · Waiting to sync' : ''}
                     </p>
                   </div>
@@ -709,7 +718,164 @@ function ActivityLogsView({
   );
 }
 
-function MonthYearPicker({ value, onChange, min, max, darkMode = false, compact = false, label }) {
+function ActivityLogsPage({
+  logs,
+  loading,
+  error,
+  darkMode,
+  currentUserId,
+}) {
+  const [selectedMonth, setSelectedMonth] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
+  const [actionFilter, setActionFilter] = useState('all');
+  const [selectedActorType, setSelectedActorType] = useState('bhw');
+
+  const actorFilteredLogs = logs.filter((log) => (
+    (selectedActorType === 'bhw'
+      ? ['field_worker', 'bhw'].includes(String(log.actor_role || '').toLowerCase())
+      : String(log.actor_user_id || '') === String(currentUserId || ''))
+  ));
+  const searchResults = searchQuery.trim()
+    ? actorFilteredLogs
+      .filter((log) => {
+        const changes = Array.isArray(log.field_changes) ? log.field_changes : [];
+        return [
+          log.actor_name,
+          getActivityCategoryLabel(log.category),
+          log.record_id,
+          log.action,
+          ...changes.flatMap((change) => [
+            change.label,
+            change.field,
+            change.old_value,
+            change.new_value,
+          ]),
+        ].some((value) => String(value ?? '').toLowerCase().includes(searchQuery.trim().toLowerCase()));
+      })
+      .slice(0, 20)
+      .map((log) => ({
+        id: log.id,
+        categoryId: 'activityLogs',
+        categoryName: `${String(log.action || 'edited').toUpperCase()} · ${getActivityCategoryLabel(log.category)}`,
+        displayTitle: `${String(log.action || 'edited').toUpperCase()} · ${getActivityCategoryLabel(log.category)} · Record ${log.record_id}`,
+        searchText: String(log.record_id),
+        timestamp: log.created_at,
+        synced: !log.pending_sync,
+      }))
+    : [];
+
+  return (
+    <div
+      className="mt-4 rounded-2xl border p-3 sm:p-5"
+      style={{
+        backgroundColor: darkMode ? THEME.dark.card : THEME.light.card,
+        borderColor: darkMode ? THEME.dark.border : THEME.light.border,
+      }}
+    >
+      <ActivityLogsView
+        logs={logs}
+        loading={loading}
+        error={error}
+        darkMode={darkMode}
+        currentUserId={currentUserId}
+        actionFilter={actionFilter}
+        onActionFilter={setActionFilter}
+        selectedActorType={selectedActorType}
+        onActorTypeChange={setSelectedActorType}
+        searchQuery={searchQuery}
+        onSearch={setSearchQuery}
+        searchResults={searchResults}
+        showSearchSuggestions={showSearchSuggestions}
+        setShowSearchSuggestions={setShowSearchSuggestions}
+        selectedMonth={selectedMonth}
+        onMonthChange={setSelectedMonth}
+        standalone
+      />
+    </div>
+  );
+}
+
+function BhwAccountsPage({ darkMode }) {
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const surfaceClass = darkMode
+    ? 'border-[#67445F] bg-[#26263B] text-slate-100'
+    : 'border-[#E8C4F0] bg-white text-gray-800';
+
+  const loadAccounts = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const { data, error: requestError } = await supabase.rpc('get_approved_bhws');
+      if (requestError) throw new Error(requestError.message);
+      setAccounts((data || []).slice().sort((left, right) =>
+        (left.full_name || left.email || '').localeCompare(right.full_name || right.email || '')
+      ));
+    } catch (loadError) {
+      console.error('Could not load approved BHW accounts:', loadError);
+      setError(`Could not load BHW accounts: ${loadError.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadAccounts();
+  }, []);
+
+  return (
+    <section className={`mt-4 overflow-hidden rounded-2xl border ${surfaceClass}`}>
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-inherit px-4 py-3">
+        <h2 className="text-sm font-bold">BHW ACCOUNTS</h2>
+        <button
+          type="button"
+          onClick={() => void loadAccounts()}
+          disabled={loading}
+          className="rounded-full border border-[#E8DCEF] px-4 py-2 text-xs font-semibold uppercase disabled:opacity-50"
+        >
+          Refresh
+        </button>
+      </header>
+      {error ? (
+        <p role="alert" className="m-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          {error}
+        </p>
+      ) : loading ? (
+        <p className="p-5 text-center text-sm">Loading BHW accounts…</p>
+      ) : accounts.length === 0 ? (
+        <p className="p-5 text-center text-sm">No approved BHW accounts found.</p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[32rem] text-left text-sm">
+            <thead className={darkMode ? 'bg-[#302338] text-slate-300' : 'bg-[#FAF5FF] text-gray-600'}>
+              <tr>
+                <th className="px-4 py-3 text-xs font-bold uppercase">Name</th>
+                <th className="px-4 py-3 text-xs font-bold uppercase">Email</th>
+                <th className="px-4 py-3 text-xs font-bold uppercase">Account ID</th>
+              </tr>
+            </thead>
+            <tbody>
+              {accounts.map((account) => (
+                <tr key={account.id} className="border-t border-[#E8DCEF]">
+                  <td className="px-4 py-3 font-semibold">{account.full_name || '—'}</td>
+                  <td className="px-4 py-3">{account.email || '—'}</td>
+                  <td className="px-4 py-3 font-mono text-xs">{account.id || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function MonthYearPicker({ value, onChange, min, max, darkMode = false, compact = false, fill = false, label, buttonClassName = '' }) {
   const [open, setOpen] = useState(false);
   const pickerRef = useRef(null);
   const [selectedYear, selectedMonth] = /^\d{4}-\d{2}$/.test(value)
@@ -752,11 +918,11 @@ function MonthYearPicker({ value, onChange, min, max, darkMode = false, compact 
   }`;
 
   return (
-    <div className="relative" ref={pickerRef}>
+    <div className={fill ? 'relative min-w-0 flex-1' : compact ? 'relative shrink-0' : 'relative'} ref={pickerRef}>
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className={`inline-flex items-center justify-between rounded-xl border font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300 ${
+        className={`inline-flex items-center justify-between rounded-xl border font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300 ${fill ? 'w-full' : ''} ${buttonClassName} ${
           compact ? 'min-h-9 min-w-0 gap-1.5 px-2 py-1.5 text-[10px]' : 'min-h-11 min-w-40 gap-3 px-3 py-2 text-sm'
         } ${
           darkMode
@@ -858,6 +1024,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     return reportMonthMatch ? reportMonthMatch[2] : String(new Date().getFullYear());
   });
   const [isExpanded, setIsExpanded] = useState(() => window.matchMedia('(min-width: 768px)').matches);
+  const [settingsExpanded, setSettingsExpanded] = useState(false);
   const [darkMode, setDarkMode] = useState(() => localStorage.getItem(DARK_MODE_KEY) === 'true');
   const adminName = profileName?.trim() || 'Admin';
   const [searchTerms, setSearchTerms] = useState({});
@@ -870,12 +1037,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [selectedTaskFilter, setSelectedTaskFilter] = useState(null);
   const [showNotifications, setShowNotifications] = useState(false);
-  const [showActivityLogs, setShowActivityLogs] = useState(false);
   const [activityLogs, setActivityLogs] = useState([]);
   const [activityLogLoading, setActivityLogLoading] = useState(true);
   const [activityLogError, setActivityLogError] = useState('');
-  const [showOnlyMyActivity, setShowOnlyMyActivity] = useState(false);
-  const [selectedActivityId, setSelectedActivityId] = useState(null);
   const [readNotificationIds, setReadNotificationIds] = useState(() => {
     try {
       const saved = JSON.parse(localStorage.getItem(`${READ_NOTIFICATIONS_KEY}:${currentUserId || 'shared'}`) || '[]');
@@ -885,12 +1049,22 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       return [];
     }
   });
+  const [newRecordNotificationIds, setNewRecordNotificationIds] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(`${NEW_RECORD_NOTIFICATIONS_KEY}:${currentUserId || 'shared'}`) || '[]');
+      return Array.isArray(saved) ? saved : [];
+    } catch (error) {
+      console.error('Could not load new record notification state:', error);
+      return [];
+    }
+  });
   const [pendingMapScroll, setPendingMapScroll] = useState(false);
   const [alertPuroks, setAlertPuroks] = useState([]);
   const [adminFormCategory, setAdminFormCategory] = useState(null);
   const [adminEditingRecord, setAdminEditingRecord] = useState(null);
   const [adminConfirmation, setAdminConfirmation] = useState(null);
   const [adminConfirmationBusy, setAdminConfirmationBusy] = useState(false);
+  const [notificationTarget, setNotificationTarget] = useState(null);
   const [residentPurokFilter, setResidentPurokFilter] = useState('');
   const [monthlyReportBatch, setMonthlyReportBatch] = useState(() => {
     try {
@@ -958,23 +1132,45 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     } catch (error) {
       console.error('Could not save read notification state:', error);
     }
+    const newRecordIds = newRecordNotificationIds.filter((id) => !ids.includes(id));
+    setNewRecordNotificationIds(newRecordIds);
+    try {
+      localStorage.setItem(
+        `${NEW_RECORD_NOTIFICATIONS_KEY}:${currentUserId || 'shared'}`,
+        JSON.stringify(newRecordIds)
+      );
+    } catch (error) {
+      console.error('Could not save new record notification state:', error);
+    }
+  };
+
+  const markActivityLogsRead = () => {
+    markNotificationsRead(activityLogs.map((log) => `record-activity:${log.id}`));
   };
 
   const handleNotificationClick = (item) => {
     markNotificationsRead(item.notificationIds || [item.id]);
     setShowNotifications(false);
-    if (item.activityId) {
-      setSelectedActivityId(item.activityId);
-      const selectedLog = activityLogs.find((log) => log.id === item.activityId);
-      setShowOnlyMyActivity(selectedLog?.actor_user_id === currentUserId);
-      setShowActivityLogs(true);
+    if (item.recordId) {
+      setTabSearchTerm(item.tab, '');
+      setAdminPurokFilter('');
+      setResidentPurokFilter('');
+      setNotificationTarget({ tab: item.tab, rowId: item.rowId || item.recordId });
+    } else {
+      setNotificationTarget(null);
     }
-    setActiveTab(item.mapAlert || item.activityId ? 'dashboard' : item.tab || 'dashboard');
+    setActiveTab(item.mapAlert ? 'dashboard' : item.tab || 'dashboard');
     if (item.mapAlert) {
       setAlertPuroks(item.affectedPuroks || []);
       setPendingMapScroll(true);
     }
   };
+
+  useEffect(() => {
+    if (!notificationTarget || notificationTarget.tab !== activeTab) return undefined;
+    const timeout = window.setTimeout(() => setNotificationTarget(null), 6000);
+    return () => window.clearTimeout(timeout);
+  }, [activeTab, notificationTarget]);
 
   useEffect(() => {
     if (!pendingMapScroll || activeTab !== 'dashboard') return undefined;
@@ -1255,6 +1451,32 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     const handleRealtimeChange = (category) => (payload) => {
       const row = payload.eventType === 'DELETE' ? payload.old : payload.new;
       if (applyAdminRealtimeRecordChange(category, payload.eventType, row)) {
+        if (payload.eventType === 'INSERT') {
+          const storageKey = {
+            residents: STORAGE_KEYS.residents,
+            environmental: STORAGE_KEYS.environmental,
+            infantfeeding: STORAGE_KEYS.infantfeeding,
+            lactatingwoman: STORAGE_KEYS.lactatingwoman,
+            pregnantwoman: STORAGE_KEYS.pregnantwoman,
+            monthlynatal: STORAGE_KEYS.monthlynatal,
+          }[category];
+          const recordId = row?.data?.id ?? row?.local_id ?? row?.id;
+          if (storageKey && recordId != null) {
+            const notificationId = `record-added:${storageKey}:${recordId}`;
+            setNewRecordNotificationIds((current) => {
+              const next = Array.from(new Set([...current, notificationId]));
+              try {
+                localStorage.setItem(
+                  `${NEW_RECORD_NOTIFICATIONS_KEY}:${currentUserId || 'shared'}`,
+                  JSON.stringify(next)
+                );
+              } catch (error) {
+                console.error('Could not save new record notification state:', error);
+              }
+              return next;
+            });
+          }
+        }
         if (loading) realtimeChangesDuringLoad.push({ category, eventType: payload.eventType, row });
       } else {
         window.clearTimeout(realtimeRefreshTimeout);
@@ -1385,15 +1607,25 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       { key: STORAGE_KEYS.monthlynatal, data: natalityData, tab: 'monthlyNatality' },
     ].forEach(({ key, data, tab }) => {
       const records = Array.isArray(data) ? data : [];
-      const pending = records.filter((r) => r.status === 'Pending');
-      if (pending.length > 0) {
+      records.forEach((record) => {
+        const notificationId = `record-added:${key}:${record.id}`;
+        const isNewPendingRecord =
+          getRecordSyncStatus(record._raw || record) !== 'synced' &&
+          !(record.last_edited_at || record._raw?.last_edited_at);
+        if (!isNewPendingRecord && !newRecordNotificationIds.includes(notificationId)) return;
+        const title = getRecordDisplayTitle(record._raw || record);
+        const purok = normalizeEnvironmentalPurokName(record.purok);
         items.push({
-          id: `${key}-summary`,
-          label: NOTIF_LABELS[key],
-          detail: `${pending.length} pending record${pending.length > 1 ? 's' : ''}`,
+          id: notificationId,
+          label: `New ${NOTIF_LABELS[key]}`,
+          detail: `${title}${purok ? ` · Purok ${purok}` : ''}`,
           tab,
+          recordId: record.id,
+          rowId: key === STORAGE_KEYS.environmental && purok
+            ? `purok:${purok}`
+            : record.id,
         });
-      }
+      });
     });
     const pendingVisits = getRecords(STORAGE_KEYS.pendingVisits) || [];
     pendingVisits.forEach((v) => {
@@ -1427,18 +1659,8 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         mapAlert: true,
       });
     }
-    activityLogs.forEach((log) => {
-      items.push({
-        id: `record-activity:${log.id}`,
-        notificationIds: [`record-activity:${log.id}`],
-        activityId: log.id,
-        label: `BHW ${getActivityActorDisplayName(log.actor_name)} updated information`,
-        detail: 'Tap this to see details in Activity Logs.',
-        tab: 'activityLogs',
-      });
-    });
     return items;
-  }, [households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, readNotificationIds, activityLogs]);
+  }, [households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, readNotificationIds, newRecordNotificationIds]);
 
   const visibleNotificationItems = notificationItems.filter(
     (item) =>
@@ -1767,6 +1989,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     }
 
     const localRecord = getRecords(storageKey).find((record) => String(record.id) === String(id));
+    const recordToDelete = localRecord || remoteRecord;
+    if (recordToDelete) {
+      void recordInformationDelete({
+        category,
+        record: recordToDelete,
+        actorRole: 'admin',
+      });
+    }
     const remoteRecordExpected = Boolean(
       localRecord?.synced ||
       remoteRecord?.synced ||
@@ -1795,6 +2025,55 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         console.error('Record was deleted locally, but could not be synced:', error);
         alert(`Deleted locally. Supabase sync will retry when possible: ${error.message || 'request failed'}`);
       });
+  };
+
+  const adminDeleteMany = async (storageKey, ids, dataset) => {
+    const category = categoryIdForStorageKey(storageKey);
+    if (!category || category === 'monthlyreport') return;
+
+    ids.forEach((id) => {
+      const localRecord = getRecords(storageKey).find((record) => String(record.id) === String(id));
+      const remoteRecord = dataset.find((record) => String(record.id) === String(id))?._raw;
+      const recordToDelete = localRecord || remoteRecord;
+      if (recordToDelete) {
+        void recordInformationDelete({
+          category,
+          record: recordToDelete,
+          actorRole: 'admin',
+        });
+      }
+      queueRecordDeletion(
+        category,
+        id,
+        Boolean(
+          localRecord?.synced ||
+          remoteRecord?.synced ||
+          String(remoteRecord?.status || '').toLowerCase() === 'synced'
+        ),
+        localRecord?.created_by_user_id || currentUserId
+      );
+      deleteRecordById(storageKey, id);
+    });
+    refreshData();
+
+    if (!navigator.onLine) {
+      alert(`${ids.length} record(s) deleted on this device. The deletions will sync when you are back online.`);
+      return;
+    }
+
+    try {
+      const syncResult = await syncPendingRecordDeletions({ includeShared: true });
+      if (syncResult.errors?.length || syncResult.skipped) {
+        const details = syncResult.errors?.join('\n') || `Sync skipped: ${syncResult.skipped}`;
+        console.error('Record deletions are saved locally and waiting to sync:', details);
+        alert('Records deleted locally, but some deletions are still waiting to sync. Check the connection and sign-in, then retry.');
+        return;
+      }
+      setAdminDataStatus('loaded');
+    } catch (syncError) {
+      console.error('Records were deleted locally, but could not be synced:', syncError);
+      alert(`Records deleted locally. Supabase sync will retry when possible: ${syncError.message || 'request failed'}`);
+    }
   };
 
   const openCategoryForm = (category, raw = null) => {
@@ -1832,7 +2111,99 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       () => adminDelete(storageKey, id, dataset.find((row) => row.id === id)?._raw),
       { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
     ),
+    onBulkDelete: (ids) => requestAdminConfirmation(
+      `Are you sure you want to delete ${ids.length} selected records? This cannot be undone.`,
+      () => adminDeleteMany(storageKey, ids, dataset),
+      { title: 'Delete selected records', confirmLabel: 'Delete records', destructive: true }
+    ),
   });
+
+  const importCategoryRecords = async (storageKey, category, label, importedRows) => {
+    if (!currentUserId) {
+      window.alert('You must be signed in as an admin to import records.');
+      return;
+    }
+
+    const existingIds = new Set(getRecords(storageKey).map((record) => String(record.id)));
+    const now = new Date().toISOString();
+    const recordsToImport = [];
+    let skippedDuplicates = 0;
+    normalizeImportedRecordHeaders(importedRows, category).forEach((row) => {
+      const existingId = row.id == null || String(row.id).trim() === ''
+        ? null
+        : String(row.id);
+      if (existingId && existingIds.has(existingId)) {
+        skippedDuplicates += 1;
+        return;
+      }
+
+      const id = existingId ||
+        window.crypto?.randomUUID?.() ||
+        `excel-${Date.now()}-${recordsToImport.length}`;
+      existingIds.add(String(id));
+      recordsToImport.push({
+        ...row,
+        id,
+        created_by_user_id: currentUserId,
+        created_at: row.created_at || now,
+        updated_at: now,
+        synced: false,
+        status: 'pending',
+        sync_status: 'pending_sync',
+        sync_error: '',
+      });
+    });
+
+    if (!recordsToImport.length) {
+      window.alert(`No new ${label} records to import. ${skippedDuplicates} duplicate row(s) were skipped.`);
+      return;
+    }
+    if (!window.confirm(
+      `Import ${recordsToImport.length} ${label} record(s)? ${skippedDuplicates} duplicate row(s) will be skipped.`
+    )) return;
+
+    let savedCount = 0;
+    try {
+      recordsToImport.forEach((record) => {
+        upsertRecord(storageKey, record);
+        savedCount += 1;
+      });
+      markNotificationsRead(
+        recordsToImport.map((record) => `record-added:${storageKey}:${record.id}`)
+      );
+      refreshData();
+    } catch (error) {
+      console.error(`Could not save imported ${label} records:`, error);
+      refreshData();
+      window.alert(
+        `Imported ${savedCount} of ${recordsToImport.length} ${label} record(s). The remaining records could not be saved: ${error.message || 'storage error'}.`
+      );
+      return;
+    }
+
+    let syncFailures = 0;
+    if (navigator.onLine) {
+      const syncResults = await Promise.all(recordsToImport.map(async (record) => {
+        try {
+          return await syncSingleRecord(category, record, { includeShared: true });
+        } catch (error) {
+          console.error(`Could not sync imported ${category} record ${record.id}:`, error);
+          return error.message || 'sync failed';
+        }
+      }));
+      syncFailures = syncResults.filter((error) =>
+        error && !['offline', 'not-signed-in'].includes(error)
+      ).length;
+      refreshData();
+    }
+
+    const syncMessage = !navigator.onLine || syncFailures
+      ? ' Records are saved locally and will retry syncing.'
+      : ' Records were synced.';
+    window.alert(
+      `Imported ${savedCount} ${label} record(s). ${skippedDuplicates} duplicate row(s) skipped.${syncMessage}`
+    );
+  };
 
   const filterAdminTableData = (rows, term, categoryId) => {
     let filteredRows = rows;
@@ -2024,6 +2395,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const natalityActions = categoryCrud(STORAGE_KEYS.monthlynatal, 'monthlynatal', natalityData);
 
   const markCheck = (value) => (Number(value) > 0 ? '✓' : '');
+
+  const unreadActivityLogCount = activityLogs.filter(
+    (log) => !readNotificationIds.includes(`record-activity:${log.id}`)
+  ).length;
 
   const navItems = [
     { id: 'dashboard', icon: LayoutDashboard, label: 'Home Dashboard' },
@@ -2371,7 +2746,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const Sidebar = () => (
     <aside
-      className={`relative flex h-full min-h-0 flex-shrink-0 flex-col border-r transition-all duration-300 ${
+      className={`admin-sidebar relative flex h-full min-h-0 flex-shrink-0 flex-col border-r transition-all duration-300 ${
         isExpanded ? 'w-64' : 'w-20'
       }`}
       style={{
@@ -2392,7 +2767,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       <div className={`flex flex-shrink-0 items-center px-4 pt-5 pb-4 ${isExpanded ? 'justify-between' : 'justify-center'}`}>
         <div className={`flex min-w-0 items-center gap-3 ${!isExpanded ? 'justify-center' : ''}`}>
           <img
-            src={nutrigridIcon}
+            src="/icon-192.png"
             alt="NutriGrid"
             className="h-14 w-14 flex-shrink-0 rounded-xl object-cover shadow-md"
           />
@@ -2407,14 +2782,20 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       </div>
 
       <nav className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto overscroll-contain px-3 pt-4 pb-3">
-        {navItems.map(({ id, icon: Icon, label }) => {
+        {navItems.map(({ id, icon: Icon, label, badge }) => {
           const isActive = activeTab === id;
           return (
             <button
               key={id}
               type="button"
-              onClick={() => setActiveTab(id)}
-              title={!isExpanded ? label : undefined}
+              onClick={() => {
+                setActiveTab(id);
+                if (id === 'activityLogs') {
+                  markActivityLogsRead();
+                }
+              }}
+              title={!isExpanded ? `${label}${badge ? ` (${badge} new)` : ''}` : undefined}
+              aria-label={badge ? `${label}, ${badge} unread` : label}
               aria-current={isActive ? 'page' : undefined}
               className={`relative flex w-full flex-shrink-0 items-center rounded-2xl transition-all ${
                 isExpanded ? 'gap-3 px-4 py-2.5 text-base font-medium' : 'justify-center px-0 py-2.5 text-base font-medium'
@@ -2436,9 +2817,83 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               )}
               <Icon size={26} strokeWidth={2.2} className="flex-shrink-0" />
               {isExpanded && <span className="truncate text-left leading-snug">{label}</span>}
+              {badge > 0 && (
+                <span
+                  className={`absolute flex min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-5 text-white ${
+                    isExpanded ? 'right-2 top-1' : 'right-1 top-0'
+                  }`}
+                  aria-hidden="true"
+                >
+                  {badge > 99 ? '99+' : badge}
+                </span>
+              )}
             </button>
           );
         })}
+        <div className="space-y-1">
+          <button
+            type="button"
+            onClick={() => {
+              if (!isExpanded) setIsExpanded(true);
+              setSettingsExpanded((expanded) => !expanded);
+            }}
+            aria-expanded={settingsExpanded}
+            className={`relative flex w-full flex-shrink-0 items-center rounded-2xl transition-all ${
+              isExpanded ? 'gap-3 px-4 py-2.5 text-base font-medium' : 'justify-center px-0 py-2.5 text-base font-medium'
+            }`}
+            style={
+              ['users', 'activityLogs'].includes(activeTab)
+                ? { background: THEME.accentGradient, color: '#FFFFFF', boxShadow: '0 4px 14px rgba(143, 101, 255, 0.35)' }
+                : { color: darkMode ? THEME.dark.muted : THEME.light.text }
+            }
+            title={!isExpanded ? 'Settings' : undefined}
+            aria-label="Settings"
+          >
+            <Settings size={24} strokeWidth={2.2} className="flex-shrink-0" />
+            {isExpanded && (
+              <>
+                <span className="flex-1 text-left">Settings</span>
+                <ChevronDown size={16} className={`transition-transform ${settingsExpanded ? 'rotate-180' : ''}`} />
+              </>
+            )}
+          </button>
+          {isExpanded && settingsExpanded && (
+            <div className="ml-8 space-y-1 border-l border-[#E8DCEF] pl-2">
+              {[
+                { id: 'users', label: 'BHW Accounts', icon: Users },
+                { id: 'activityLogs', label: 'Activity Logs', icon: ClipboardList, badge: unreadActivityLogCount },
+              ].map(({ id, label, icon: Icon, badge }) => {
+                const isActive = activeTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(id);
+                      if (id === 'activityLogs') markActivityLogsRead();
+                    }}
+                    aria-current={isActive ? 'page' : undefined}
+                    className={`relative flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-semibold transition ${
+                      isActive
+                        ? 'bg-violet-100 text-violet-800'
+                        : darkMode
+                          ? 'text-slate-300 hover:bg-white/5'
+                          : 'text-gray-700 hover:bg-white/60'
+                    }`}
+                  >
+                    <Icon size={16} className="shrink-0" />
+                    <span className="truncate">{label}</span>
+                    {badge > 0 && (
+                      <span className="ml-auto rounded-full bg-red-600 px-1.5 text-[10px] font-bold leading-5 text-white">
+                        {badge > 99 ? '99+' : badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </nav>
 
       <div
@@ -2935,6 +3390,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       <AdminReportTable
         darkMode={darkMode}
         data={filteredResidentHouseholds}
+        enableRowSelection
+        showExportSelected={false}
+        selectionFileName="nutrigrid-residents-selected"
+        allowView
+        scrollToRecordId={notificationTarget?.tab === 'residents' ? notificationTarget.rowId : undefined}
+        importAction={
+          <ImportRecordsExcelButton
+            onImport={(rows) => importCategoryRecords(STORAGE_KEYS.residents, 'residents', 'Residents', rows)}
+          />
+        }
         purokFilter={adminPurokFilter}
         onPurokFilterChange={setAdminPurokFilter}
         columnKeys={['purok', 'head', 'members', 'lastVisit', 'notes']}
@@ -3009,7 +3474,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       grouped.set(purok, current);
     });
     const tableData = ENVIRONMENTAL_PUROK_OPTIONS.map((purok) => {
-      const row = { ...(grouped.get(purok) || {}), purok };
+      const row = { ...(grouped.get(purok) || {}), id: `purok:${purok}`, purok };
       numericKeys.forEach((key) => { row[key] = row[key] || 0; });
       return row;
     });
@@ -3020,6 +3485,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       <AdminReportTable
         darkMode={darkMode}
         data={tableData}
+        scrollToRecordId={notificationTarget?.tab === 'environmentalSanitation' ? notificationTarget.rowId : undefined}
         purokFilter={adminPurokFilter}
         onPurokFilterChange={setAdminPurokFilter}
         columnKeys={environmentalColumnKeys}
@@ -3086,6 +3552,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredInfantFeeding}
+      enableRowSelection
+      showExportSelected={false}
+      selectionFileName="nutrigrid-infant-feeding-selected"
+      allowView
+      scrollToRecordId={notificationTarget?.tab === 'infantFeeding' ? notificationTarget.rowId : undefined}
+      importAction={
+        <ImportRecordsExcelButton
+          onImport={(rows) => importCategoryRecords(STORAGE_KEYS.infantfeeding, 'infantfeeding', 'Infant Feeding', rows)}
+        />
+      }
       purokFilter={adminPurokFilter}
       onPurokFilterChange={setAdminPurokFilter}
       columnKeys={['no', 'purok', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5', 'month6', 'month7', 'month8', 'notes']}
@@ -3172,6 +3648,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredLactating}
+      enableRowSelection
+      showExportSelected={false}
+      selectionFileName="nutrigrid-lactating-women-selected"
+      allowView
+      scrollToRecordId={notificationTarget?.tab === 'lactatingWoman' ? notificationTarget.rowId : undefined}
+      importAction={
+        <ImportRecordsExcelButton
+          onImport={(rows) => importCategoryRecords(STORAGE_KEYS.lactatingwoman, 'lactatingwoman', 'Lactating Women', rows)}
+        />
+      }
       purokFilter={adminPurokFilter}
       onPurokFilterChange={setAdminPurokFilter}
       columnKeys={[
@@ -3266,6 +3752,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredPregnant}
+      enableRowSelection
+      showExportSelected={false}
+      selectionFileName="nutrigrid-pregnant-women-selected"
+      allowView
+      scrollToRecordId={notificationTarget?.tab === 'pregnantWoman' ? notificationTarget.rowId : undefined}
+      importAction={
+        <ImportRecordsExcelButton
+          onImport={(rows) => importCategoryRecords(STORAGE_KEYS.pregnantwoman, 'pregnantwoman', 'Pregnant Women', rows)}
+        />
+      }
       purokFilter={adminPurokFilter}
       onPurokFilterChange={setAdminPurokFilter}
       columnKeys={[
@@ -3408,6 +3904,16 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredNatality}
+      enableRowSelection
+      showExportSelected={false}
+      selectionFileName="nutrigrid-monthly-natality-selected"
+      allowView
+      scrollToRecordId={notificationTarget?.tab === 'monthlyNatality' ? notificationTarget.rowId : undefined}
+      importAction={
+        <ImportRecordsExcelButton
+          onImport={(rows) => importCategoryRecords(STORAGE_KEYS.monthlynatal, 'monthlynatal', 'Monthly Natality', rows)}
+        />
+      }
       purokFilter={adminPurokFilter}
       onPurokFilterChange={setAdminPurokFilter}
       columnKeys={['no', 'purok', 'motherName', 'motherBirthday', 'motherAge', 'childName', 'sex', 'dob', 'birthWeight', 'dow', 'aim', 'length', 'weight', 'height', 'wA', 'hA', 'wLH', 'ironStatus', 'vitaminA', 'vitaminACount', 'fullyImmunized', 'newbornBabies', 'remarks']}
@@ -3602,13 +4108,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     />
   );
 
-  const UserManagement = () => (
-    <div className="p-16 rounded-3xl text-center" style={cardSurfaceStyle}>
-      <Users size={48} className="mx-auto text-gray-300 mb-4" />
-      <p className="text-gray-500">User management coming soon</p>
-    </div>
-  );
-
   const pageTitles = {
     dashboard: null,
     residents: 'Residents',
@@ -3621,7 +4120,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     documents: 'Documents',
     tasks: 'Tasks',
     activityLogs: 'Activity Logs',
-    users: 'Settings',
+    users: 'BHW Accounts',
   };
 
   const AdminCategoryForm = adminFormCategory ? getCategoryForm(adminFormCategory) : null;
@@ -3671,15 +4170,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             setSelectedTaskFilter={setSelectedTaskFilter}
             adminEmail={adminEmail}
             onLogout={onLogout}
-            showActivityLogs={showActivityLogs}
-            setShowActivityLogs={setShowActivityLogs}
-            activityLogs={activityLogs}
-            activityLogLoading={activityLogLoading}
-            activityLogError={activityLogError}
-            currentUserId={currentUserId}
-            showOnlyMyActivity={showOnlyMyActivity}
-            setShowOnlyMyActivity={setShowOnlyMyActivity}
-            selectedActivityId={selectedActivityId}
           />
           <div className="min-w-0 flex-1 overflow-y-auto px-3 pb-5 sm:px-5 sm:pb-6 lg:px-8 lg:pb-8">
             {adminDataStatus === 'loading' && (
@@ -3711,6 +4201,15 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                 onDeletePwaPhoto={requestPwaPhotoDeletion}
               />
             )}
+            {activeTab === 'activityLogs' && (
+              <ActivityLogsPage
+                logs={activityLogs}
+                loading={activityLogLoading}
+                error={activityLogError}
+                darkMode={darkMode}
+                currentUserId={currentUserId}
+              />
+            )}
             {(activeTab === 'tasks' || hasOpenedTasks) && (
               <div className={activeTab === 'tasks' ? '' : 'hidden'}>
               <AdminTasks
@@ -3723,7 +4222,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
               />
               </div>
             )}
-            {activeTab === 'users' && <UserManagement />}
+            {activeTab === 'users' && <BhwAccountsPage darkMode={darkMode} />}
           </div>
         </main>
       </div>
@@ -3783,6 +4282,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                       recordId: pending.id,
                       before: adminEditingRecord,
                       after: record,
+                      actorRole: 'admin',
+                    });
+                  } else {
+                    void recordInformationCreate({
+                      category: record.category,
+                      record: pending,
                       actorRole: 'admin',
                     });
                   }

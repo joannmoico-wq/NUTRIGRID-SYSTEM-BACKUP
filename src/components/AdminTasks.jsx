@@ -31,15 +31,15 @@ const emptyForm = {
 };
 
 const STATUS_STYLE = {
-  Pending: 'bg-gray-100 text-gray-700',
-  'In Progress': 'bg-blue-100 text-blue-700',
-  Completed: 'bg-emerald-100 text-emerald-700',
+  Pending: 'border border-slate-200 bg-slate-50 text-slate-700',
+  'In Progress': 'border border-blue-200 bg-blue-50 text-blue-700',
+  Completed: 'border border-emerald-200 bg-emerald-50 text-emerald-700',
 };
 
 const PRIORITY_STYLE = {
-  High: 'bg-rose-100 text-rose-700',
-  Normal: 'bg-violet-100 text-violet-700',
-  Low: 'bg-slate-100 text-slate-600',
+  High: 'border border-rose-200 bg-rose-50 text-rose-700',
+  Normal: 'border border-violet-200 bg-violet-50 text-violet-700',
+  Low: 'border border-slate-200 bg-slate-50 text-slate-600',
 };
 
 function localDateInputValue(date = new Date()) {
@@ -47,6 +47,17 @@ function localDateInputValue(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
+}
+
+function formatTaskDueDate(dateValue) {
+  if (!dateValue) return '';
+  const [year, month, day] = String(dateValue).split('-').map(Number);
+  if (!year || !month || !day) return dateValue;
+  return new Date(year, month - 1, day).toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 export default function AdminTasks({
@@ -418,7 +429,7 @@ export default function AdminTasks({
               }`}
               style={filter === f ? { background: darkMode ? 'linear-gradient(90deg,#A66AD1,#D94E9F)' : 'linear-gradient(90deg,#8F65FF,#FF75C3)' } : {}}
             >
-              {f} <span className="opacity-75">· {counts[f]}</span>
+              {f.toUpperCase()} <span className="opacity-75">· {counts[f]}</span>
             </button>
           ))}
         </div>
@@ -482,10 +493,10 @@ export default function AdminTasks({
             return (
               <article
                 key={t.task_id}
-                className={`group relative rounded-3xl border p-5 shadow-sm transition hover:shadow-lg ${
+                className={`group relative flex min-h-[21rem] flex-col rounded-3xl border p-6 shadow-sm transition hover:shadow-lg ${
                   darkMode
-                    ? 'border-[#67445F] bg-gradient-to-br from-[#2B2038] to-[#35263D] hover:shadow-black/30'
-                    : 'border-[#E8C4F0] bg-gradient-to-br from-white to-[#FAF5FF]'
+                    ? 'border-[#67445F] bg-[#2B2038] hover:shadow-black/30'
+                    : 'border-[#F6DCEB] bg-white hover:shadow-[#E8C4F0]/40'
                 }`}
               >
               <div className="mb-3 flex items-start justify-between gap-2">
@@ -493,10 +504,10 @@ export default function AdminTasks({
                   <Flag size={11} className="mr-1 inline" />
                   {t.priority}
                 </span>
-                <span className={`rounded-full px-2.5 py-1 text-[11px] font-bold ${
-                  overdue ? 'bg-rose-100 text-rose-700' : STATUS_STYLE[t.status]
+                <span className={`rounded-full px-3 py-1 text-[11px] font-bold uppercase ${
+                  overdue ? 'border border-rose-200 bg-rose-50 text-rose-700' : STATUS_STYLE[t.status]
                 }`}>
-                  {displayedStatus}
+                  {displayedStatus.toUpperCase()}
                 </span>
               </div>
 
@@ -505,9 +516,10 @@ export default function AdminTasks({
                 <p className={`mt-1 line-clamp-2 text-sm ${mutedTextClass}`}>{t.description}</p>
               )}
 
-              <div className={`mt-4 space-y-1.5 text-xs ${mutedTextClass}`}>
+              <div className={`mt-5 border-t pt-4 ${darkMode ? 'border-[#67445F]' : 'border-slate-100'}`} />
+              <div className={`space-y-2 text-sm uppercase ${mutedTextClass}`}>
                 <p className="flex items-center gap-1.5">
-                  <span className="grid h-5 w-5 place-items-center rounded-full bg-gradient-to-br from-[#8F65FF] to-[#FF75C3] text-[10px] font-bold text-white">
+                  <span className="grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br from-[#8F65FF] to-[#FF75C3] text-[10px] font-bold text-white">
                     {(bhwName(t.assigned_to_user_id) || '?').charAt(0).toUpperCase()}
                   </span>
                   {bhwName(t.assigned_to_user_id)}
@@ -516,39 +528,45 @@ export default function AdminTasks({
                   <p className="flex items-center gap-1.5"><MapPin size={13} /> {t.purok}</p>
                 )}
                 {t.due_date && (
-                  <p className={`flex items-center gap-1.5 ${isTaskOverdue(t) ? 'font-bold text-rose-300' : ''}`}>
-                    <Calendar size={13} /> Due {t.due_date} {isTaskOverdue(t) && <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px]">Overdue</span>}
+                  <p className={`flex flex-wrap items-center gap-1.5 ${isTaskOverdue(t) ? 'font-bold text-rose-500' : ''}`}>
+                    <Calendar size={15} /> Due {formatTaskDueDate(t.due_date)}
                   </p>
                 )}
               </div>
 
-              <div className="absolute bottom-3 right-3 flex items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => editTask(t)}
-                  className={`rounded-full p-2 transition hover:bg-violet-50 hover:text-violet-600 ${darkMode ? 'text-slate-300' : 'text-gray-400'}`}
-                  aria-label="Edit task"
-                >
-                  <Edit size={15} />
-                </button>
-                {overdue && (
+              <div className={`mt-auto flex min-h-14 items-center justify-between gap-2 border-t pt-3 ${
+                darkMode ? 'border-[#67445F]' : 'border-slate-100'
+              }`}>
+                <div>
+                  {overdue && (
+                    <button
+                      type="button"
+                      onClick={() => openReschedule(t)}
+                      className="flex h-10 items-center gap-1.5 rounded-2xl bg-violet-50 px-4 text-sm font-semibold text-violet-700 transition hover:bg-violet-100"
+                      aria-label={`Reschedule ${t.title}`}
+                    >
+                      <Calendar size={16} /> Re-schedule
+                    </button>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
                   <button
                     type="button"
-                    onClick={() => openReschedule(t)}
-                    className="flex items-center gap-1 rounded-full bg-violet-50 px-3 py-2 text-xs font-semibold text-violet-700 transition hover:bg-violet-100"
-                    aria-label={`Reschedule ${t.title}`}
+                    onClick={() => editTask(t)}
+                    className={`grid h-9 w-9 place-items-center rounded-lg transition hover:bg-violet-50 hover:text-violet-600 ${darkMode ? 'text-slate-300' : 'text-slate-400'}`}
+                    aria-label="EDIT TASK"
                   >
-                    <Calendar size={14} /> Re-schedule
+                    <Edit size={18} />
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => deleteTask(t.task_id)}
-                  className={`rounded-full p-2 transition hover:bg-rose-50 hover:text-rose-600 ${darkMode ? 'text-slate-300' : 'text-gray-400'}`}
-                  aria-label="Delete task"
-                >
-                  <Trash2 size={15} />
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteTask(t.task_id)}
+                    className={`grid h-9 w-9 place-items-center rounded-lg transition hover:bg-rose-50 hover:text-rose-600 ${darkMode ? 'text-slate-300' : 'text-slate-400'}`}
+                    aria-label="DELETE TASK"
+                  >
+                    <Trash2 size={18} />
+                  </button>
+                </div>
               </div>
               </article>
             );
