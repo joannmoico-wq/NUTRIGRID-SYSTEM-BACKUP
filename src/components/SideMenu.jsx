@@ -310,8 +310,8 @@ export default function SideMenu({ open, onClose, taskNavigationDate }) {
           )}
 
           <div className="rounded-3xl bg-white p-5 shadow-sm">
-            <p className="text-lg font-extrabold text-gray-900">
-              {selectedIsToday ? 'Today' : selected}
+            <p className="text-lg font-extrabold uppercase tracking-wide text-gray-900">
+              {selectedIsToday ? 'TODAY' : selected}
             </p>
             <p className="mt-0.5 text-xs text-gray-500">
               You have <span className="font-bold text-[#8F65FF]">{dayTasks.length}</span>{' '}

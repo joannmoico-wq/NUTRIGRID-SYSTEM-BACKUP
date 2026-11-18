@@ -46,7 +46,6 @@ import {
   toAdminEnvironmental,
 } from '../utils/bnsStorage';
 import {
-  registerWithSupabase,
   signInWithSupabase,
   restoreSupabaseSession,
   signOutSupabase,
@@ -466,6 +465,7 @@ const RecordsList = ({
   performSearch,
   setSelectedCategory,
   currentUserId,
+  actorRole,
   requestConfirmation,
   deleteCategoryRecords,
 }) => {
@@ -617,6 +617,9 @@ const RecordsList = ({
         />
         <RecordDetailsDialog
           record={viewingRecord}
+          records={categoryRecords}
+          recordCategory={selectedCategory}
+          compact
           onClose={() => setViewingRecord(null)}
         />
       </>
@@ -638,6 +641,14 @@ const RecordsList = ({
     requestConfirmation(
       'Are you sure you want to delete this record permanently from your phone?',
       () => {
+      const deletedRecord = pendingVisits.find((visit) => String(visit.id) === String(id));
+      if (deletedRecord) {
+        void recordInformationDelete({
+          category: 'residents',
+          record: deletedRecord,
+          actorRole,
+        });
+      }
       const updated = pendingVisits.filter(v => v.id !== id);
       const allVisits = getRecords(STORAGE_KEYS.pendingVisits);
       localStorage.setItem(
@@ -868,7 +879,7 @@ const RecordsList = ({
                         key === 'actions' ? (
                           <div key={key} className="flex min-w-[4.5rem] items-center justify-center">
                             {record._raw ? (
-                              <RecordActions record={record._raw} allowView={false} />
+                              <RecordActions record={record._raw} />
                             ) : (
                               <span className="text-gray-300" aria-hidden="true">—</span>
                             )}
@@ -1582,6 +1593,7 @@ const HomeScreen = ({
   isOnline,
   setEditingRecord,
   currentUserId,
+  assignedPurok,
   onOpenAssignedTask,
   onClearSyncNotification,
 }) => {
@@ -2014,6 +2026,19 @@ const HomeScreen = ({
                 </div>
               </>
             )}
+            <button
+              type="button"
+              onClick={() => {
+                setShowNotifications(false);
+                setActiveView('profile');
+              }}
+              className="p-2.5 rounded-full bg-white/50 hover:bg-white/70 transition"
+              style={{ color: NUTRI_GRID_THEME.text }}
+              aria-label="Open profile"
+              title="Profile"
+            >
+              <UserCircle size={20} />
+            </button>
           </div>
         </div>
 
@@ -2352,6 +2377,7 @@ const HomeScreen = ({
                   initialData={editingRecord}
                   currentLocation={currentLocation}
                   userName={userName}
+                  assignedPurok={assignedPurok}
                 />
               )}
               {selectedCategory === 'residents' && (
@@ -2362,6 +2388,7 @@ const HomeScreen = ({
                   currentLocation={currentLocation}
                   userName={userName}
                   initialData={editingRecord}
+                  assignedPurok={assignedPurok}
                 />
               )}
               {selectedCategory === 'infantfeeding' && (
@@ -2372,6 +2399,7 @@ const HomeScreen = ({
                   currentLocation={currentLocation}
                   userName={userName}
                   initialData={editingRecord}
+                  assignedPurok={assignedPurok}
                 />
               )}
               {selectedCategory === 'lactatingwoman' && (
@@ -2382,6 +2410,7 @@ const HomeScreen = ({
                   currentLocation={currentLocation}
                   userName={userName}
                   initialData={editingRecord}
+                  assignedPurok={assignedPurok}
                 />
               )}
               {selectedCategory === 'pregnantwoman' && (
@@ -2392,6 +2421,7 @@ const HomeScreen = ({
                   currentLocation={currentLocation}
                   userName={userName}
                   initialData={editingRecord}
+                  assignedPurok={assignedPurok}
                 />
               )}
               {selectedCategory === 'monthlynatal' && (
@@ -2402,6 +2432,7 @@ const HomeScreen = ({
                   currentLocation={currentLocation}
                   userName={userName}
                   initialData={editingRecord}
+                  assignedPurok={assignedPurok}
                 />
               )}
             </div>
@@ -2418,6 +2449,7 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [deletePassword, setDeletePassword] = useState('');
   const [deleteError, setDeleteError] = useState('');
+  const [deleteSuccess, setDeleteSuccess] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   const submitAccountDeletion = async (event) => {
@@ -2430,6 +2462,7 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
         setDeleteError(result?.error || 'Account deletion could not be completed. Please try again.');
         return;
       }
+      setDeleteSuccess(result.message || 'Your deletion request was sent to Admin for review.');
       setShowDeleteDialog(false);
       setDeletePassword('');
     } catch (error) {
@@ -2441,7 +2474,7 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#DDEBFF] via-[#F4E8FF] to-[#FFE9F3] pb-8">
+    <div className="min-h-screen bg-slate-50 pb-8">
       <header className="flex items-center gap-3 border-t-4 border-pink-200 bg-white px-4 py-4 shadow-sm">
         <button
           type="button"
@@ -2456,7 +2489,7 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
 
       <main className="space-y-4 px-4 pt-5">
         <form
-          className="space-y-3 rounded-2xl border border-pink-200 bg-[#ffeef4] p-5 shadow-sm"
+          className="space-y-3 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm"
           onSubmit={(event) => {
             event.preventDefault();
             onSave({ fullName, age });
@@ -2495,7 +2528,7 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
           >
             Reset Password
           </button>
-          <div className="space-y-3 border-t border-slate-100 pt-4">
+          <div className="space-y-3 pt-1" aria-label="Profile actions">
             <button
               type="submit"
               className="w-full rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 px-4 py-4 font-bold text-white shadow-sm hover:from-blue-700 hover:to-blue-600"
@@ -2526,14 +2559,20 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
               type="button"
               onClick={() => {
                 setDeleteError('');
+                setDeleteSuccess('');
                 setDeletePassword('');
                 setShowDeleteDialog(true);
               }}
               className="w-full rounded-xl border-2 border-red-700 bg-red-50 px-4 py-3 font-bold text-red-800 hover:bg-red-100"
             >
-              Delete Account
+              Request Account Deletion
             </button>
           </div>
+          {deleteSuccess && (
+            <p role="status" className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+              {deleteSuccess}
+            </p>
+          )}
         </section>
       </main>
       {showDeleteDialog && (
@@ -2548,10 +2587,10 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
             <div className="flex items-start justify-between gap-3">
               <div>
                 <h2 id="delete-account-title" className="text-lg font-bold text-red-800">
-                  Delete account?
+                  Request account deletion?
                 </h2>
                 <p className="mt-1 text-sm text-gray-600">
-                  This permanently deletes your account and cannot be undone. Enter your password to confirm.
+                  Your account will be deleted only after an Admin confirms the request. Your health records and activity history will remain in the Admin Dashboard and Supabase. Enter your password to confirm the request.
                 </p>
               </div>
               <button
@@ -2591,7 +2630,7 @@ const ProfileScreen = ({ user, onSave, onCancel, onResetPassword, onLogout, onDe
                 disabled={isDeletingAccount || !deletePassword}
                 className="flex-1 rounded-xl bg-red-700 px-4 py-3 font-bold text-white hover:bg-red-800 disabled:opacity-50"
               >
-                {isDeletingAccount ? 'Deleting…' : 'Delete account'}
+                {isDeletingAccount ? 'Submitting…' : 'Request deletion'}
               </button>
             </div>
           </form>
@@ -2651,7 +2690,16 @@ const NutriGridMobile = () => {
           accuracy: position.coords.accuracy,
         });
       },
-      (error) => console.error('Location error:', error),
+      (error) => {
+        if (error.code === error.PERMISSION_DENIED) {
+          if (locationWatchId.current !== null) {
+            navigator.geolocation.clearWatch(locationWatchId.current);
+          }
+          locationWatchId.current = null;
+          return;
+        }
+        console.warn('Location is temporarily unavailable:', error.message);
+      },
       { maximumAge: 60000, timeout: 15000 }
     );
   };
@@ -2688,6 +2736,45 @@ const NutriGridMobile = () => {
     const timeout = window.setTimeout(() => setSyncNotification(''), 4500);
     return () => window.clearTimeout(timeout);
   }, [syncNotification]);
+
+  useEffect(() => {
+    if (
+      !isAuthenticated ||
+      !currentUser?.id ||
+      (!showCategoryForm && activeView !== 'visit') ||
+      !navigator.onLine
+    ) {
+      return undefined;
+    }
+
+    let active = true;
+    const userId = currentUser.id;
+    void supabase
+      .from('profiles')
+      .select('assigned_purok')
+      .eq('id', userId)
+      .single()
+      .then(({ data, error }) => {
+        if (error) throw new Error(error.message);
+        if (!data) throw new Error('The account profile was not returned.');
+        if (active) {
+          setCurrentUser((user) => (
+            user?.id === userId
+              ? { ...user, assignedPurok: data.assigned_purok || '' }
+              : user
+          ));
+        }
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error('Could not refresh the assigned Purok:', error);
+        showSyncNotification(`Could not refresh your assigned Purok: ${error.message}`, { isError: true });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [activeView, currentUser?.id, isAuthenticated, showCategoryForm]);
 
   useEffect(() => {
     if (!isAuthenticated || !currentUser?.id || !PWA_PERSISTED_VIEWS.has(activeView)) return;
@@ -2815,10 +2902,6 @@ const NutriGridMobile = () => {
 
   const handleSignIn = async (credentials) => {
     completeSignIn(await signInWithSupabase(credentials));
-  };
-
-  const handleRegister = async (accountData) => {
-    await registerWithSupabase(accountData);
   };
 
   const handleSaveProfile = ({ fullName, age }) => requestConfirmation(
@@ -2951,13 +3034,26 @@ const NutriGridMobile = () => {
 
       const { data, error } = await supabase.functions.invoke('delete-own-account');
       if (error) {
-        return { success: false, error: error.message || 'Account deletion could not be completed.' };
+        const context = error.context;
+        if (context && typeof context.clone === 'function') {
+          try {
+            const body = await context.clone().json();
+            if (body?.error) return { success: false, error: body.error };
+          } catch (parseError) {
+            console.error('Could not read the account deletion request error:', parseError);
+          }
+        }
+        return { success: false, error: error.message || 'Account deletion request could not be submitted.' };
       }
-      if (!data?.deleted) {
-        return { success: false, error: 'The server did not confirm account deletion.' };
+      if (!data?.request_created) {
+        return { success: false, error: 'The server did not confirm the deletion request.' };
       }
-      await performLogout();
-      return { success: true };
+      return {
+        success: true,
+        message: data.already_pending
+          ? 'Your account deletion request is already awaiting Admin review.'
+          : 'Your deletion request was sent to Admin for review. Your account remains active until it is confirmed.',
+      };
     } catch (error) {
       console.error('Account deletion failed:', error);
       return {
@@ -3173,8 +3269,11 @@ const NutriGridMobile = () => {
     const wasEditingRecord = Boolean(editingRecord);
     const key = storageKeyForCategory(formData.category);
     const editedAt = new Date().toISOString();
+    const recordFormData = currentUser?.assignedPurok
+      ? { ...formData, purok: currentUser.assignedPurok }
+      : formData;
     const pending = {
-      ...formData,
+      ...recordFormData,
       updated_at: editingRecord ? editedAt : formData.updated_at,
       last_edited_at: editingRecord ? editedAt : formData.last_edited_at,
       created_by_user_id: currentUser?.id || '',
@@ -3196,7 +3295,7 @@ const NutriGridMobile = () => {
         category: formData.category,
         recordId: ownedPending.id,
         before: editingRecord,
-        after: formData,
+        after: recordFormData,
         actorRole: currentUser?.role,
       });
     } else {
@@ -3349,7 +3448,7 @@ const NutriGridMobile = () => {
 
   const HouseVisitForm = () => {
     const [formData, setFormData] = useState({
-      purok: '',
+      purok: currentUser?.assignedPurok || '',
       household_head: '',
       address: '',
       total_members: '',
@@ -3404,6 +3503,7 @@ const NutriGridMobile = () => {
 
       const visitData = {
         ...formData,
+        purok: currentUser?.assignedPurok || formData.purok,
         id: Date.now(),
         created_by_user_id: currentUser?.id || '',
         synced: false,
@@ -3431,7 +3531,7 @@ const NutriGridMobile = () => {
       }
 
       setFormData({
-        purok: '',
+        purok: currentUser?.assignedPurok || '',
         household_head: '',
         address: '',
         total_members: '',
@@ -3468,15 +3568,26 @@ const NutriGridMobile = () => {
             <label className="block text-sm font-semibold text-gray-700 mb-2">
               Purok / Zone *
             </label>
-            <select
-              required
-              value={formData.purok}
-              onChange={(e) => setFormData({...formData, purok: e.target.value})}
-              className="w-full px-4 py-3 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-300 focus:border-blue-400 text-base shadow-sm"
-            >
-              <option value="">Select Purok</option>
-              {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
-            </select>
+            {currentUser?.assignedPurok ? (
+              <input
+                type="text"
+                required
+                readOnly
+                aria-readonly="true"
+                value={currentUser.assignedPurok}
+                className="w-full cursor-not-allowed rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-base text-gray-700 shadow-sm"
+              />
+            ) : (
+              <select
+                required
+                value={formData.purok}
+                onChange={(e) => setFormData({ ...formData, purok: e.target.value })}
+                className="w-full px-4 py-3 bg-white border border-gray-200 rounded-2xl focus:ring-2 focus:ring-blue-300 focus:border-blue-400 text-base shadow-sm"
+              >
+                <option value="">Select Purok</option>
+                {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+              </select>
+            )}
           </div>
 
           {/* Household Head */}
@@ -3713,7 +3824,6 @@ const NutriGridMobile = () => {
     return (
       <SignInPage
         onSignIn={handleSignIn}
-        onRegister={handleRegister}
         timeoutMessage={sessionTimeoutMessage}
       />
     );
@@ -3723,7 +3833,6 @@ const NutriGridMobile = () => {
     return (
       <AdminDashboard
         adminName={currentUser.fullName}
-        adminEmail={currentUser.email}
         currentUserId={currentUser.id}
         onLogout={performLogout}
       />
@@ -3801,6 +3910,7 @@ const NutriGridMobile = () => {
               isOnline={isOnline}
               setEditingRecord={setEditingRecord}
               currentUserId={currentUser?.id}
+              assignedPurok={currentUser?.assignedPurok}
               onOpenAssignedTask={(task) => {
                 setTaskNavigationDate(task.due_date || '');
                 setShowMenu(true);
@@ -3833,6 +3943,7 @@ const NutriGridMobile = () => {
               searchQuery={searchQuery}
               recordsRefresh={recordsRefresh}
               currentUserId={currentUser?.id}
+              actorRole={currentUser?.role}
               pendingVisits={pendingVisits}
               setPendingVisits={setPendingVisits}
               startEditRecord={startEditRecord}

@@ -40,7 +40,7 @@ grant execute on function public.nutrigrid_is_activity_admin() to authenticated;
 
 create table if not exists public.record_activity_logs (
   id text primary key,
-  actor_user_id uuid not null references auth.users(id) on delete cascade,
+  actor_user_id uuid references auth.users(id) on delete set null,
   actor_name text not null,
   actor_role text not null default 'unknown',
   category text not null,
@@ -54,6 +54,13 @@ alter table public.record_activity_logs
   add column if not exists actor_role text not null default 'unknown';
 alter table public.record_activity_logs
   add column if not exists action text not null default 'edited';
+alter table public.record_activity_logs
+  alter column actor_user_id drop not null;
+alter table public.record_activity_logs
+  drop constraint if exists record_activity_logs_actor_user_id_fkey;
+alter table public.record_activity_logs
+  add constraint record_activity_logs_actor_user_id_fkey
+  foreign key (actor_user_id) references auth.users(id) on delete set null;
 
 create index if not exists record_activity_logs_created_at_idx
   on public.record_activity_logs (created_at desc);

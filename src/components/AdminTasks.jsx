@@ -196,6 +196,9 @@ export default function AdminTasks({
     const b = bhws.find((x) => x.id === id);
     return b ? b.full_name || b.email : 'Unassigned';
   };
+  const selectedBhw = bhws.find(
+    (bhw) => String(bhw.id) === String(form.assigned_to_user_id)
+  );
 
   const monthFilteredTasks = useMemo(
     () => selectedMonth
@@ -285,7 +288,7 @@ export default function AdminTasks({
       task_id: editingTask?.task_id ?? createLocalTaskId(),
       title: form.title.trim(),
       description: form.description.trim() || null,
-      purok: form.purok.trim() || null,
+      purok: (selectedBhw?.assigned_purok || form.purok).trim() || null,
       priority: form.priority,
       due_date: form.due_date || null,
       assigned_to_user_id: form.assigned_to_user_id,
@@ -666,7 +669,14 @@ export default function AdminTasks({
                   className={`${inputClass} mt-1`}
                   required
                   value={form.assigned_to_user_id}
-                  onChange={(e) => setForm({ ...form, assigned_to_user_id: e.target.value })}
+                  onChange={(event) => {
+                    const selectedBhw = bhws.find((bhw) => String(bhw.id) === event.target.value);
+                    setForm((current) => ({
+                      ...current,
+                      assigned_to_user_id: event.target.value,
+                      purok: selectedBhw?.assigned_purok || '',
+                    }));
+                  }}
                 >
                   <option value="">Select approved BHW…</option>
                   {bhws.map((b) => (
@@ -676,18 +686,34 @@ export default function AdminTasks({
               </label>
               <label className={`block min-w-0 text-xs font-semibold ${mutedTextClass}`}>
                 Purok
-                <select
-                  className={`${inputClass} mt-1`}
-                  value={form.purok}
-                  onChange={(e) => setForm({ ...form, purok: e.target.value })}
-                >
-                  <option value="">Select a purok…</option>
-                  {form.purok && !TASK_PUROK_OPTIONS.includes(form.purok) && (
-                    <option value={form.purok}>{form.purok}</option>
-                  )}
-                  {TASK_PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
-                </select>
-                <span className={`mt-1 block text-[10px] font-normal ${mutedTextClass}`}>Purok 1 through Purok 10</span>
+                {selectedBhw ? (
+                  <input
+                    type="text"
+                    readOnly
+                    aria-readonly="true"
+                    value={selectedBhw.assigned_purok || form.purok}
+                    className={`${inputClass} mt-1 cursor-not-allowed opacity-80`}
+                  />
+                ) : (
+                  <select
+                    className={`${inputClass} mt-1`}
+                    value={form.purok}
+                    onChange={(e) => setForm({ ...form, purok: e.target.value })}
+                  >
+                    <option value="">Select a purok…</option>
+                    {form.purok && !TASK_PUROK_OPTIONS.includes(form.purok) && (
+                      <option value={form.purok}>{form.purok}</option>
+                    )}
+                    {TASK_PUROK_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+                  </select>
+                )}
+                <span className={`mt-1 block text-[10px] font-normal ${mutedTextClass}`}>
+                  {selectedBhw?.assigned_purok
+                    ? 'Locked to this BHW’s assigned Purok.'
+                    : selectedBhw
+                      ? 'This BHW has no assigned Purok.'
+                      : 'Purok 1 through Purok 10'}
+                </span>
               </label>
               <label className={`block min-w-0 text-xs font-semibold ${mutedTextClass}`}>
                 Priority

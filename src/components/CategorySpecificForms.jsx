@@ -1,6 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { Check, Camera, MapPin, X } from 'lucide-react';
-import { calculateAgeInMonths as getCompletedAgeInMonths, calculateAgeInYears, calculateWhoGrowthStatuses } from '../utils/childGrowth';
+import {
+  calculateAgeInMonths as getCompletedAgeInMonths,
+  calculateAgeInYears,
+  calculateWhoBmiForAge,
+  calculateWhoGrowthStatuses,
+} from '../utils/childGrowth';
 import { PUROK_FORM_OPTIONS } from '../utils/purok';
 
 /**
@@ -56,6 +61,28 @@ const FormValidationStyles = () => {
     `}</style>
   );
 };
+
+const PurokField = ({ value, onChange, assignedPurok, className }) => (
+  <div>
+    <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
+    {assignedPurok ? (
+      <input
+        type="text"
+        required
+        readOnly
+        aria-readonly="true"
+        value={assignedPurok}
+        placeholder={assignedPurok}
+        className={`${className} cursor-not-allowed bg-gray-50`}
+      />
+    ) : (
+      <select required value={value} onChange={(event) => onChange(event.target.value)} className={className}>
+        <option value="">Select Purok</option>
+        {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
+      </select>
+    )}
+  </div>
+);
 
 const setExclusiveChoice = (formData, keys, selectedKey, additionalValues = {}) => ({
   ...formData,
@@ -295,7 +322,7 @@ const OptionalPhotoField = ({ value, onChange, color }) => {
 };
 
 // Environmental Sanitation Form
-export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
+export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true, assignedPurok }) => {
   const [formData, setFormData] = useState({
     purok: '',
     total_hh: '',
@@ -433,6 +460,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
     
     const visitData = {
       ...formData,
+      purok: assignedPurok || formData.purok,
       category: 'environmental',
       id: initialData?.id || Date.now(),
       synced: initialData?.synced ?? false,
@@ -459,18 +487,12 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
       <FormValidationStyles />
       <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
       <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
-          <select
-            required
-            value={formData.purok}
-            onChange={(e) => setFormData({...formData, purok: e.target.value})}
-            className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">Select Purok</option>
-            {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
-          </select>
-        </div>
+        <PurokField
+          value={formData.purok}
+          onChange={(value) => setFormData((previous) => ({ ...previous, purok: value }))}
+          assignedPurok={assignedPurok}
+          className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+        />
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Total HH *</label>
           <input
@@ -479,7 +501,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
             value={formData.total_hh}
             onChange={(e) => setFormData({...formData, total_hh: e.target.value})}
             className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            placeholder="0"
+            placeholder="e.g., 25"
           />
         </div>
       </div>
@@ -492,7 +514,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
           value={formData.total_families}
           onChange={(e) => setFormData({...formData, total_families: e.target.value})}
           className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-          placeholder="0"
+          placeholder="e.g., 20"
         />
       </div>
 
@@ -511,6 +533,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
               value={formData[key]}
               onChange={(e) => setFormData({ ...formData, [key]: e.target.value })}
               className="mt-2 w-full rounded-lg border-2 border-blue-300 px-4 py-2 focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g., 0"
             />
           </label>
         ))}
@@ -819,7 +842,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
           onChange={(e) => setFormData({...formData, notes: e.target.value})}
           className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500"
           rows="3"
-          placeholder="Any observations..."
+          placeholder="e.g., Water source needs inspection"
         />
       </div>
 
@@ -882,7 +905,7 @@ export const EnvironmentalSanitationForm = ({ onSubmit, onCancel, currentLocatio
 };
 
 // Simple Residents Form (columns: Purok, Head, Members, Status, Last Visit)
-export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
+export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true, assignedPurok }) => {
   const buildDefaults = () => ({
     purok: '',
     household_head: '',
@@ -928,6 +951,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
     try {
       onSubmit({
         ...formData,
+        purok: assignedPurok || formData.purok,
         category: 'residents',
         id: initialData?.id || Date.now(),
         synced: initialData?.synced ?? false,
@@ -955,18 +979,12 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
     >
       <FormValidationStyles />
       <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
-        <select
-          required
-          value={formData.purok}
-          onChange={(e) => setFormData({ ...formData, purok: e.target.value })}
-          className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg"
-        >
-          <option value="">Select Purok</option>
-          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
-        </select>
-      </div>
+      <PurokField
+        value={formData.purok}
+        onChange={(value) => setFormData((previous) => ({ ...previous, purok: value }))}
+        assignedPurok={assignedPurok}
+        className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg"
+      />
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Head (Household Head) *</label>
         <input
@@ -988,7 +1006,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
             value={formData.total_members}
             onChange={(e) => setFormData({ ...formData, total_members: e.target.value })}
             className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg"
-            placeholder="5"
+            placeholder="e.g., 5"
           />
         </div>
         <div>
@@ -1007,7 +1025,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
       </p>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea data-optional="true" value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg" rows="3" />
+        <textarea data-optional="true" value={formData.notes} onChange={(e) => setFormData({...formData, notes: e.target.value})} className="w-full px-4 py-2 border-2 border-blue-300 rounded-lg" rows="3" placeholder="e.g., Household needs follow-up visit" />
       </div>
       {showPhotoCapture && <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Household Photo (optional)</label>
@@ -1051,7 +1069,7 @@ export const ResidentsForm = ({ onSubmit, onCancel, currentLocation, userName, i
 };
 
 // Pregnant Woman registration form (BNS template)
-export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
+export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true, assignedPurok }) => {
   const fieldClass = 'box-border w-full min-w-0 px-4 py-2 border-2 border-pink-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
@@ -1108,6 +1126,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
     setIsSubmitting(true);
     onSubmit({
       ...formData,
+      purok: assignedPurok || formData.purok,
       age: calculateAgeInYears(formData.birthday),
       category: 'pregnantwoman',
       id: initialData?.id || Date.now(),
@@ -1132,13 +1151,12 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
     >
       <FormValidationStyles />
       <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
-        <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
-          <option value="">Select Purok</option>
-          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
-        </select>
-      </div>
+      <PurokField
+        value={formData.purok}
+        onChange={(value) => updateField('purok', value)}
+        assignedPurok={assignedPurok}
+        className={fieldClass}
+      />
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Date of Registration *</label>
@@ -1158,6 +1176,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
             value={formData.family_serial_number}
             onChange={(e) => updateField('family_serial_number', e.target.value)}
             className={fieldClass}
+            placeholder="e.g., FSN-001"
           />
         </div>
       </div>
@@ -1166,15 +1185,15 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Last Name *</label>
-          <input type="text" required value={formData.last_name} onChange={(e) => updateField('last_name', e.target.value)} className={fieldClass} />
+          <input type="text" required value={formData.last_name} onChange={(e) => updateField('last_name', e.target.value)} className={fieldClass} placeholder="e.g., Santos" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">First Name *</label>
-          <input type="text" required value={formData.first_name} onChange={(e) => updateField('first_name', e.target.value)} className={fieldClass} />
+          <input type="text" required value={formData.first_name} onChange={(e) => updateField('first_name', e.target.value)} className={fieldClass} placeholder="e.g., Maria" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Middle Name</label>
-          <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} className={fieldClass} />
+          <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} className={fieldClass} placeholder="e.g., Reyes" />
         </div>
       </div>
 
@@ -1203,19 +1222,19 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
             onChange={(e) => updateField('iron_folic_acid', e.target.value)}
             className={fieldClass}
             inputMode="numeric"
-            placeholder="Enter amount of tabs"
+            placeholder="e.g., 180"
           />
         </div>
       </div>
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Spouse</label>
-        <input type="text" value={formData.spouse_name} onChange={(e) => updateField('spouse_name', e.target.value)} className={fieldClass} />
+        <input type="text" value={formData.spouse_name} onChange={(e) => updateField('spouse_name', e.target.value)} className={fieldClass} placeholder="e.g., Juan Santos" />
       </div>
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Contact Number *</label>
-        <input type="tel" required value={formData.contact_number} onChange={(e) => updateField('contact_number', e.target.value)} className={fieldClass} placeholder="09XXXXXXXXX" />
+        <input type="tel" required value={formData.contact_number} onChange={(e) => updateField('contact_number', e.target.value)} className={fieldClass} placeholder="e.g., 0917 123 4567" />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -1225,7 +1244,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Age *</label>
-          <input type="number" required min="10" max="60" readOnly value={calculateAgeInYears(formData.birthday)} className={`${fieldClass} bg-gray-50`} />
+          <input type="number" required min="10" max="60" readOnly value={calculateAgeInYears(formData.birthday)} className={`${fieldClass} bg-gray-50`} placeholder="Auto-calculated" />
         </div>
       </div>
 
@@ -1274,11 +1293,11 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Wt (kg) *</label>
-          <input type="number" required step="0.1" min="30" value={formData.weight} onChange={(e) => updateField('weight', e.target.value)} className={fieldClass} />
+          <input type="number" required step="0.1" min="30" value={formData.weight} onChange={(e) => updateField('weight', e.target.value)} className={fieldClass} placeholder="e.g., 55.0" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Ht (cm) *</label>
-          <input type="number" required step="0.1" min="100" value={formData.height} onChange={(e) => updateField('height', e.target.value)} className={fieldClass} />
+          <input type="number" required step="0.1" min="100" value={formData.height} onChange={(e) => updateField('height', e.target.value)} className={fieldClass} placeholder="e.g., 160" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">BMI</label>
@@ -1286,13 +1305,13 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">MUAC (cm) *</label>
-          <input type="number" required step="0.1" min="15" max="40" value={formData.muac} onChange={(e) => updateField('muac', e.target.value)} className={fieldClass} />
+          <input type="number" required step="0.1" min="15" max="40" value={formData.muac} onChange={(e) => updateField('muac', e.target.value)} className={fieldClass} placeholder="e.g., 25.0" />
         </div>
       </div>
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} placeholder="e.g., Additional observations" />
       </div>
       {showPhotoCapture && (
         <OptionalPhotoField
@@ -1316,7 +1335,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
 };
 
 // Lactating Woman registration form (BNS template)
-export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
+export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true, assignedPurok }) => {
   const fieldClass = 'box-border w-full min-w-0 px-4 py-2 border-2 border-red-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => ({
@@ -1367,6 +1386,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
     setIsSubmitting(true);
     onSubmit({
       ...formData,
+      purok: assignedPurok || formData.purok,
       age: calculateAgeInYears(formData.birthday),
       category: 'lactatingwoman',
       id: initialData?.id || Date.now(),
@@ -1391,13 +1411,12 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
     >
       <FormValidationStyles />
       <p className="text-xs text-gray-500">Fill in every text, number, date, and selection field before saving. Photos are optional.</p>
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
-        <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
-          <option value="">Select Purok</option>
-          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
-        </select>
-      </div>
+      <PurokField
+        value={formData.purok}
+        onChange={(value) => updateField('purok', value)}
+        assignedPurok={assignedPurok}
+        className={fieldClass}
+      />
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Date of Registration *</label>
@@ -1417,6 +1436,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
             value={formData.family_serial_number}
             onChange={(e) => updateField('family_serial_number', e.target.value)}
             className={fieldClass}
+            placeholder="e.g., FSN-001"
           />
         </div>
       </div>
@@ -1425,15 +1445,15 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Last Name *</label>
-          <input type="text" required value={formData.last_name} onChange={(e) => updateField('last_name', e.target.value)} className={fieldClass} />
+          <input type="text" required value={formData.last_name} onChange={(e) => updateField('last_name', e.target.value)} className={fieldClass} placeholder="e.g., Santos" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">First Name *</label>
-          <input type="text" required value={formData.first_name} onChange={(e) => updateField('first_name', e.target.value)} className={fieldClass} />
+          <input type="text" required value={formData.first_name} onChange={(e) => updateField('first_name', e.target.value)} className={fieldClass} placeholder="e.g., Maria" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Middle Name</label>
-          <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} className={fieldClass} />
+          <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} className={fieldClass} placeholder="e.g., Reyes" />
         </div>
       </div>
 
@@ -1446,18 +1466,18 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
           value={formData.iron_folic_acid}
           onChange={(e) => updateField('iron_folic_acid', e.target.value)}
           className={fieldClass}
-          placeholder="(90 tabs)"
+          placeholder="e.g., 90"
         />
       </div>
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Spouse</label>
-        <input type="text" value={formData.spouse_name} onChange={(e) => updateField('spouse_name', e.target.value)} className={fieldClass} />
+        <input type="text" value={formData.spouse_name} onChange={(e) => updateField('spouse_name', e.target.value)} className={fieldClass} placeholder="e.g., Juan Santos" />
       </div>
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Contact Number *</label>
-        <input type="tel" required value={formData.contact_number} onChange={(e) => updateField('contact_number', e.target.value)} className={fieldClass} placeholder="09XXXXXXXXX" />
+        <input type="tel" required value={formData.contact_number} onChange={(e) => updateField('contact_number', e.target.value)} className={fieldClass} placeholder="e.g., 0917 123 4567" />
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -1467,7 +1487,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Age *</label>
-          <input type="number" required min="10" max="60" readOnly value={calculateAgeInYears(formData.birthday)} className={`${fieldClass} bg-gray-50`} />
+          <input type="number" required min="10" max="60" readOnly value={calculateAgeInYears(formData.birthday)} className={`${fieldClass} bg-gray-50`} placeholder="Auto-calculated" />
         </div>
       </div>
 
@@ -1505,11 +1525,11 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Wt (kg) *</label>
-          <input type="number" required step="0.1" min="30" value={formData.weight} onChange={(e) => updateField('weight', e.target.value)} className={fieldClass} />
+          <input type="number" required step="0.1" min="30" value={formData.weight} onChange={(e) => updateField('weight', e.target.value)} className={fieldClass} placeholder="e.g., 55.0" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Ht (cm) *</label>
-          <input type="number" required step="0.1" min="100" value={formData.height} onChange={(e) => updateField('height', e.target.value)} className={fieldClass} />
+          <input type="number" required step="0.1" min="100" value={formData.height} onChange={(e) => updateField('height', e.target.value)} className={fieldClass} placeholder="e.g., 160" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">BMI</label>
@@ -1517,7 +1537,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">MUAC (cm) *</label>
-          <input type="number" required step="0.1" min="15" max="40" value={formData.muac} onChange={(e) => updateField('muac', e.target.value)} className={fieldClass} />
+          <input type="number" required step="0.1" min="15" max="40" value={formData.muac} onChange={(e) => updateField('muac', e.target.value)} className={fieldClass} placeholder="e.g., 25.0" />
         </div>
       </div>
 
@@ -1528,7 +1548,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} placeholder="e.g., Additional observations" />
       </div>
       {showPhotoCapture && (
         <OptionalPhotoField
@@ -1552,7 +1572,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
 };
 
 // Monthly Natality with weight, length, and height (BNS template)
-export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
+export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true, assignedPurok }) => {
   const fieldClass = 'box-border w-full min-w-0 px-4 py-2 border-2 border-amber-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => {
@@ -1618,6 +1638,14 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
     lengthCm: formData.length_cm,
     heightCm: formData.height_cm,
   });
+  const bmiForAge = calculateWhoBmiForAge({
+    sex: formData.sex,
+    birthday: formData.dob,
+    weighingDate: formData.dow,
+    weightKg: formData.weight_kg,
+    lengthCm: formData.length_cm,
+    heightCm: formData.height_cm,
+  });
   const useHeight = Number(formData.aim) >= 24;
 
   const handleSubmit = (e) => {
@@ -1626,6 +1654,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
     setIsSubmitting(true);
     onSubmit({
       ...formData,
+      purok: assignedPurok || formData.purok,
       aim: getCompletedAgeInMonths(formData.dob, formData.dow),
       mother_age: calculateAgeInYears(formData.mother_birthday) || formData.mother_age,
       ...growthStatuses,
@@ -1656,13 +1685,12 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         Monthly Natality with Weight, Length &amp; Height — Barangay Alawihao
       </p>
 
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
-        <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
-          <option value="">Select Purok</option>
-          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
-        </select>
-      </div>
+      <PurokField
+        value={formData.purok}
+        onChange={(value) => updateField('purok', value)}
+        assignedPurok={assignedPurok}
+        className={fieldClass}
+      />
       <div className="grid grid-cols-2 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Month *</label>
@@ -1681,7 +1709,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
       <div className="space-y-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Mother *</label>
-          <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} />
+          <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} placeholder="e.g., Maria Santos" />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="min-w-0">
@@ -1697,7 +1725,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Child *</label>
-        <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', e.target.value)} className={fieldClass} />
+        <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', e.target.value)} className={fieldClass} placeholder="e.g., Juan Santos" />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -1706,7 +1734,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Birth Weight (kg)</label>
-          <input type="number" step="0.01" min="0" value={formData.birth_weight} onChange={(e) => updateField('birth_weight', e.target.value)} className={fieldClass} />
+          <input type="number" step="0.01" min="0" value={formData.birth_weight} onChange={(e) => updateField('birth_weight', e.target.value)} className={fieldClass} placeholder="e.g., 3.2" />
         </div>
       </div>
       <div>
@@ -1717,7 +1745,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Wt (kg) *</label>
-          <input type="number" required step="0.01" min="0.01" value={formData.weight_kg} onChange={(e) => updateField('weight_kg', e.target.value)} className={fieldClass} />
+          <input type="number" required step="0.01" min="0.01" value={formData.weight_kg} onChange={(e) => updateField('weight_kg', e.target.value)} className={fieldClass} placeholder="e.g., 8.5" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Height (cm) {useHeight ? '*' : ''}</label>
@@ -1725,10 +1753,12 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
             type="number"
             required={useHeight}
             step="0.1"
-            min="1"
+            min={useHeight ? '65' : '45'}
+            max="120"
             value={formData.height_cm}
             onChange={(e) => updateField('height_cm', e.target.value)}
             className={fieldClass}
+            placeholder="e.g., 72"
           />
         </div>
       </div>
@@ -1743,19 +1773,22 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
             type="number"
             required={!useHeight}
             step="0.1"
-            min="1"
+            min="45"
+            max="110"
             value={formData.length_cm}
             onChange={(e) => updateField('length_cm', e.target.value)}
             className={fieldClass}
+            placeholder="e.g., 72"
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
           ['W/A (WHO)', growthStatuses.w_a],
           ['H/A (WHO)', growthStatuses.h_a],
           ['W/L/H (WHO)', growthStatuses.w_l_h],
+          ['BMI-for-age (WHO)', bmiForAge.classification],
         ].map(([label, value]) => (
           <div key={label}>
             <label className="block text-sm font-semibold text-gray-700 mb-2">{label}</label>
@@ -1770,7 +1803,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
         ))}
       </div>
       <p className="text-xs text-gray-600">
-        Nutrition classifications update automatically from the child’s sex, age, weight, and length/height using WHO Child Growth Standards (2006). Standards cover ages 0–60 months.
+        Nutrition classifications update automatically from the child’s sex, age, weight, and length/height using WHO Child Growth Standards (2006). Use length 45–110 cm under 24 months and height 65–120 cm from 24–60 months.
       </p>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1785,7 +1818,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
             value={formData.iron_status}
             onChange={(e) => updateField('iron_status', e.target.value)}
             className={fieldClass}
-            placeholder="Enter number of babies"
+            placeholder="e.g., 1"
           />
           <label className="mt-4 flex items-start gap-3 px-1 py-1 text-sm font-semibold leading-tight text-gray-700">
             <input
@@ -1819,7 +1852,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
             value={formData.vitamin_a_count}
             onChange={(e) => updateField('vitamin_a_count', e.target.value)}
             className={`${fieldClass} mt-2`}
-            placeholder="Enter number given"
+            placeholder="e.g., 1"
           />
         </div>
         <div className="sm:col-span-2">
@@ -1867,7 +1900,7 @@ function normalizeFeedingMethod(value) {
 }
 
 // Infant Feeding — Edad ng Sanggol sa Pagbisita (BNS template)
-export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true }) => {
+export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userName, initialData = null, showPhotoCapture = true, assignedPurok }) => {
   const fieldClass = 'box-border w-full min-w-0 px-4 py-2 border-2 border-violet-300 rounded-lg text-sm';
 
   const [formData, setFormData] = useState(() => {
@@ -1914,6 +1947,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
     setIsSubmitting(true);
     onSubmit({
       ...formData,
+      purok: assignedPurok || formData.purok,
       category: 'infantfeeding',
       id: initialData?.id || Date.now(),
       synced: initialData?.synced ?? false,
@@ -1953,21 +1987,20 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
         Edad ng Sanggol sa Pagbisita — Paraan ng Pagpapakain o Pagpapainom
       </p>
 
-      <div>
-        <label className="block text-sm font-semibold text-gray-700 mb-2">Purok *</label>
-        <select required value={formData.purok} onChange={(e) => updateField('purok', e.target.value)} className={fieldClass}>
-          <option value="">Select Purok</option>
-          {PUROK_FORM_OPTIONS.map((purok) => <option key={purok} value={purok}>{purok}</option>)}
-        </select>
-      </div>
+      <PurokField
+        value={formData.purok}
+        onChange={(value) => updateField('purok', value)}
+        assignedPurok={assignedPurok}
+        className={fieldClass}
+      />
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Pangalan ng Nanay *</label>
-        <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} />
+        <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} placeholder="Hal. Maria Santos" />
       </div>
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Pangalan ng Bata *</label>
-        <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', e.target.value)} className={fieldClass} />
+        <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', e.target.value)} className={fieldClass} placeholder="Hal. Juan Santos" />
       </div>
 
       <div className="space-y-3 bg-violet-50 rounded-xl p-4 border border-violet-200">
@@ -1993,7 +2026,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Notes (optional)</label>
-        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} />
+        <textarea data-optional="true" rows="3" value={formData.notes} onChange={(e) => updateField('notes', e.target.value)} className={fieldClass} placeholder="Hal. Karagdagang obserbasyon" />
       </div>
       {showPhotoCapture && (
         <OptionalPhotoField

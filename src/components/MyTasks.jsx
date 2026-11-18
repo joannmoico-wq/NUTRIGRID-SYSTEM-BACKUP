@@ -453,13 +453,13 @@ export default function MyTasks() {
             type="button"
             aria-pressed={taskStatusFilter === status}
             onClick={() => setTaskStatusFilter((current) => current === status ? null : status)}
-            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold uppercase transition ${
+            className={`shrink-0 rounded-full border px-4 py-2 text-sm font-semibold uppercase tracking-wide transition ${
               taskStatusFilter === status
                 ? 'border-transparent bg-gradient-to-r from-[#8F65FF] to-[#FF75C3] text-white shadow'
                 : 'border-[#E8DCEF] bg-white text-gray-700 hover:bg-purple-50'
             }`}
           >
-            {status} <span className="opacity-75">· {taskStatusCounts[status]}</span>
+            {status.toUpperCase()} <span className="opacity-75">· {taskStatusCounts[status]}</span>
           </button>
         ))}
       </div>

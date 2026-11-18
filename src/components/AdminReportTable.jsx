@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Download, Plus, Trash2, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Download, Plus, X } from 'lucide-react';
 import ReportRowActions from './ReportRowActions';
 import RecordDetailsDialog from './RecordDetailsDialog';
 import {
@@ -8,7 +8,6 @@ import {
   PUROK_FILTER_OPTIONS,
 } from '../utils/purok';
 import { getRecordSyncStatus, isRecordEdited } from '../utils/bnsStorage';
-import { exportTableToExcel } from '../utils/recordExcel';
 
 export const REPORT_META = {
   barangay: 'ALAWIHAO',
@@ -134,11 +133,8 @@ export default function AdminReportTable({
   onAdd,
   onEdit,
   onDelete,
-  enableRowSelection = false,
-  onBulkDelete,
-  selectionFileName = 'nutrigrid-selected-records',
-  showExportSelected = true,
   allowView = false,
+  recordCategory,
   onExport,
   exportActions,
   importAction,
@@ -154,8 +150,6 @@ export default function AdminReportTable({
   const [localPurokFilter, setLocalPurokFilter] = useState('');
   const [viewingRecord, setViewingRecord] = useState(null);
   const [highlightedRecordId, setHighlightedRecordId] = useState(null);
-  const [selectedIds, setSelectedIds] = useState(() => new Set());
-  const selectAllRef = useRef(null);
   const purokFilter = controlledPurokFilter ?? localPurokFilter;
   const setPurokFilter = onPurokFilterChange || setLocalPurokFilter;
   const visibleData = showPurokFilter && purokFilter === '__sorted__'
@@ -164,15 +158,7 @@ export default function AdminReportTable({
       ? data.filter((row) => normalizeEnvironmentalPurokName(row.purok) === purokFilter)
       : data;
   const showActions = Boolean(allowView || onEdit || onDelete);
-  const totalColumns = columnKeys.length + (showActions ? 1 : 0) + (enableRowSelection ? 1 : 0);
-  const visibleIdKey = visibleData.map((row) => String(row.id)).join('|');
-  const selectedRows = visibleData.filter((row) => selectedIds.has(String(row.id)));
-  const allVisibleSelected = visibleData.length > 0 && selectedRows.length === visibleData.length;
-  const someVisibleSelected = selectedRows.length > 0 && !allVisibleSelected;
-  const exportHeaders = singleRowHeaders || columnKeys.map((key) =>
-    key.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ')
-  );
-  const exportFileName = selectionFileName;
+  const totalColumns = columnKeys.length + (showActions ? 1 : 0);
   const nameColumnNames = new Set([
     'head',
     'householdhead',
@@ -215,18 +201,6 @@ export default function AdminReportTable({
   const actionTd = `${tdClass} text-center`;
 
   useEffect(() => {
-    setSelectedIds((current) => {
-      const visibleIds = new Set(visibleData.map((row) => String(row.id)));
-      const next = new Set([...current].filter((id) => visibleIds.has(id)));
-      return next.size === current.size ? current : next;
-    });
-  }, [visibleIdKey]);
-
-  useEffect(() => {
-    if (selectAllRef.current) selectAllRef.current.indeterminate = someVisibleSelected;
-  }, [someVisibleSelected]);
-
-  useEffect(() => {
     if (scrollToRecordId == null) return undefined;
     const frame = window.requestAnimationFrame(() => {
       const target = Array.from(document.querySelectorAll('[data-record-id]'))
@@ -263,52 +237,6 @@ export default function AdminReportTable({
           {legend}
         </div>
       ) : null}
-
-      {enableRowSelection && selectedRows.length > 0 && (
-        <div className={`flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 ${
-          darkMode ? 'border-violet-900 bg-violet-950/40 text-violet-100' : 'border-violet-200 bg-violet-50 text-violet-950'
-        }`}>
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <span className="rounded-full bg-violet-600 px-2.5 py-1 text-xs font-bold text-white">
-              {selectedRows.length}
-            </span>
-            rows selected
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => setSelectedIds(new Set())}
-              className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-violet-700 transition hover:bg-violet-100 dark:text-violet-200 dark:hover:bg-violet-900/50"
-            >
-              Clear Selection
-            </button>
-            {showExportSelected && (
-              <button
-                type="button"
-                onClick={() => exportTableToExcel(
-                  exportHeaders,
-                  selectedRows.map((row) => columnKeys.map((key) => cellValue(row, key))),
-                  exportFileName
-                )}
-                className="flex items-center gap-1.5 rounded-lg bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-700"
-              >
-                <Download size={14} />
-                Export Selected
-              </button>
-            )}
-            {onBulkDelete && (
-              <button
-                type="button"
-                onClick={() => onBulkDelete(selectedRows.map((row) => row.id))}
-                className="flex items-center gap-1.5 rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700"
-              >
-                <Trash2 size={14} />
-                Delete Selected
-              </button>
-            )}
-          </div>
-        </div>
-      )}
 
       <div
         className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3 dark:border-gray-600"
@@ -367,22 +295,6 @@ export default function AdminReportTable({
           <thead>
             {resolvedHeadRows.map((row, rowIndex) => (
               <tr key={`head-${rowIndex}`}>
-                {enableRowSelection && rowIndex === 0 && (
-                  <th rowSpan={resolvedHeadRows.length} className={`${thClass} w-10`}>
-                    <input
-                      ref={selectAllRef}
-                      type="checkbox"
-                      checked={allVisibleSelected}
-                      onChange={() => setSelectedIds(
-                        allVisibleSelected
-                          ? new Set()
-                          : new Set(visibleData.map((record) => String(record.id)))
-                      )}
-                      aria-label={allVisibleSelected ? 'Deselect all visible records' : 'Select all visible records'}
-                      className="h-4 w-4 cursor-pointer accent-violet-600"
-                    />
-                  </th>
-                )}
                 {row.map((cell, cellIndex) => (
                   <th
                     key={`${rowIndex}-${cellIndex}-${cell.label}`}
@@ -421,26 +333,10 @@ export default function AdminReportTable({
                 <tr
                   key={row.id}
                   data-record-id={row.id}
-                  className={`hover:bg-violet-50/40 dark:hover:bg-violet-900/10 ${selectedIds.has(String(row.id)) ? 'bg-violet-50 dark:bg-violet-950/30' : ''} ${syncStatusDetails?.rowClassName || ''} ${
+                  className={`hover:bg-violet-50/40 dark:hover:bg-violet-900/10 ${syncStatusDetails?.rowClassName || ''} ${
                     highlightedRecordId === String(row.id) ? 'ring-2 ring-inset ring-violet-500 bg-violet-50' : ''
                   }`}
                 >
-                  {enableRowSelection && (
-                    <td className={`${tdClass} w-10 text-center`}>
-                      <input
-                        type="checkbox"
-                        checked={selectedIds.has(String(row.id))}
-                        onChange={() => setSelectedIds((current) => {
-                          const next = new Set(current);
-                          if (next.has(String(row.id))) next.delete(String(row.id));
-                          else next.add(String(row.id));
-                          return next;
-                        })}
-                        aria-label={`Select record ${row.id}`}
-                        className="h-4 w-4 cursor-pointer accent-violet-600"
-                      />
-                    </td>
-                  )}
                   {columnKeys.map((key) => (
                     <td
                       key={key}
@@ -491,6 +387,8 @@ export default function AdminReportTable({
       </div>
       <RecordDetailsDialog
         record={viewingRecord}
+        records={visibleData.map((row) => row._raw || row)}
+        recordCategory={recordCategory}
         onClose={() => setViewingRecord(null)}
       />
     </div>

@@ -23,6 +23,7 @@ const CATEGORY_LABELS = {
   lactatingwoman: 'Lactating Woman',
   pregnantwoman: 'Pregnant Woman',
   monthlynatal: 'Monthly Natality',
+  monthlyreport: 'Monthly Report',
 };
 const FIELD_LABELS = {
   head: 'Household Head',
@@ -133,7 +134,7 @@ export async function recordInformationChange({
   actorRole,
 }) {
   const changes = getActivityChanges(before, after);
-  if (!changes.length) return null;
+  if (!changes.length && action !== 'deleted') return null;
 
   try {
     const actor = await getCurrentActor(actorRole);
@@ -207,15 +208,33 @@ export async function syncPendingActivityLogs() {
   return { synced, errors };
 }
 
-export async function loadRecordActivityLogs(limit = 100) {
-  const { data, error } = await supabase
+export async function loadRecordActivityLogs(options = {}) {
+  const { month, limit = 1000 } = typeof options === 'number' ? { limit: options } : options;
+  let query = supabase
     .from(ACTIVITY_TABLE)
     .select('id, actor_user_id, actor_name, actor_role, category, action, record_id, field_changes, created_at')
-    .order('created_at', { ascending: false })
-    .limit(limit);
+    .order('created_at', { ascending: false });
+
+  const monthMatch = String(month || '').match(/^(\d{4})-(\d{2})$/);
+  if (monthMatch) {
+    const year = Number(monthMatch[1]);
+    const monthNumber = Number(monthMatch[2]);
+    if (monthNumber >= 1 && monthNumber <= 12) {
+      query = query
+        .gte('created_at', new Date(year, monthNumber - 1, 1).toISOString())
+        .lt('created_at', new Date(year, monthNumber, 1).toISOString());
+    }
+  }
+
+  const { data, error } = await query.limit(limit);
   if (error) throw new Error(error.message);
 
-  const pending = readPendingActivityLogs();
+  const pending = readPendingActivityLogs().filter((log) => {
+    if (!monthMatch) return true;
+    const date = new Date(log.created_at);
+    return date.getFullYear() === Number(monthMatch[1])
+      && date.getMonth() + 1 === Number(monthMatch[2]);
+  });
   const merged = new Map((data || []).map((log) => [log.id, log]));
   pending.forEach((log) => {
     if (!merged.has(log.id)) merged.set(log.id, { ...log, pending_sync: true });

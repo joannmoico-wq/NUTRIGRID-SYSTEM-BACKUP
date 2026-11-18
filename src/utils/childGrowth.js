@@ -1,4 +1,5 @@
 import { WHO_GROWTH_STANDARDS } from './whoGrowthStandards.js';
+import { WHO_BMI_FOR_AGE_STANDARDS } from './whoBmiForAgeStandards.js';
 
 const DAYS_PER_MONTH = 365.2425 / 12;
 const DAY_IN_MS = 24 * 60 * 60 * 1000;
@@ -87,6 +88,78 @@ function classifyWeightForLengthHeight(zScore) {
   if (zScore > 2) return 'Overweight';
   if (zScore > 1) return 'At risk of overweight';
   return 'Normal';
+}
+
+function classifyBmiForAge(zScore) {
+  if (zScore === null) return 'Not assessed';
+  if (zScore < -3) return 'Severely thin';
+  if (zScore < -2) return 'Thin';
+  if (zScore > 3) return 'Obese';
+  if (zScore > 2) return 'Overweight';
+  if (zScore > 1) return 'At risk of overweight';
+  return 'Normal';
+}
+
+export function calculateWhoBmiForAge({
+  sex,
+  birthday,
+  weighingDate,
+  weightKg,
+  lengthCm,
+  heightCm,
+}) {
+  const birth = parseLocalDate(birthday);
+  const weighing = parseLocalDate(weighingDate);
+  const normalizedSex = String(sex || '').toLowerCase();
+  const standardSex = ['boys', 'boy', 'male', 'm'].includes(normalizedSex)
+    ? 'boys'
+    : ['girls', 'girl', 'female', 'f'].includes(normalizedSex)
+      ? 'girls'
+      : '';
+  const weight = Number(weightKg);
+  if (
+    !birth ||
+    !weighing ||
+    weighing < birth ||
+    !standardSex ||
+    !Number.isFinite(weight) ||
+    weight <= 0
+  ) {
+    return { bmi: '', classification: 'Not assessed' };
+  }
+
+  const fifthBirthday = new Date(birth);
+  fifthBirthday.setFullYear(fifthBirthday.getFullYear() + 5);
+  if (weighing > fifthBirthday) return { bmi: '', classification: 'Not assessed' };
+
+  const completedAgeInMonths = Number(calculateAgeInMonths(birthday, weighingDate));
+  const isUnderTwo = completedAgeInMonths < 24;
+  const measurement = Number(isUnderTwo ? lengthCm : heightCm);
+  const minimumMeasurement = isUnderTwo ? 45 : 65;
+  const maximumMeasurement = isUnderTwo ? 110 : 120;
+  if (
+    !Number.isFinite(measurement) ||
+    measurement < minimumMeasurement ||
+    measurement > maximumMeasurement
+  ) {
+    return { bmi: '', classification: 'Not assessed' };
+  }
+
+  const ageInDays = Math.round(
+    (
+      Date.UTC(weighing.getFullYear(), weighing.getMonth(), weighing.getDate()) -
+      Date.UTC(birth.getFullYear(), birth.getMonth(), birth.getDate())
+    ) / DAY_IN_MS
+  );
+  const lms = interpolateLms(WHO_BMI_FOR_AGE_STANDARDS[standardSex], ageInDays);
+  const bmiValue = weight / ((measurement / 100) ** 2);
+  const zScore = calculateZScore(bmiValue, lms);
+  if (zScore === null) return { bmi: '', classification: 'Not assessed' };
+
+  return {
+    bmi: bmiValue.toFixed(1),
+    classification: classifyBmiForAge(zScore),
+  };
 }
 
 export function calculateWhoGrowthStatuses({

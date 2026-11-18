@@ -34,6 +34,7 @@ import MonthlyReportTable from './MonthlyReportTable';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
 import BnsSearchBar from './BnsSearchBar';
 import AdminTasks from './AdminTasks';
+import BhwAccountsPage from './BhwAccountsPage';
 import AdminReportTable, { ACTIONS_HEAD_CELL, ExpandableNote, ReportHeader, REPORT_META } from './AdminReportTable';
 import InteractiveMapComponent from './InteractiveMapComponent';
 import AdminDocuments from './AdminDocuments';
@@ -56,8 +57,6 @@ import {
   Baby,
   Moon,
   Sun,
-  UserCircle,
-  KeyRound,
   Download,
   ChevronLeft,
   ChevronRight,
@@ -276,7 +275,6 @@ function getNutritionCareNeeds(records) {
 const AdminHeader = ({
   title,
   darkMode,
-  adminName,
   searchTerm,
   setTabSearchTerm,
   performSearch,
@@ -288,19 +286,14 @@ const AdminHeader = ({
   setShowNotifications,
   notifications,
   visibleNotificationItems,
+  notificationError,
   onNotificationClick,
   notifRef,
   setDarkMode,
   setActiveTab,
   setSelectedTaskFilter,
   activeTab,
-  adminEmail,
-  onLogout,
 }) => {
-  const [showAccountMenu, setShowAccountMenu] = useState(false);
-  const [accountMessage, setAccountMessage] = useState('');
-  const [accountBusy, setAccountBusy] = useState(false);
-  const accountRef = useRef(null);
   const textColor = darkMode ? THEME.dark.text : THEME.light.text;
   const mutedColor = darkMode ? THEME.dark.muted : THEME.light.muted;
   const iconButtonStyle = {
@@ -308,19 +301,9 @@ const AdminHeader = ({
     border: `1px solid ${darkMode ? THEME.dark.border : THEME.light.border}`,
   };
 
-  useEffect(() => {
-    const closeAccountMenu = (event) => {
-      if (accountRef.current && !accountRef.current.contains(event.target)) {
-        setShowAccountMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', closeAccountMenu);
-    return () => document.removeEventListener('mousedown', closeAccountMenu);
-  }, []);
-
   return (
     <header className="flex min-w-0 flex-wrap items-center justify-between gap-3 px-3 py-3 sm:px-5 sm:py-4 lg:px-8 lg:py-5">
-      <h1 className="text-xl font-bold sm:text-2xl" style={{ color: textColor }}>
+      <h1 className="text-xl font-bold uppercase tracking-wide sm:text-2xl" style={{ color: textColor }}>
         {title || 'WELCOME ADMIN!'}
       </h1>
 
@@ -427,11 +410,16 @@ const AdminHeader = ({
                 </p>
               </div>
               <div className="divide-y" style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}>
-                {visibleNotificationItems.length === 0 ? (
+                {notificationError && (
+                  <p role="alert" className="m-3 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
+                    {notificationError}
+                  </p>
+                )}
+                {visibleNotificationItems.length === 0 && !notificationError ? (
                   <div className="p-4 text-center text-sm" style={{ color: mutedColor }}>
                     No notifications
                   </div>
-                ) : (
+                ) : visibleNotificationItems.length > 0 ? (
                   visibleNotificationItems.map((item) => (
                     <button
                       key={item.id}
@@ -447,82 +435,8 @@ const AdminHeader = ({
                       </p>
                     </button>
                   ))
-                )}
+                ) : null}
               </div>
-            </div>
-          )}
-        </div>
-        <div className="relative" ref={accountRef}>
-          <button
-            type="button"
-            onClick={() => {
-              setShowAccountMenu((open) => !open);
-              setShowNotifications(false);
-              setAccountMessage('');
-            }}
-            className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-sm hover:opacity-95 transition ${
-              showAccountMenu ? 'ring-2 ring-[#8F65FF]/40' : ''
-            }`}
-            style={iconButtonStyle}
-            aria-label="Account options"
-            aria-expanded={showAccountMenu}
-          >
-            <UserCircle size={19} style={{ color: mutedColor }} />
-          </button>
-          {showAccountMenu && (
-            <div
-              className="absolute right-0 z-50 mt-2 w-64 rounded-2xl border p-2 shadow-xl"
-              style={{
-                backgroundColor: darkMode ? THEME.dark.card : THEME.light.card,
-                borderColor: darkMode ? THEME.dark.border : THEME.light.border,
-              }}
-            >
-              <p className="truncate px-3 py-2 text-xs" style={{ color: mutedColor }}>{adminEmail}</p>
-              <button
-                type="button"
-                disabled={accountBusy || !adminEmail}
-                onClick={async () => {
-                  setAccountBusy(true);
-                  setAccountMessage('');
-                  try {
-                    const { error } = await supabase.auth.resetPasswordForEmail(adminEmail);
-                    if (error) throw new Error(error.message);
-                    setAccountMessage('Password reset instructions sent to your email.');
-                  } catch (error) {
-                    console.error('Could not send admin password reset:', error);
-                    setAccountMessage(`Could not send reset email: ${error.message}`);
-                  } finally {
-                    setAccountBusy(false);
-                  }
-                }}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm hover:bg-violet-50 disabled:opacity-60"
-                style={{ color: textColor }}
-              >
-                <KeyRound size={16} /> Reset password
-              </button>
-              <button
-                type="button"
-                disabled={accountBusy}
-                onClick={async () => {
-                  if (!window.confirm('Permanently delete this approved admin account? This cannot be undone.')) return;
-                  setAccountBusy(true);
-                  setAccountMessage('');
-                  try {
-                    const { error } = await supabase.functions.invoke('delete-own-account');
-                    if (error) throw new Error(error.message);
-                    await onLogout?.();
-                  } catch (error) {
-                    console.error('Could not delete admin account:', error);
-                    setAccountMessage(`Account deletion failed: ${error.message}`);
-                  } finally {
-                    setAccountBusy(false);
-                  }
-                }}
-                className="flex w-full items-center gap-2 rounded-xl px-3 py-2.5 text-left text-sm text-red-700 hover:bg-red-50 disabled:opacity-60"
-              >
-                <Trash2 size={16} /> Delete account
-              </button>
-              {accountMessage && <p role="status" className="px-3 py-2 text-xs text-violet-700">{accountMessage}</p>}
             </div>
           )}
         </div>
@@ -534,6 +448,20 @@ const AdminHeader = ({
 function getActivityActorDisplayName(actorName) {
   const name = String(actorName || '').replace(/^BHW\s+/i, '').trim();
   return name || 'Field Worker';
+}
+
+function isBhwOrAdminActor(actorRole) {
+  return ['admin', 'field_worker', 'bhw'].includes(String(actorRole || '').toLowerCase());
+}
+
+function matchesActivityActorFilter(log, selectedActorType, currentUserId) {
+  const role = String(log.actor_role || '').toLowerCase();
+  if (selectedActorType === 'bhw') return ['field_worker', 'bhw'].includes(role);
+  if (selectedActorType === 'admin') return role === 'admin';
+  if (selectedActorType === 'mine') {
+    return String(log.actor_user_id || '') === String(currentUserId || '');
+  }
+  return isBhwOrAdminActor(role);
 }
 
 function ActivityLogsView({
@@ -558,9 +486,7 @@ function ActivityLogsView({
   const visibleLogs = logs.filter((log) => {
     const action = String(log.action || 'edited').toLowerCase();
     if (actionFilter !== 'all' && action !== actionFilter) return false;
-    const isBhw = ['field_worker', 'bhw'].includes(String(log.actor_role || '').toLowerCase());
-    if (selectedActorType === 'bhw' && !isBhw) return false;
-    if (selectedActorType === 'mine' && String(log.actor_user_id || '') !== String(currentUserId || '')) return false;
+    if (!matchesActivityActorFilter(log, selectedActorType, currentUserId)) return false;
     const date = new Date(log.created_at);
     if (Number.isNaN(date.getTime())) return false;
     if (`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` !== selectedMonth) {
@@ -587,9 +513,8 @@ function ActivityLogsView({
   return (
     <section className="space-y-2">
       <div className="flex w-full flex-col gap-2 border-b px-3 py-2.5" style={{ borderColor: darkMode ? THEME.dark.border : THEME.light.border }}>
-        <h2 className={`text-sm font-bold uppercase ${darkMode ? 'text-white' : 'text-gray-900'}`}>Activity Logs</h2>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <div className="w-full min-w-0 flex-1 sm:min-w-[17rem] sm:max-w-[30rem]">
+          <div className="w-full min-w-0 flex-1 sm:min-w-[17rem] sm:max-w-[32rem]">
             <BnsSearchBar
               query={searchQuery}
               onSearch={onSearch}
@@ -607,7 +532,7 @@ function ActivityLogsView({
           </div>
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
             <label className="relative w-48 flex-none">
-              <span className="sr-only">FILTER ACTIVITY BY BHW OR USER</span>
+              <span className="sr-only">FILTER ACTIVITY BY BHW OR ADMIN</span>
               <select
                 value={selectedActorType}
                 onChange={(event) => onActorTypeChange(event.target.value)}
@@ -617,8 +542,8 @@ function ActivityLogsView({
                     : 'border-gray-300 bg-white text-gray-800'
                 }`}
               >
-                <option value="bhw">BHW MODIFIED</option>
-                <option value="mine">USER REVISED</option>
+                <option value="bhw">BHW</option>
+                <option value="admin">ADMIN</option>
               </select>
               <ChevronDown
                 size={15}
@@ -682,14 +607,14 @@ function ActivityLogsView({
             return (
               <article
                 key={log.id}
-                className={`rounded-xl border p-2.5 ${darkMode ? 'border-slate-700 bg-[#26263B]' : 'border-[#E8DCEF] bg-white'}`}
+                className={`rounded-xl border p-3 ${darkMode ? 'border-slate-700 bg-[#26263B]' : 'border-[#E8DCEF] bg-white'}`}
               >
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div>
-                    <h3 className={`text-xs font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
+                    <h3 className={`text-sm font-semibold ${darkMode ? 'text-white' : 'text-gray-900'}`}>
                       {String(log.action || 'edited').toUpperCase()} BY {getActivityActorDisplayName(log.actor_name).toUpperCase()} · {getActivityCategoryLabel(log.category).toUpperCase()}
                     </h3>
-                    <p className={`mt-0.5 text-[10px] ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
+                    <p className={`mt-0.5 text-xs ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
                       RECORD {log.record_id} · {new Date(log.created_at).toLocaleString()}
                       {log.pending_sync ? ' · Waiting to sync' : ''}
                     </p>
@@ -698,7 +623,7 @@ function ActivityLogsView({
                 {changes.length > 0 && (
                   <ul className={`mt-1 divide-y ${darkMode ? 'divide-slate-700' : 'divide-gray-100'}`}>
                     {changes.map((change, index) => (
-                      <li key={`${log.id}-${change.field || index}`} className="grid grid-cols-[minmax(5rem,0.4fr)_minmax(0,1fr)] gap-1 py-1 text-[11px]">
+                      <li key={`${log.id}-${change.field || index}`} className="grid grid-cols-[minmax(5rem,0.4fr)_minmax(0,1fr)] gap-2 py-1.5 text-sm">
                         <span className={`font-semibold ${darkMode ? 'text-slate-200' : 'text-gray-700'}`}>
                           {change.label || change.field}
                         </span>
@@ -724,6 +649,7 @@ function ActivityLogsPage({
   error,
   darkMode,
   currentUserId,
+  onLoadMonth,
 }) {
   const [selectedMonth, setSelectedMonth] = useState(() => {
     const now = new Date();
@@ -734,11 +660,13 @@ function ActivityLogsPage({
   const [actionFilter, setActionFilter] = useState('all');
   const [selectedActorType, setSelectedActorType] = useState('bhw');
 
-  const actorFilteredLogs = logs.filter((log) => (
-    (selectedActorType === 'bhw'
-      ? ['field_worker', 'bhw'].includes(String(log.actor_role || '').toLowerCase())
-      : String(log.actor_user_id || '') === String(currentUserId || ''))
-  ));
+  useEffect(() => {
+    if (onLoadMonth) void onLoadMonth(selectedMonth);
+  }, [onLoadMonth, selectedMonth]);
+
+  const actorFilteredLogs = logs.filter((log) =>
+    matchesActivityActorFilter(log, selectedActorType, currentUserId)
+  );
   const searchResults = searchQuery.trim()
     ? actorFilteredLogs
       .filter((log) => {
@@ -796,82 +724,6 @@ function ActivityLogsPage({
         standalone
       />
     </div>
-  );
-}
-
-function BhwAccountsPage({ darkMode }) {
-  const [accounts, setAccounts] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const surfaceClass = darkMode
-    ? 'border-[#67445F] bg-[#26263B] text-slate-100'
-    : 'border-[#E8C4F0] bg-white text-gray-800';
-
-  const loadAccounts = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const { data, error: requestError } = await supabase.rpc('get_approved_bhws');
-      if (requestError) throw new Error(requestError.message);
-      setAccounts((data || []).slice().sort((left, right) =>
-        (left.full_name || left.email || '').localeCompare(right.full_name || right.email || '')
-      ));
-    } catch (loadError) {
-      console.error('Could not load approved BHW accounts:', loadError);
-      setError(`Could not load BHW accounts: ${loadError.message}`);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadAccounts();
-  }, []);
-
-  return (
-    <section className={`mt-4 overflow-hidden rounded-2xl border ${surfaceClass}`}>
-      <header className="flex flex-wrap items-center justify-between gap-3 border-b border-inherit px-4 py-3">
-        <h2 className="text-sm font-bold">BHW ACCOUNTS</h2>
-        <button
-          type="button"
-          onClick={() => void loadAccounts()}
-          disabled={loading}
-          className="rounded-full border border-[#E8DCEF] px-4 py-2 text-xs font-semibold uppercase disabled:opacity-50"
-        >
-          Refresh
-        </button>
-      </header>
-      {error ? (
-        <p role="alert" className="m-4 rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          {error}
-        </p>
-      ) : loading ? (
-        <p className="p-5 text-center text-sm">Loading BHW accounts…</p>
-      ) : accounts.length === 0 ? (
-        <p className="p-5 text-center text-sm">No approved BHW accounts found.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[32rem] text-left text-sm">
-            <thead className={darkMode ? 'bg-[#302338] text-slate-300' : 'bg-[#FAF5FF] text-gray-600'}>
-              <tr>
-                <th className="px-4 py-3 text-xs font-bold uppercase">Name</th>
-                <th className="px-4 py-3 text-xs font-bold uppercase">Email</th>
-                <th className="px-4 py-3 text-xs font-bold uppercase">Account ID</th>
-              </tr>
-            </thead>
-            <tbody>
-              {accounts.map((account) => (
-                <tr key={account.id} className="border-t border-[#E8DCEF]">
-                  <td className="px-4 py-3 font-semibold">{account.full_name || '—'}</td>
-                  <td className="px-4 py-3">{account.email || '—'}</td>
-                  <td className="px-4 py-3 font-mono text-xs">{account.id || '—'}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -1012,7 +864,7 @@ function MonthYearPicker({ value, onChange, min, max, darkMode = false, compact 
   );
 }
 
-const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', currentUserId }) => {
+const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [hasOpenedTasks, setHasOpenedTasks] = useState(false);
   const [purokPeriod, setPurokPeriod] = useState(() => {
@@ -1037,7 +889,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [selectedTaskFilter, setSelectedTaskFilter] = useState(null);
   const [showNotifications, setShowNotifications] = useState(false);
+  const [bhwDeletionRequests, setBhwDeletionRequests] = useState([]);
+  const [bhwDeletionRequestError, setBhwDeletionRequestError] = useState('');
+  const [deletionRequestTarget, setDeletionRequestTarget] = useState(null);
+  const [deletionConfirmationBusy, setDeletionConfirmationBusy] = useState(false);
+  const [deletionConfirmationError, setDeletionConfirmationError] = useState('');
   const [activityLogs, setActivityLogs] = useState([]);
+  const [activityLogsForMonth, setActivityLogsForMonth] = useState([]);
   const [activityLogLoading, setActivityLogLoading] = useState(true);
   const [activityLogError, setActivityLogError] = useState('');
   const [readNotificationIds, setReadNotificationIds] = useState(() => {
@@ -1085,11 +943,27 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   };
   const [scheduledVisitPurok, setScheduledVisitPurok] = useState('');
   const notifRef = useRef(null);
+  const currentActivityMonth = (() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  })();
+  const activityLogMonthRef = useRef(currentActivityMonth);
 
-  const refreshActivityLogs = useCallback(async () => {
+  const refreshActivityLogs = useCallback(async (month) => {
+    const requestedMonth = typeof month === 'string' && /^\d{4}-\d{2}$/.test(month)
+      ? month
+      : null;
+    if (requestedMonth) {
+      activityLogMonthRef.current = requestedMonth;
+      setActivityLogLoading(true);
+    }
     try {
-      const logs = await loadRecordActivityLogs();
+      const [logs, monthLogs] = await Promise.all([
+        loadRecordActivityLogs(),
+        loadRecordActivityLogs({ month: activityLogMonthRef.current }),
+      ]);
       setActivityLogs(logs);
+      setActivityLogsForMonth(monthLogs);
       setActivityLogError('');
     } catch (error) {
       console.error('Could not load record activity logs:', error);
@@ -1102,6 +976,34 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       setActivityLogLoading(false);
     }
   }, []);
+
+  const refreshBhwDeletionRequests = useCallback(async () => {
+    try {
+      const { data, error } = await supabase.rpc('get_pending_bhw_account_deletion_requests');
+      if (error) throw error;
+      setBhwDeletionRequests(Array.isArray(data) ? data : []);
+      setBhwDeletionRequestError('');
+    } catch (error) {
+      console.error('Could not load pending BHW account deletion requests:', error);
+      const message = error?.message || 'Unknown Supabase error.';
+      setBhwDeletionRequestError(
+        message.includes('get_pending_bhw_account_deletion_requests') ||
+        message.includes('bhw_account_deletion_requests')
+          ? 'Deletion-request notifications need Supabase setup. Run supabase-bhw-account-management.sql and deploy the account deletion Edge Functions.'
+          : `Could not load BHW deletion requests: ${message}`
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    void refreshBhwDeletionRequests();
+    const interval = window.setInterval(() => void refreshBhwDeletionRequests(), 30000);
+    window.addEventListener('nutrigrid-bhw-accounts-changed', refreshBhwDeletionRequests);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('nutrigrid-bhw-accounts-changed', refreshBhwDeletionRequests);
+    };
+  }, [refreshBhwDeletionRequests]);
 
   useEffect(() => {
     void refreshActivityLogs();
@@ -1149,6 +1051,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   };
 
   const handleNotificationClick = (item) => {
+    if (item.deletionRequest) {
+      setDeletionRequestTarget(item.deletionRequest);
+      setDeletionConfirmationError('');
+      setShowNotifications(false);
+      return;
+    }
     markNotificationsRead(item.notificationIds || [item.id]);
     setShowNotifications(false);
     if (item.recordId) {
@@ -1597,7 +1505,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
   }, [activeTab, searchTerm]);
 
   const notificationItems = useMemo(() => {
-    const items = [];
+    const items = bhwDeletionRequests.map((request) => ({
+      id: `bhw-deletion-request:${request.id}`,
+      label: 'BHW account deletion request',
+      detail: `${request.full_name || request.email} · Tap to review and confirm`,
+      deletionRequest: request,
+    }));
     [
       { key: STORAGE_KEYS.residents, data: households, tab: 'residents' },
       { key: STORAGE_KEYS.environmental, data: environmentalSanitationData, tab: 'environmentalSanitation' },
@@ -1660,15 +1573,50 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       });
     }
     return items;
-  }, [households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, readNotificationIds, newRecordNotificationIds]);
+  }, [bhwDeletionRequests, households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, readNotificationIds, newRecordNotificationIds]);
 
   const visibleNotificationItems = notificationItems.filter(
     (item) =>
-      item.notificationIds
+      item.deletionRequest
+        ? true
+        : item.notificationIds
         ? item.notificationIds.some((id) => !readNotificationIds.includes(id))
         : !readNotificationIds.includes(item.id)
   );
   const notifications = visibleNotificationItems.length;
+
+  const confirmBhwAccountDeletion = async () => {
+    if (!deletionRequestTarget) return;
+    setDeletionConfirmationBusy(true);
+    setDeletionConfirmationError('');
+    try {
+      const { data, error } = await supabase.functions.invoke('admin-delete-bhw-account', {
+        body: { request_id: deletionRequestTarget.id },
+      });
+      if (error) {
+        let errorMessage = error.message || 'The deletion request could not be completed.';
+        const context = error.context;
+        if (context && typeof context.clone === 'function') {
+          try {
+            const body = await context.clone().json();
+            if (body?.error) errorMessage = body.error;
+          } catch (parseError) {
+            console.error('Could not read the BHW deletion error response:', parseError);
+          }
+        }
+        throw new Error(errorMessage);
+      }
+      if (!data?.deleted) throw new Error('The server did not confirm the BHW account deletion.');
+      setBhwDeletionRequests((current) => current.filter((request) => request.id !== deletionRequestTarget.id));
+      setDeletionRequestTarget(null);
+      await refreshBhwDeletionRequests();
+    } catch (error) {
+      console.error('Could not confirm BHW account deletion:', error);
+      setDeletionConfirmationError(error.message || 'The deletion request could not be completed.');
+    } finally {
+      setDeletionConfirmationBusy(false);
+    }
+  };
 
   // All figures below come from saved local records. Nothing is hardcoded.
   const stats = useMemo(() => {
@@ -1982,7 +1930,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
   const adminDelete = async (storageKey, id, remoteRecord) => {
     const category = categoryIdForStorageKey(storageKey);
-    if (!category || category === 'monthlyreport') {
+    if (!category) {
       deleteRecordById(storageKey, id);
       refreshData();
       return;
@@ -1990,6 +1938,19 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
 
     const localRecord = getRecords(storageKey).find((record) => String(record.id) === String(id));
     const recordToDelete = localRecord || remoteRecord;
+    if (category === 'monthlyreport') {
+      if (recordToDelete) {
+        void recordInformationDelete({
+          category,
+          record: recordToDelete,
+          actorRole: 'admin',
+        });
+      }
+      deleteRecordById(storageKey, id);
+      refreshData();
+      return;
+    }
+
     if (recordToDelete) {
       void recordInformationDelete({
         category,
@@ -2027,55 +1988,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       });
   };
 
-  const adminDeleteMany = async (storageKey, ids, dataset) => {
-    const category = categoryIdForStorageKey(storageKey);
-    if (!category || category === 'monthlyreport') return;
-
-    ids.forEach((id) => {
-      const localRecord = getRecords(storageKey).find((record) => String(record.id) === String(id));
-      const remoteRecord = dataset.find((record) => String(record.id) === String(id))?._raw;
-      const recordToDelete = localRecord || remoteRecord;
-      if (recordToDelete) {
-        void recordInformationDelete({
-          category,
-          record: recordToDelete,
-          actorRole: 'admin',
-        });
-      }
-      queueRecordDeletion(
-        category,
-        id,
-        Boolean(
-          localRecord?.synced ||
-          remoteRecord?.synced ||
-          String(remoteRecord?.status || '').toLowerCase() === 'synced'
-        ),
-        localRecord?.created_by_user_id || currentUserId
-      );
-      deleteRecordById(storageKey, id);
-    });
-    refreshData();
-
-    if (!navigator.onLine) {
-      alert(`${ids.length} record(s) deleted on this device. The deletions will sync when you are back online.`);
-      return;
-    }
-
-    try {
-      const syncResult = await syncPendingRecordDeletions({ includeShared: true });
-      if (syncResult.errors?.length || syncResult.skipped) {
-        const details = syncResult.errors?.join('\n') || `Sync skipped: ${syncResult.skipped}`;
-        console.error('Record deletions are saved locally and waiting to sync:', details);
-        alert('Records deleted locally, but some deletions are still waiting to sync. Check the connection and sign-in, then retry.');
-        return;
-      }
-      setAdminDataStatus('loaded');
-    } catch (syncError) {
-      console.error('Records were deleted locally, but could not be synced:', syncError);
-      alert(`Records deleted locally. Supabase sync will retry when possible: ${syncError.message || 'request failed'}`);
-    }
-  };
-
   const openCategoryForm = (category, raw = null) => {
     setAdminEditingRecord(raw);
     setAdminFormCategory(category);
@@ -2110,11 +2022,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       'Are you sure you want to delete this record? This cannot be undone.',
       () => adminDelete(storageKey, id, dataset.find((row) => row.id === id)?._raw),
       { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
-    ),
-    onBulkDelete: (ids) => requestAdminConfirmation(
-      `Are you sure you want to delete ${ids.length} selected records? This cannot be undone.`,
-      () => adminDeleteMany(storageKey, ids, dataset),
-      { title: 'Delete selected records', confirmLabel: 'Delete records', destructive: true }
     ),
   });
 
@@ -2839,7 +2746,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             }}
             aria-expanded={settingsExpanded}
             className={`relative flex w-full flex-shrink-0 items-center rounded-2xl transition-all ${
-              isExpanded ? 'gap-3 px-4 py-2.5 text-base font-medium' : 'justify-center px-0 py-2.5 text-base font-medium'
+              isExpanded ? 'gap-3 px-4 py-3 text-[17px] font-semibold' : 'justify-center px-0 py-3 text-[17px] font-semibold'
             }`}
             style={
               ['users', 'activityLogs'].includes(activeTab)
@@ -2849,7 +2756,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             title={!isExpanded ? 'Settings' : undefined}
             aria-label="Settings"
           >
-            <Settings size={24} strokeWidth={2.2} className="flex-shrink-0" />
+            <Settings size={26} strokeWidth={2.2} className="flex-shrink-0" />
             {isExpanded && (
               <>
                 <span className="flex-1 text-left">Settings</span>
@@ -2873,7 +2780,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                       if (id === 'activityLogs') markActivityLogsRead();
                     }}
                     aria-current={isActive ? 'page' : undefined}
-                    className={`relative flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-xs font-semibold transition ${
+                    className={`relative flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-semibold transition ${
                       isActive
                         ? 'bg-violet-100 text-violet-800'
                         : darkMode
@@ -2881,7 +2788,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                           : 'text-gray-700 hover:bg-white/60'
                     }`}
                   >
-                    <Icon size={16} className="shrink-0" />
+                    <Icon size={18} className="shrink-0" />
                     <span className="truncate">{label}</span>
                     {badge > 0 && (
                       <span className="ml-auto rounded-full bg-red-600 px-1.5 text-[10px] font-bold leading-5 text-white">
@@ -3390,9 +3297,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
       <AdminReportTable
         darkMode={darkMode}
         data={filteredResidentHouseholds}
-        enableRowSelection
-        showExportSelected={false}
-        selectionFileName="nutrigrid-residents-selected"
         allowView
         scrollToRecordId={notificationTarget?.tab === 'residents' ? notificationTarget.rowId : undefined}
         importAction={
@@ -3552,9 +3456,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredInfantFeeding}
-      enableRowSelection
-      showExportSelected={false}
-      selectionFileName="nutrigrid-infant-feeding-selected"
       allowView
       scrollToRecordId={notificationTarget?.tab === 'infantFeeding' ? notificationTarget.rowId : undefined}
       importAction={
@@ -3648,9 +3549,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredLactating}
-      enableRowSelection
-      showExportSelected={false}
-      selectionFileName="nutrigrid-lactating-women-selected"
       allowView
       scrollToRecordId={notificationTarget?.tab === 'lactatingWoman' ? notificationTarget.rowId : undefined}
       importAction={
@@ -3752,9 +3650,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredPregnant}
-      enableRowSelection
-      showExportSelected={false}
-      selectionFileName="nutrigrid-pregnant-women-selected"
       allowView
       scrollToRecordId={notificationTarget?.tab === 'pregnantWoman' ? notificationTarget.rowId : undefined}
       importAction={
@@ -3904,9 +3799,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
     <AdminReportTable
       darkMode={darkMode}
       data={filteredNatality}
-      enableRowSelection
-      showExportSelected={false}
-      selectionFileName="nutrigrid-monthly-natality-selected"
+      recordCategory="monthlynatal"
       allowView
       scrollToRecordId={notificationTarget?.tab === 'monthlyNatality' ? notificationTarget.rowId : undefined}
       importAction={
@@ -4017,6 +3910,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
         async () => {
           try {
             await deleteMonthlyReportLine(line);
+            void recordInformationDelete({
+              category: 'monthlyreport',
+              record: line,
+              actorRole: 'admin',
+            });
             deleteRecordById(STORAGE_KEYS.monthlyReport, line.id);
             refreshData();
           } catch (error) {
@@ -4151,7 +4049,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             title={pageTitles[activeTab]}
             activeTab={activeTab}
             darkMode={darkMode}
-            adminName={adminName}
             searchTerm={searchTerm}
             setTabSearchTerm={setTabSearchTerm}
             performSearch={performSearch}
@@ -4163,13 +4060,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             setShowNotifications={setShowNotifications}
             notifications={notifications}
             visibleNotificationItems={visibleNotificationItems}
+            notificationError={bhwDeletionRequestError}
             onNotificationClick={handleNotificationClick}
             notifRef={notifRef}
             setDarkMode={setDarkMode}
             setActiveTab={setActiveTab}
             setSelectedTaskFilter={setSelectedTaskFilter}
-            adminEmail={adminEmail}
-            onLogout={onLogout}
           />
           <div className="min-w-0 flex-1 overflow-y-auto px-3 pb-5 sm:px-5 sm:pb-6 lg:px-8 lg:pb-8">
             {adminDataStatus === 'loading' && (
@@ -4203,11 +4099,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
             )}
             {activeTab === 'activityLogs' && (
               <ActivityLogsPage
-                logs={activityLogs}
+                logs={activityLogsForMonth}
                 loading={activityLogLoading}
                 error={activityLogError}
                 darkMode={darkMode}
                 currentUserId={currentUserId}
+                onLoadMonth={refreshActivityLogs}
               />
             )}
             {(activeTab === 'tasks' || hasOpenedTasks) && (
@@ -4330,6 +4227,62 @@ const AdminDashboard = ({ onLogout, adminName: profileName, adminEmail = '', cur
                 )}
                 onCancel={closeCategoryForm}
               />
+            </div>
+          </section>
+        </div>
+      )}
+      {deletionRequestTarget && (
+        <div
+          className="fixed inset-0 z-[2200] flex items-center justify-center bg-slate-950/55 p-4"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !deletionConfirmationBusy) {
+              setDeletionRequestTarget(null);
+              setDeletionConfirmationError('');
+            }
+          }}
+        >
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bhw-deletion-confirmation-title"
+            className="w-full max-w-lg rounded-2xl border border-red-100 bg-white p-5 text-gray-900 shadow-2xl sm:p-6"
+          >
+            <h2 id="bhw-deletion-confirmation-title" className="text-lg font-extrabold text-red-700">
+              Confirm BHW account deletion
+            </h2>
+            <p className="mt-2 text-sm text-gray-600">
+              <strong>{deletionRequestTarget.full_name || 'This BHW'}</strong>
+              {deletionRequestTarget.email ? ` (${deletionRequestTarget.email})` : ''} requested account deletion.
+              Confirming removes their sign-in and profile.
+            </p>
+            <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-900">
+              Household, health, task, and activity records will be retained in Supabase and remain available to Admin.
+            </p>
+            {deletionConfirmationError && (
+              <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+                {deletionConfirmationError}
+              </p>
+            )}
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeletionRequestTarget(null);
+                  setDeletionConfirmationError('');
+                }}
+                disabled={deletionConfirmationBusy}
+                className="rounded-xl bg-gray-100 px-4 py-2.5 text-sm font-semibold text-gray-700 hover:bg-gray-200 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmBhwAccountDeletion()}
+                disabled={deletionConfirmationBusy}
+                className="rounded-xl bg-red-700 px-4 py-2.5 text-sm font-bold text-white hover:bg-red-800 disabled:opacity-50"
+              >
+                {deletionConfirmationBusy ? 'Deleting…' : 'Confirm Deletion'}
+              </button>
             </div>
           </section>
         </div>

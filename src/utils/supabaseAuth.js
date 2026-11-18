@@ -11,6 +11,7 @@ function cacheApprovedProfile(user, profile) {
     fullName: profile.full_name || user.user_metadata?.full_name || '',
     age: profile.age ?? user.user_metadata?.age ?? null,
     role: profile.role,
+    assignedPurok: profile.assigned_purok || '',
     approved: true,
   };
   try {
@@ -42,6 +43,7 @@ function toCachedUserData(profile) {
     fullName: profile.fullName || '',
     age: profile.age ?? null,
     role: profile.role,
+    assignedPurok: profile.assignedPurok || '',
   };
 }
 
@@ -68,7 +70,7 @@ function requireEmail(contact) {
 async function loadProfile(userId) {
   const { data, error } = await supabase
     .from('profiles')
-    .select('email, full_name, age, role, approved')
+    .select('email, full_name, age, role, approved, assigned_purok')
     .eq('id', userId)
     .single();
   if (error) throw new Error(`Could not load your account: ${error.message}`);
@@ -88,6 +90,7 @@ function toUserData(user, profile) {
     fullName: profile.full_name || user.user_metadata?.full_name || '',
     age: profile.age ?? user.user_metadata?.age ?? null,
     role: profile.role,
+    assignedPurok: profile.assigned_purok || '',
   };
 }
 
@@ -163,6 +166,7 @@ export async function restoreSupabaseSession(existingSession, { allowCachedProfi
       fullName: cachedProfile.fullName,
       age: cachedProfile.age,
       role: cachedProfile.role,
+      assignedPurok: cachedProfile.assignedPurok || '',
     };
   }
   if (!profile.approved) {
@@ -200,7 +204,7 @@ export async function updateSupabaseProfile(currentUser, { fullName, age }) {
 
   const { data, error: readError } = await supabase
     .from('profiles')
-    .select('email, full_name, age, role, approved')
+    .select('email, full_name, age, role, approved, assigned_purok')
     .eq('id', currentUser.id)
     .maybeSingle();
   if (readError) throw new Error(`Could not verify your profile update: ${readError.message}`);
