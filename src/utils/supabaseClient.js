@@ -1,7 +1,12 @@
 import { createClient } from '@supabase/supabase-js';
 
-const url = import.meta.env.VITE_SUPABASE_URL;
-const key = import.meta.env.VITE_SUPABASE_ANON_KEY || import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+const url =
+  import.meta.env.VITE_SUPABASE_URL ||
+  'https://mrfnuaysydeyxlqzzint.supabase.co';
+const key =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  'sb_publishable_Ryv2pQA0tgZe85YSXXgz_g_3eK56vrZ';
 
 if (!url || !key) {
   console.warn('Supabase env vars missing. Check .env.local in the project root.');
