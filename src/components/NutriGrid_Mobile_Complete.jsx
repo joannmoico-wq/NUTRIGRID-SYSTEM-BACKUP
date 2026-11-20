@@ -851,6 +851,18 @@ const RecordsList = ({
           setActiveView={setActiveView}
           purokFilter={purokFilter}
           setPurokFilter={setPurokFilter}
+          excelRecords={allEnvironmentalRecords}
+          excelHeaders={environmentalColumns
+            .filter(([key]) => key !== 'actions')
+            .map(([, label]) => label)}
+          excelRows={adminRecords.map((record) =>
+            environmentalColumns
+              .filter(([key]) => key !== 'actions')
+              .map(([key]) => checkmarkKeys.has(key)
+                ? (record[key] ? '✓' : '')
+                : record[key] ?? '—')
+          )}
+          excelFileName="nutrigrid-environmental-sanitation"
         />
         <div className="px-3 pt-4">
           <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm">

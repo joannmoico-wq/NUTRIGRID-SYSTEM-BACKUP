@@ -871,6 +871,10 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+  const [malnutritionPeriod, setMalnutritionPeriod] = useState(() => {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  });
   const [monthlyTrendYear, setMonthlyTrendYear] = useState(() => {
     const reportMonthMatch = String(REPORT_META.monthYear || '').match(/^([A-Za-z]+)\s+(\d{4})$/);
     return reportMonthMatch ? reportMonthMatch[2] : String(new Date().getFullYear());
@@ -1854,7 +1858,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
   const activeMonthlyTrend = monthlyTrendData.length > 0;
 
   const malnutritionStatusData = (() => {
-    const currentMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`;
+    const currentMonth = malnutritionPeriod;
     const malnutritionByMonth = new Map();
     const firstMalnutritionMonthByChild = new Map();
 
@@ -2941,9 +2945,19 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-6 min-h-[250px] rounded-3xl p-4" style={dashCardStyle}>
-          <p className="text-base font-bold mb-2" style={{ color: titleColor }}>
-            New vs. Repeat Malnutrition Cases
-          </p>
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="text-base font-bold" style={{ color: titleColor }}>
+              New vs. Repeat Malnutrition Cases
+            </p>
+            <MonthYearPicker
+              value={malnutritionPeriod}
+              onChange={setMalnutritionPeriod}
+              max={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`}
+              darkMode={darkMode}
+              compact
+              label="Filter malnutrition cases by month and year"
+            />
+          </div>
           <div className="flex min-h-[195px] items-center justify-center gap-6">
             <div className="h-[190px] w-[190px] shrink-0">
               <ResponsiveContainer width="100%" height="100%">
@@ -2997,15 +3011,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         <div className={`lg:col-span-6 ${dashCardClass}`} style={dashCardStyle}>
           <div className="mb-3 flex items-center justify-between gap-2">
             <p className="text-base font-bold" style={{ color: titleColor }}>
-              Top 10 Puroks by Households
+              Top 10 Puroks by Households — {new Date(
+                Number(purokPeriod.slice(0, 4)),
+                Number(purokPeriod.slice(5, 7)) - 1,
+                1
+              ).toLocaleDateString('en-PH', { month: 'long', year: 'numeric' }).toUpperCase()}
             </p>
-            <MonthYearPicker
-              value={purokPeriod}
-              onChange={setPurokPeriod}
-              max={`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`}
-              darkMode={darkMode}
-              label="Filter Top 10 Puroks by month and year"
-            />
           </div>
           {purokData.length === 0 ? (
             <div className="min-h-[150px]">

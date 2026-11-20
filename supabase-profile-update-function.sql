@@ -1,3 +1,17 @@
+alter table public.profiles
+  add column if not exists full_name text,
+  add column if not exists age integer;
+
+drop policy if exists nutrigrid_profiles_update_own on public.profiles;
+create policy nutrigrid_profiles_update_own
+  on public.profiles
+  for update
+  to authenticated
+  using (id = (select auth.uid()))
+  with check (id = (select auth.uid()));
+
+grant update (full_name, age) on public.profiles to authenticated;
+
 CREATE OR REPLACE FUNCTION public.update_own_profile(
   p_full_name text,
   p_age integer
