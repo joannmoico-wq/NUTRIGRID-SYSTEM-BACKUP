@@ -88,6 +88,24 @@ where not exists (
   where p.id = u.id
 );
 
+-- Remove duplicate profile rows per account. auth.users.id is authoritative.
+delete from public.profiles duplicate
+where duplicate.ctid in (
+  select duplicate_ctid
+  from (
+    select ctid as duplicate_ctid,
+           row_number() over (
+             partition by lower(email)
+             order by
+               (approved is true) desc,
+               (lower(role) = 'field_worker') desc,
+               ctid
+           ) duplicate_rank
+    from public.profiles
+  ) ranked
+  where duplicate_rank > 1
+);
+
 create table if not exists public.allowed_emails (
   email text primary key
 );
@@ -193,6 +211,66 @@ $$;
 
 revoke all on function public.get_approved_bhws() from public;
 grant execute on function public.get_approved_bhws() to authenticated;
+
+drop function if exists public.admin_update_bhw_assigned_purok(uuid, text);
+create or replace function public.admin_update_bhw_assigned_purok(
+  p_user_id uuid,
+  p_assigned_purok text
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  updated_profile public.profiles%rowtype;
+begin
+  if not public.nutrigrid_is_admin() then
+    raise exception 'Only an approved admin can update BHW accounts.';
+  end if;
+
+  if p_assigned_purok is null
+     or p_assigned_purok !~ '^Purok ([1-5]|[6-8][AB]|9|10)$' then
+    raise exception 'Choose Purok 1 to 5, 6A, 6B, 7A, 7B, 8A, 8B, 9, or 10.';
+  end if;
+
+  update public.profiles
+  set assigned_purok = p_assigned_purok
+  where id = p_user_id
+    and lower(role) = 'field_worker'
+    and approved is true
+  returning * into updated_profile;
+
+  if not found then
+    raise exception 'Approved BHW account was not found.';
+  end if;
+
+  return jsonb_build_object(
+    'id', updated_profile.id,
+    'full_name', updated_profile.full_name,
+    'email', updated_profile.email,
+    'username', updated_profile.username,
+    'contact_number', updated_profile.contact_number,
+    'designation', updated_profile.designation,
+    'assigned_purok', updated_profile.assigned_purok,
+    'approved', updated_profile.approved,
+    'created_at', (
+      select au.created_at
+      from auth.users au
+      where au.id = updated_profile.id
+    ),
+    'created_by_name', (
+      select creator.full_name
+      from public.profiles creator
+      where creator.id = updated_profile.created_by_user_id
+    )
+  );
+end
+$$;
+
+revoke all on function public.admin_update_bhw_assigned_purok(uuid, text) from public, anon;
+grant execute on function public.admin_update_bhw_assigned_purok(uuid, text) to authenticated;
 
 drop function if exists public.get_bhw_activity_summaries();
 create function public.get_bhw_activity_summaries()
