@@ -346,7 +346,7 @@ create or replace function public.admin_update_bhw_assigned_purok(
 )
 returns jsonb
 language plpgsql
-stable
+volatile
 security definer
 set search_path = public
 as $$
@@ -470,34 +470,27 @@ stable
 security definer
 set search_path = public
 as $$
-  with month_bounds as (
-    select
-      (substring(p_month from 1 for 7) || '-01')::date as period_start,
-      ((substring(p_month from 1 for 7) || '-01')::date + interval '1 month')::date as period_end
-  ),
-  normalized as (
+  with normalized as (
     select
       case
-        when r.purok ~* '^Purok\\s*[1-9]$'
-          then initcap(r.purok)
-        when r.purok ~* '^[1-9]$'
-          then 'Purok ' || r.purok
+        when trim(r.purok) ~* '^Purok\s*(10|[1-9])$'
+          then 'Purok ' || trim(regexp_replace(trim(r.purok), '^Purok\s*', '', 'i'))
+        when trim(r.purok) ~* '^(10|[1-9])$'
+          then 'Purok ' || trim(r.purok)
         else null
       end as purok_name,
       coalesce(
-        r.visit_date,
-        nullif(r.data->>'visit_date', '')::date,
-        nullif(r.data->>'lastVisit', '')::date,
-        r.created_at::date
-      ) as record_date
+        nullif(r.visit_date::text, ''),
+        nullif(r.data->>'visit_date', ''),
+        nullif(r.data->>'lastVisit', ''),
+        r.created_at::date::text
+      ) as record_date_text
     from public.residents r
   )
   select n.purok_name, count(*)::bigint
   from normalized n
-  cross join month_bounds m
   where n.purok_name is not null
-    and n.record_date >= m.period_start
-    and n.record_date < m.period_end
+    and substring(n.record_date_text from 1 for 7) = substring(p_month from 1 for 7)
   group by n.purok_name
   order by count(*) desc, n.purok_name;
 $$;

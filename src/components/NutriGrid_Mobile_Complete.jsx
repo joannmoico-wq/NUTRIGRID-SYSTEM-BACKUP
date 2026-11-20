@@ -129,7 +129,7 @@ const LEGACY_RECORD_KEYS = {
   pregnantwoman: 'records_pregnant_woman',
 };
 const PWA_READ_NOTIFICATIONS_KEY = 'nutrigrid_pwa_read_notifications';
-const SHARED_PUROK_CACHE_KEY = 'nutrigrid_shared_purok_counts_v2';
+const SHARED_PUROK_CACHE_KEY = 'nutrigrid_shared_purok_counts_v3';
 const SHARED_PUROK_CACHE_TTL_MS = 5 * 60 * 1000;
 const PWA_INITIAL_SYNC_KEY = 'nutrigrid_initial_sync';
 const PWA_VIEW_STATE_KEY_PREFIX = 'nutrigrid_pwa_view_state:';
