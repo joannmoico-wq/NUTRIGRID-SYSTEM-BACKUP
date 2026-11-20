@@ -118,6 +118,38 @@ where p.ctid not in (
   group by id
 );
 
+-- Remove orphaned profile rows and duplicate email rows.
+delete from public.profiles p
+where not exists (
+  select 1
+  from auth.users u
+  where u.id = p.id
+);
+
+delete from public.profiles p
+where p.ctid in (
+  select ranked.ctid
+  from (
+    select
+      candidate.ctid,
+      row_number() over (
+        partition by lower(candidate.email)
+        order by
+          exists (
+            select 1
+            from auth.users u
+            where u.id = candidate.id
+              and lower(u.email) = lower(candidate.email)
+          ) desc,
+          candidate.approved desc,
+          candidate.ctid
+      ) as duplicate_rank
+    from public.profiles candidate
+    where candidate.email is not null
+  ) ranked
+  where ranked.duplicate_rank > 1
+);
+
 create table if not exists public.allowed_emails (
   email text primary key
 );
@@ -138,6 +170,39 @@ and not exists (
 );
 
 grant select on public.allowed_emails to authenticated;
+
+alter table public.profiles
+  add column if not exists fcm_token text;
+
+drop function if exists public.set_my_fcm_token(text);
+create or replace function public.set_my_fcm_token(p_token text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  profile_updated boolean;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication is required.';
+  end if;
+
+  if p_token is not null and octet_length(p_token) > 4096 then
+    raise exception 'Push token is too long.';
+  end if;
+
+  update public.profiles
+  set fcm_token = nullif(trim(p_token), '')
+  where id = auth.uid();
+
+  profile_updated := found;
+  return profile_updated;
+end
+$$;
+
+revoke all on function public.set_my_fcm_token(text) from public, anon;
+grant execute on function public.set_my_fcm_token(text) to authenticated;
 
 create table if not exists public.record_activity_logs (
   id text primary key,
@@ -223,6 +288,56 @@ $$;
 
 revoke all on function public.get_approved_bhws() from public;
 grant execute on function public.get_approved_bhws() to authenticated;
+
+-- Remap migrated record ownership from old project UUIDs to new project UUIDs.
+do $$
+declare
+  table_name text;
+begin
+  foreach table_name in array array[
+    'residents',
+    'environmental_sanitation',
+    'infant_feeding',
+    'lactating_women',
+    'pregnant_women',
+    'monthly_natality'
+  ]
+  loop
+    execute format(
+      'update public.%I r
+       set created_by_user_id = m.new_id
+       from (values
+         (''0b7386d3-7fe1-478a-aa19-1ee04d02a2a3''::uuid, ''1e96c0a4-c6ce-4a9e-a2b5-271ca12faaab''::uuid),
+         (''c4e49c01-7092-4512-bd5a-27d00da22d62''::uuid, ''792022a4-5759-4160-9bc9-30b4343d317a''::uuid),
+         (''8abef1cd-303b-4d47-8a40-22fd4380df2b''::uuid, ''df16969c-061d-442d-ad74-1834c167229f''::uuid),
+         (''ae6a2fc4-4f3e-4aaf-ae25-284a87c32f2e''::uuid, ''3738aaa1-3c42-41db-90fb-7b1ffbbf258d''::uuid),
+         (''a6456fff-49e2-4144-ad28-3566f83d46f7''::uuid, ''f0939257-1204-4941-b0e6-257053b9aedc''::uuid)
+       ) m(old_id, new_id)
+       where r.created_by_user_id = m.old_id',
+      table_name
+    );
+
+    execute format(
+      'update public.%I r
+       set data = jsonb_set(
+         coalesce(r.data, ''{}''::jsonb),
+         ''{created_by_user_id}'',
+         to_jsonb(m.new_id::text),
+         true
+       )
+       from (values
+         (''0b7386d3-7fe1-478a-aa19-1ee04d02a2a3''::uuid, ''1e96c0a4-c6ce-4a9e-a2b5-271ca12faaab''::uuid),
+         (''c4e49c01-7092-4512-bd5a-27d00da22d62''::uuid, ''792022a4-5759-4160-9bc9-30b4343d317a''::uuid),
+         (''8abef1cd-303b-4d47-8a40-22fd4380df2b''::uuid, ''df16969c-061d-442d-ad74-1834c167229f''::uuid),
+         (''ae6a2fc4-4f3e-4aaf-ae25-284a87c32f2e''::uuid, ''3738aaa1-3c42-41db-90fb-7b1ffbbf258d''::uuid),
+         (''a6456fff-49e2-4144-ad28-3566f83d46f7''::uuid, ''f0939257-1204-4941-b0e6-257053b9aedc''::uuid)
+       ) m(old_id, new_id)
+       where r.data->>''created_by_user_id'' = m.old_id::text',
+      table_name
+    );
+  end loop;
+end
+$$;
 
 drop function if exists public.admin_update_bhw_assigned_purok(uuid, text);
 create or replace function public.admin_update_bhw_assigned_purok(
