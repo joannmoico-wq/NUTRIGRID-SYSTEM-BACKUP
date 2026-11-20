@@ -76,7 +76,7 @@ export async function handleReportEmail(request, response) {
 
     const supabaseUrl =
       process.env.VITE_SUPABASE_URL ||
-      'https://wktxqwofonjklruqbpiu.supabase.co';
+      'https://mrfnuaysydeyxlqzzint.supabase.co';
     const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
     const gmailUser = process.env.GMAIL_USER;
     const gmailPassword = process.env.GMAIL_APP_PASS;
