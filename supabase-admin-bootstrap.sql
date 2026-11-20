@@ -1,6 +1,14 @@
 begin;
 
 alter table public.profiles enable row level security;
+grant select on public.profiles to authenticated;
+
+drop policy if exists nutrigrid_profiles_read_own on public.profiles;
+create policy nutrigrid_profiles_read_own
+  on public.profiles
+  for select
+  to authenticated
+  using (id = (select auth.uid()));
 
 create or replace function public.nutrigrid_is_admin()
 returns boolean
@@ -57,53 +65,57 @@ grant execute on function public.nutrigrid_is_admin() to authenticated;
 grant execute on function public.nutrigrid_is_approved_staff() to authenticated;
 grant execute on function public.nutrigrid_is_activity_admin() to authenticated;
 
+-- Preserve existing profile fields and repair all known NutriGrid accounts.
+with target_accounts(email, full_name, role) as (
+  values
+    ('arlrelandm@gmail.com', 'ARL', 'field_worker'),
+    ('catemandras@gmail.com', 'Cate', 'field_worker'),
+    ('joannmoico@gmail.com', 'Joann', 'field_worker'),
+    ('julieubana29@gmail.com', 'Julie', 'field_worker'),
+    ('joannmoico20@gmail.com', 'Joann', 'admin')
+),
+target_users as (
+  select u.id, u.email, a.full_name, a.role
+  from auth.users u
+  join target_accounts a on lower(u.email) = a.email
+)
 update public.profiles p
-set role = v.role,
-    approved = true,
-    email = u.email,
-    full_name = coalesce(nullif(p.full_name, ''), v.full_name)
-from auth.users u
-join (values
-  ('arlrelandm@gmail.com', 'ARL', 'field_worker'),
-  ('catemandras@gmail.com', 'Cate', 'field_worker'),
-  ('joannmoico@gmail.com', 'Joann', 'field_worker'),
-  ('julieubana29@gmail.com', 'Julie', 'field_worker'),
-  ('joannmoico20@gmail.com', 'Joann', 'admin')
-) v(email, full_name, role) on lower(u.email) = v.email
-where p.id = u.id;
+set
+  email = t.email,
+  full_name = coalesce(nullif(btrim(p.full_name), ''), t.full_name),
+  role = t.role,
+  approved = true
+from target_users t
+where p.id = t.id;
 
+with target_accounts(email, full_name, role) as (
+  values
+    ('arlrelandm@gmail.com', 'ARL', 'field_worker'),
+    ('catemandras@gmail.com', 'Cate', 'field_worker'),
+    ('joannmoico@gmail.com', 'Joann', 'field_worker'),
+    ('julieubana29@gmail.com', 'Julie', 'field_worker'),
+    ('joannmoico20@gmail.com', 'Joann', 'admin')
+),
+target_users as (
+  select u.id, u.email, a.full_name, a.role
+  from auth.users u
+  join target_accounts a on lower(u.email) = a.email
+)
 insert into public.profiles (id, email, full_name, role, approved)
-select u.id, u.email, v.full_name, v.role, true
-from auth.users u
-join (values
-  ('arlrelandm@gmail.com', 'ARL', 'field_worker'),
-  ('catemandras@gmail.com', 'Cate', 'field_worker'),
-  ('joannmoico@gmail.com', 'Joann', 'field_worker'),
-  ('julieubana29@gmail.com', 'Julie', 'field_worker'),
-  ('joannmoico20@gmail.com', 'Joann', 'admin')
-) v(email, full_name, role) on lower(u.email) = v.email
+select t.id, t.email, t.full_name, t.role, true
+from target_users t
 where not exists (
   select 1
   from public.profiles p
-  where p.id = u.id
+  where p.id = t.id
 );
 
--- Remove duplicate profile rows per account. auth.users.id is authoritative.
-delete from public.profiles duplicate
-where duplicate.ctid in (
-  select duplicate_ctid
-  from (
-    select ctid as duplicate_ctid,
-           row_number() over (
-             partition by lower(email)
-             order by
-               (approved is true) desc,
-               (lower(role) = 'field_worker') desc,
-               ctid
-           ) duplicate_rank
-    from public.profiles
-  ) ranked
-  where duplicate_rank > 1
+-- Remove profile duplicates that point to the same Auth UUID.
+delete from public.profiles p
+where p.ctid not in (
+  select min(ctid)
+  from public.profiles
+  group by id
 );
 
 create table if not exists public.allowed_emails (
