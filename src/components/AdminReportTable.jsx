@@ -93,7 +93,12 @@ export function ExpandableNote({ value, darkMode = false }) {
                 <X size={18} />
               </button>
             </div>
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{text}</p>
+            <p
+              className="whitespace-pre-wrap break-words text-justify text-sm leading-relaxed"
+              style={{ textAlign: 'justify', textAlignLast: 'left' }}
+            >
+              {text}
+            </p>
           </section>
         </div>
       )}

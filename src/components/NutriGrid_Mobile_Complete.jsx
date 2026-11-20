@@ -416,20 +416,27 @@ const PageHeader = ({
     {(setPurokFilter || excelRecords) && (
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         {setPurokFilter && (
-          <label className="flex min-w-0 items-center gap-2 text-sm font-medium text-slate-700">
+          <label className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-slate-700">
             <span>Filter:</span>
-            <select
-              value={purokFilter || ''}
-              onChange={(event) => setPurokFilter(event.target.value)}
-              className="min-w-36 rounded-xl border border-[#E8DCEF] bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100"
-              aria-label="Filter records by Purok"
-            >
-              <option value="">All Puroks</option>
-              <option value="__sorted__">Purok 1-10</option>
-              {PUROK_FILTER_OPTIONS.map((purok) => (
-                <option key={purok} value={purok}>{purok}</option>
-              ))}
-            </select>
+            <span className="relative inline-flex">
+              <select
+                value={purokFilter || ''}
+                onChange={(event) => setPurokFilter(event.target.value)}
+                className="min-w-32 appearance-none rounded-xl border border-[#E8DCEF] bg-white py-1.5 pl-2.5 pr-7 text-xs text-slate-800 shadow-sm outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100"
+                aria-label="Filter records by Purok"
+              >
+                <option value="">All Puroks</option>
+                <option value="__sorted__">Purok 1-10</option>
+                {PUROK_FILTER_OPTIONS.map((purok) => (
+                  <option key={purok} value={purok}>{purok}</option>
+                ))}
+              </select>
+              <ChevronDown
+                size={14}
+                aria-hidden="true"
+                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-600"
+              />
+            </span>
           </label>
         )}
         {excelRecords && (
@@ -437,9 +444,9 @@ const PageHeader = ({
           type="button"
           onClick={() => exportTableToExcel(excelHeaders, excelRows, excelFileName)}
           disabled={!excelRecords.length}
-          className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap rounded-xl border border-emerald-300 bg-white px-3 py-2 text-sm font-semibold uppercase tracking-wide text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-xl border border-emerald-300 bg-white px-2.5 py-1.5 text-xs font-semibold uppercase tracking-wide text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <Download size={16} />
+          <Download size={14} />
           SAVE AS EXCEL FILE
         </button>
         )}
