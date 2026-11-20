@@ -49,6 +49,7 @@ const SYNC_STATUS_DETAILS = {
 export function ExpandableNote({ value, darkMode = false }) {
   const [open, setOpen] = useState(false);
   const text = String(value ?? '');
+  const fullNoteText = text.replace(/\s+/g, ' ').trim();
   if (text.length <= 56) {
     return <span className="block min-w-0 max-w-full whitespace-pre-wrap break-words">{text || '—'}</span>;
   }
@@ -101,7 +102,7 @@ export function ExpandableNote({ value, darkMode = false }) {
                 overflowWrap: 'anywhere',
               }}
             >
-              {text}
+              {fullNoteText}
             </p>
           </section>
         </div>
