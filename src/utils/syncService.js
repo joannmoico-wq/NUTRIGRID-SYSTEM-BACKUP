@@ -870,6 +870,20 @@ export async function getSharedHouseholdCountsByPurokForMonth(monthKey) {
   if (!/^\d{4}-\d{2}$/.test(monthKey)) {
     throw new Error('Choose a valid month to filter household counts.');
   }
+  const { data: rpcData, error: rpcError } = await supabase.rpc(
+    'get_shared_household_counts_by_purok_for_month',
+    { p_month: monthKey }
+  );
+  if (!rpcError) {
+    const counts = new Map();
+    (rpcData || []).forEach((row) => {
+      const name = normalizePurokName(row.purok);
+      if (name) counts.set(name, (counts.get(name) || 0) + Number(row.household_count || 0));
+    });
+    return Array.from(counts, ([purok, count]) => ({ purok, count }))
+      .sort((left, right) => right.count - left.count || left.purok.localeCompare(right.purok, undefined, { numeric: true }))
+      .slice(0, 10);
+  }
   const [year, month] = monthKey.split('-').map(Number);
   const periodStart = new Date(year, month - 1, 1);
   const periodEnd = new Date(year, month, 1);

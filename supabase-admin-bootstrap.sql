@@ -92,12 +92,20 @@ create table if not exists public.allowed_emails (
   email text primary key
 );
 
+create unique index if not exists allowed_emails_email_unique
+  on public.allowed_emails (lower(email));
+
 insert into public.allowed_emails (email)
 select lower(email)
 from public.profiles
 where approved is true
   and lower(role) = 'field_worker'
-on conflict (email) do nothing;
+and lower(email) is not null
+and not exists (
+  select 1
+  from public.allowed_emails ae
+  where ae.email = lower(public.profiles.email)
+);
 
 grant select on public.allowed_emails to authenticated;
 
@@ -248,5 +256,48 @@ $$;
 
 revoke all on function public.get_bhw_activity_summaries() from public;
 grant execute on function public.get_bhw_activity_summaries() to authenticated;
+
+drop function if exists public.get_shared_household_counts_by_purok_for_month(text);
+create function public.get_shared_household_counts_by_purok_for_month(p_month text)
+returns table (purok text, household_count bigint)
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  with month_bounds as (
+    select
+      (substring(p_month from 1 for 7) || '-01')::date as period_start,
+      ((substring(p_month from 1 for 7) || '-01')::date + interval '1 month')::date as period_end
+  ),
+  normalized as (
+    select
+      case
+        when r.purok ~* '^Purok\\s*[1-9]$'
+          then initcap(r.purok)
+        when r.purok ~* '^[1-9]$'
+          then 'Purok ' || r.purok
+        else null
+      end as purok_name,
+      coalesce(
+        r.visit_date,
+        nullif(r.data->>'visit_date', '')::date,
+        nullif(r.data->>'lastVisit', '')::date,
+        r.created_at::date
+      ) as record_date
+    from public.residents r
+  )
+  select n.purok_name, count(*)::bigint
+  from normalized n
+  cross join month_bounds m
+  where n.purok_name is not null
+    and n.record_date >= m.period_start
+    and n.record_date < m.period_end
+  group by n.purok_name
+  order by count(*) desc, n.purok_name;
+$$;
+
+revoke all on function public.get_shared_household_counts_by_purok_for_month(text) from public;
+grant execute on function public.get_shared_household_counts_by_purok_for_month(text) to authenticated;
 
 commit;
