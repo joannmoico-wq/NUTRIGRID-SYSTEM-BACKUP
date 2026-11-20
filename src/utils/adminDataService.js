@@ -147,11 +147,20 @@ function cacheSharedRecords(category, remoteRecords) {
     const recordId = String(localRecord.id);
     if (isPendingDeletion(localRecord)) return;
     const remoteRecord = remoteById.get(String(localRecord.id));
-    if (!localRecord.synced) {
-      remoteById.set(recordId, localRecord);
+    if (!remoteRecord) {
+      if (!localRecord.synced) remoteById.set(recordId, localRecord);
       return;
     }
-    if (!remoteRecord) return;
+    if (!localRecord.synced) {
+      remoteById.set(recordId, {
+        ...remoteRecord,
+        synced: true,
+        status: 'Synced',
+        sync_status: 'synced',
+        sync_error: null,
+      });
+      return;
+    }
     const photo = remoteRecord.photo_url ||
       remoteRecord.residents_photo ||
       remoteRecord.environmental_sanitation_photo ||
@@ -198,8 +207,8 @@ function normalizeAdminRecord(category, row, idColumn) {
     (left, right) => Date.parse(right) - Date.parse(left)
   )[0] || '';
   record.created_by_user_id = row.created_by_user_id || payload.created_by_user_id || '';
-  record.status = row.status || payload.status || 'Synced';
-  record.synced = String(row.status || '').toLowerCase() === 'synced';
+  record.status = 'Synced';
+  record.synced = true;
   record.sync_status = record.synced ? 'synced' : payload.sync_status || 'pending_sync';
   record.sync_error = payload.sync_error || null;
   return record;
