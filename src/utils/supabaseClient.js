@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 
 const url =
   import.meta.env.VITE_SUPABASE_URL ||
-  'https://mrfnuaysydeyxlqzzint.supabase.co';
+  'https://wktxqwofonjklruqbpiu.supabase.co';
 const key =
   import.meta.env.VITE_SUPABASE_ANON_KEY ||
   '';

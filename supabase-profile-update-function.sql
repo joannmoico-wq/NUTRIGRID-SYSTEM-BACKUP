@@ -33,3 +33,16 @@ $$;
 
 REVOKE ALL ON FUNCTION public.update_own_profile(text, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.update_own_profile(text, integer) TO authenticated;
+
+-- Let every authenticated user read only their own profile. This is required
+-- by login, profile editing, and approval checks.
+alter table public.profiles enable row level security;
+
+drop policy if exists nutrigrid_profiles_read_own on public.profiles;
+create policy nutrigrid_profiles_read_own
+  on public.profiles
+  for select
+  to authenticated
+  using (id = (select auth.uid()));
+
+grant select on public.profiles to authenticated;
