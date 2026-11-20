@@ -244,7 +244,7 @@ function getNutritionCareNeeds(records) {
       weightKg: raw.weight_kg ?? raw.wt_kg ?? record.weight,
       lengthCm: raw.length_cm ?? record.length,
       heightCm: raw.height_cm ?? raw.ht_cm ?? record.height,
-    });
+    }); 
     const statuses = [
       raw.w_a || record.wA || computed.w_a,
       raw.h_a || record.hA || computed.h_a,
@@ -962,8 +962,19 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         loadRecordActivityLogs(),
         loadRecordActivityLogs({ month: activityLogMonthRef.current }),
       ]);
-      setActivityLogs(logs);
-      setActivityLogsForMonth(monthLogs);
+      const removeSupersededCreatedLogs = (sourceLogs) => {
+        const deletedKeys = new Set(
+          sourceLogs
+            .filter((log) => String(log.action || '').toLowerCase() === 'deleted')
+            .map((log) => `${String(log.category || '').toLowerCase()}:${String(log.record_id || '')}`)
+        );
+        return sourceLogs.filter((log) =>
+          String(log.action || '').toLowerCase() !== 'created' ||
+          !deletedKeys.has(`${String(log.category || '').toLowerCase()}:${String(log.record_id || '')}`)
+        );
+      };
+      setActivityLogs(removeSupersededCreatedLogs(logs));
+      setActivityLogsForMonth(removeSupersededCreatedLogs(monthLogs));
       setActivityLogError('');
     } catch (error) {
       console.error('Could not load record activity logs:', error);
@@ -1059,6 +1070,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     }
     markNotificationsRead(item.notificationIds || [item.id]);
     setShowNotifications(false);
+    if (item.activityLog) {
+      setActiveTab('activityLogs');
+      setNotificationTarget(null);
+      return;
+    }
     if (item.recordId) {
       setTabSearchTerm(item.tab, '');
       setAdminPurokFilter('');
@@ -1511,6 +1527,22 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       detail: `${request.full_name || request.email} · Tap to review and confirm`,
       deletionRequest: request,
     }));
+    activityLogs.forEach((log) => {
+      const notificationId = `record-activity:${log.id}`;
+      items.push({
+        id: notificationId,
+        label: `${String(log.action || 'edited').toUpperCase()} · ${getActivityCategoryLabel(log.category)}`,
+        detail: `${log.actor_name || 'A BHW'} · ${String(log.action || 'edited')}`,
+        activityLog: true,
+        tab: 'activityLogs',
+        notificationIds: [notificationId],
+      });
+    });
+    const deletedRecordKeys = new Set(
+      activityLogs
+        .filter((log) => String(log.action || '').toLowerCase() === 'deleted')
+        .map((log) => `${log.category}:${log.record_id}`)
+    );
     [
       { key: STORAGE_KEYS.residents, data: households, tab: 'residents' },
       { key: STORAGE_KEYS.environmental, data: environmentalSanitationData, tab: 'environmentalSanitation' },
@@ -1519,9 +1551,18 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       { key: STORAGE_KEYS.lactatingwoman, data: lactatingWomenData, tab: 'lactatingWoman' },
       { key: STORAGE_KEYS.monthlynatal, data: natalityData, tab: 'monthlyNatality' },
     ].forEach(({ key, data, tab }) => {
+      const notificationCategory =
+        key === STORAGE_KEYS.residents ? 'residents'
+          : key === STORAGE_KEYS.environmental ? 'environmental'
+            : key === STORAGE_KEYS.infantfeeding ? 'infantfeeding'
+              : key === STORAGE_KEYS.pregnantwoman ? 'pregnantwoman'
+                : key === STORAGE_KEYS.lactatingwoman ? 'lactatingwoman'
+                  : key === STORAGE_KEYS.monthlynatal ? 'monthlynatal'
+                    : tab;
       const records = Array.isArray(data) ? data : [];
       records.forEach((record) => {
         const notificationId = `record-added:${key}:${record.id}`;
+        if (deletedRecordKeys.has(`${notificationCategory}:${record.id}`)) return;
         const isNewPendingRecord =
           getRecordSyncStatus(record._raw || record) !== 'synced' &&
           !(record.last_edited_at || record._raw?.last_edited_at);
@@ -1573,7 +1614,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       });
     }
     return items;
-  }, [bhwDeletionRequests, households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, readNotificationIds, newRecordNotificationIds]);
+  }, [bhwDeletionRequests, households, environmentalSanitationData, infantFeedingData, pregnantWomenData, lactatingWomenData, natalityData, activityLogs, readNotificationIds, newRecordNotificationIds]);
 
   const visibleNotificationItems = notificationItems.filter(
     (item) =>
