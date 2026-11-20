@@ -1,8 +1,8 @@
 // NutriGrid Service Worker - Offline-First PWA
 // This enables offline functionality and app installation
 
-const CACHE_NAME = 'nutrigrid-v3';
-const RUNTIME_CACHE = 'nutrigrid-runtime-v1';
+const CACHE_NAME = 'nutrigrid-v4';
+const RUNTIME_CACHE = 'nutrigrid-runtime-v2';
 
 // Assets to cache on install
 const ASSETS_TO_CACHE = [
@@ -40,7 +40,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) => {
       return Promise.all(
         cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME && cacheName !== RUNTIME_CACHE) {
+            if (cacheName !== CACHE_NAME && cacheName !== RUNTIME_CACHE) {
             console.log(`🗑️ Deleting old cache: ${cacheName}`);
             return caches.delete(cacheName);
           }
@@ -85,31 +85,17 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Strategy: Cache-first for assets, Network-first for API
+  // Network-first for app assets so deployments replace stale API configuration.
   if (isAsset(request.url)) {
-    // Assets (JS, CSS, fonts) - Cache first
     event.respondWith(
-      caches.match(request).then((response) => {
-        if (response) {
-          return response;
-        }
-        
-        return fetch(request).then((response) => {
-          if (!response || response.status !== 200) {
-            return response;
-          }
-          
+      fetch(request)
+        .then((response) => {
+          if (!response || response.status !== 200) return response;
           const responseToCache = response.clone();
-          caches.open(RUNTIME_CACHE).then((cache) => {
-            cache.put(request, responseToCache);
-          });
-          
+          caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, responseToCache));
           return response;
-        });
-      }).catch(() => {
-        // Offline - return cached or error page
-        return caches.match(request) || cacheNotFound();
-      })
+        })
+        .catch(() => caches.match(request) || cacheNotFound())
     );
   } else {
     // API/HTML - Network first
