@@ -310,7 +310,15 @@ async function pullCategoryRecords(category, userId) {
     }
     remoteById.delete(String(record.id));
     if (isUnsynced(record)) {
-      mergedRecords.push(record);
+      mergedRecords.push({
+        ...record,
+        ...remoteRecord,
+        synced: true,
+        status: 'Synced',
+        sync_status: 'synced',
+        sync_error: null,
+      });
+      changed = true;
       return;
     }
     if (Object.entries(remoteRecord).some(([field, value]) =>
