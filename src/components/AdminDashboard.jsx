@@ -1964,10 +1964,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
 
   const confirmAdminAction = async () => {
     if (!adminConfirmation) return;
+    const confirmation = adminConfirmation;
     setAdminConfirmationBusy(true);
     try {
-      await adminConfirmation.action();
-      setAdminConfirmation(null);
+      const nextConfirmation = await confirmation.action();
+      setAdminConfirmation(nextConfirmation || null);
     } finally {
       setAdminConfirmationBusy(false);
     }
@@ -2070,9 +2071,23 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     ),
   });
 
+  const showImportError = (error) => {
+    setAdminConfirmation({
+      message: `Could not import Excel records: ${error?.message || 'Invalid workbook.'}`,
+      action: () => {},
+      title: 'Import Excel',
+      confirmLabel: 'OK',
+    });
+  };
+
   const importCategoryRecords = async (storageKey, category, label, importedRows) => {
     if (!currentUserId) {
-      window.alert('You must be signed in as an admin to import records.');
+      setAdminConfirmation({
+        message: 'You must be signed in as an admin to import records.',
+        action: () => {},
+        title: 'Import Excel',
+        confirmLabel: 'OK',
+      });
       return;
     }
 
@@ -2107,54 +2122,69 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     });
 
     if (!recordsToImport.length) {
-      window.alert(`No new ${label} records to import. ${skippedDuplicates} duplicate row(s) were skipped.`);
-      return;
-    }
-    if (!window.confirm(
-      `Import ${recordsToImport.length} ${label} record(s)? ${skippedDuplicates} duplicate row(s) will be skipped.`
-    )) return;
-
-    let savedCount = 0;
-    try {
-      recordsToImport.forEach((record) => {
-        upsertRecord(storageKey, record);
-        savedCount += 1;
+      setAdminConfirmation({
+        message: `No new ${label} records to import. ${skippedDuplicates} duplicate row(s) were skipped.`,
+        action: () => {},
+        title: 'Import Excel',
+        confirmLabel: 'OK',
       });
-      markNotificationsRead(
-        recordsToImport.map((record) => `record-added:${storageKey}:${record.id}`)
-      );
-      refreshData();
-    } catch (error) {
-      console.error(`Could not save imported ${label} records:`, error);
-      refreshData();
-      window.alert(
-        `Imported ${savedCount} of ${recordsToImport.length} ${label} record(s). The remaining records could not be saved: ${error.message || 'storage error'}.`
-      );
       return;
     }
+    const performImport = async () => {
+      let savedCount = 0;
+      try {
+        recordsToImport.forEach((record) => {
+          upsertRecord(storageKey, record);
+          savedCount += 1;
+        });
+        markNotificationsRead(
+          recordsToImport.map((record) => `record-added:${storageKey}:${record.id}`)
+        );
+        refreshData();
+      } catch (error) {
+        console.error(`Could not save imported ${label} records:`, error);
+        refreshData();
+        return {
+          title: 'Import Excel',
+          message: `Imported ${savedCount} of ${recordsToImport.length} ${label} record(s). The remaining records could not be saved: ${error.message || 'storage error'}.`,
+          action: () => {},
+          confirmLabel: 'OK',
+        };
+      }
 
-    let syncFailures = 0;
-    if (navigator.onLine) {
-      const syncResults = await Promise.all(recordsToImport.map(async (record) => {
-        try {
-          return await syncSingleRecord(category, record, { includeShared: true });
-        } catch (error) {
-          console.error(`Could not sync imported ${category} record ${record.id}:`, error);
-          return error.message || 'sync failed';
-        }
-      }));
-      syncFailures = syncResults.filter((error) =>
-        error && !['offline', 'not-signed-in'].includes(error)
-      ).length;
-      refreshData();
-    }
+      let syncFailures = 0;
+      if (navigator.onLine) {
+        const syncResults = await Promise.all(recordsToImport.map(async (record) => {
+          try {
+            return await syncSingleRecord(category, record, { includeShared: true });
+          } catch (error) {
+            console.error(`Could not sync imported ${category} record ${record.id}:`, error);
+            return error.message || 'sync failed';
+          }
+        }));
+        syncFailures = syncResults.filter((error) =>
+          error && !['offline', 'not-signed-in'].includes(error)
+        ).length;
+        refreshData();
+      }
 
-    const syncMessage = !navigator.onLine || syncFailures
-      ? ' Records are saved locally and will retry syncing.'
-      : ' Records were synced.';
-    window.alert(
-      `Imported ${savedCount} ${label} record(s). ${skippedDuplicates} duplicate row(s) skipped.${syncMessage}`
-    );
+      const syncMessage = !navigator.onLine || syncFailures
+        ? ' Records are saved locally and will retry syncing.'
+        : ' Records were synced.';
+      return {
+        title: 'Import Excel',
+        message: `Imported ${savedCount} ${label} record(s). ${skippedDuplicates} duplicate row(s) skipped.${syncMessage}`,
+        action: () => {},
+        confirmLabel: 'OK',
+      };
+    };
+
+    setAdminConfirmation({
+      title: 'Import Excel',
+      message: `Import ${recordsToImport.length} ${label} record(s)? ${skippedDuplicates} duplicate row(s) will be skipped.`,
+      confirmLabel: 'Import',
+      action: performImport,
+    });
   };
 
   const filterAdminTableData = (rows, term, categoryId) => {
@@ -3354,6 +3384,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         importAction={
           <ImportRecordsExcelButton
             onImport={(rows) => importCategoryRecords(STORAGE_KEYS.residents, 'residents', 'Residents', rows)}
+            onError={showImportError}
           />
         }
         purokFilter={adminPurokFilter}
@@ -3513,6 +3544,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       importAction={
         <ImportRecordsExcelButton
           onImport={(rows) => importCategoryRecords(STORAGE_KEYS.infantfeeding, 'infantfeeding', 'Infant Feeding', rows)}
+          onError={showImportError}
         />
       }
       purokFilter={adminPurokFilter}
@@ -3606,6 +3638,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       importAction={
         <ImportRecordsExcelButton
           onImport={(rows) => importCategoryRecords(STORAGE_KEYS.lactatingwoman, 'lactatingwoman', 'Lactating Women', rows)}
+          onError={showImportError}
         />
       }
       purokFilter={adminPurokFilter}
@@ -3707,6 +3740,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       importAction={
         <ImportRecordsExcelButton
           onImport={(rows) => importCategoryRecords(STORAGE_KEYS.pregnantwoman, 'pregnantwoman', 'Pregnant Women', rows)}
+          onError={showImportError}
         />
       }
       purokFilter={adminPurokFilter}
@@ -3857,6 +3891,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       importAction={
         <ImportRecordsExcelButton
           onImport={(rows) => importCategoryRecords(STORAGE_KEYS.monthlynatal, 'monthlynatal', 'Monthly Natality', rows)}
+          onError={showImportError}
         />
       }
       purokFilter={adminPurokFilter}

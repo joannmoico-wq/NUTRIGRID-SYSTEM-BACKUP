@@ -54,8 +54,11 @@ const EXCLUDED_IMPORT_FIELDS = new Set([
 const IMPORT_COLUMN_ALIASES = {
   residents: {
     head: 'household_head',
+    'household head': 'household_head',
     members: 'total_members',
     'last visit': 'visit_date',
+    notes: 'notes',
+    note: 'notes',
   },
   infantfeeding: {
     purok: 'purok',
@@ -240,7 +243,7 @@ export function normalizeImportedRecordHeaders(rows, category) {
   return rows.map((row) =>
     Object.fromEntries(
       Object.entries(row).flatMap(([key, value]) => {
-        const normalizedLabel = String(key).trim().toLowerCase();
+        const normalizedLabel = String(key).replace(/^\uFEFF/, '').trim().toLowerCase();
         if (ignoredColumns.has(normalizedLabel)) return [];
         const field = aliases[normalizedLabel] || key;
         if (field === 'purok' && value && !/^purok\b/i.test(String(value).trim())) {
