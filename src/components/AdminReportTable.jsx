@@ -95,7 +95,11 @@ export function ExpandableNote({ value, darkMode = false }) {
             </div>
             <p
               className="whitespace-pre-wrap break-words text-justify text-sm leading-relaxed"
-              style={{ textAlign: 'justify', textAlignLast: 'left' }}
+              style={{
+                textAlign: 'justify',
+                textAlignLast: 'left',
+                overflowWrap: 'anywhere',
+              }}
             >
               {text}
             </p>
