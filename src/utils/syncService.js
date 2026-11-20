@@ -294,6 +294,24 @@ async function pullCategoryRecords(category, userId) {
   let changed = false;
   const mergedRecords = [];
   localRecords.forEach((record) => {
+    const remoteRecordById = remoteById.get(String(record.id));
+    if (
+      remoteRecordById &&
+      String(record.created_by_user_id || '') !== String(userId)
+    ) {
+      remoteById.delete(String(record.id));
+      mergedRecords.push({
+        ...record,
+        ...remoteRecordById,
+        created_by_user_id: userId,
+        synced: true,
+        status: 'Synced',
+        sync_status: 'synced',
+        sync_error: null,
+      });
+      changed = true;
+      return;
+    }
     if (String(record.created_by_user_id || '') !== String(userId)) {
       mergedRecords.push(record);
       return;
@@ -652,6 +670,7 @@ export async function syncPendingRecords({ includeShared = false } = {}) {
       (item) =>
         Boolean(item.created_by_user_id) &&
         (includeShared ||
+          isUnsynced(item) ||
           String(item.created_by_user_id || '') === String(session.user.id)) &&
         (reuploadExistingRecords || isUnsynced(item))
     )) {
@@ -742,29 +761,28 @@ export async function syncSingleRecord(category, record, { includeShared = false
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) return 'not-signed-in';
   if (!record.created_by_user_id) return 'record-owner-missing';
-  if (
+  const reconciledRecord =
     !includeShared &&
     String(record.created_by_user_id || '') !== String(session.user.id)
-  ) {
-    return 'record-owner-mismatch';
-  }
+      ? { ...record, created_by_user_id: session.user.id }
+      : record;
 
   const storageKey = storageKeyForCategory(category);
-  updateRecordSyncStatus(storageKey, record.id, 'syncing', '', record);
+  updateRecordSyncStatus(storageKey, reconciledRecord.id, 'syncing', '', reconciledRecord, session.user.id);
   const error = await uploadRecord(
     category,
     table,
     getDeviceId(),
-    localIdForRecord(category, record),
-    record,
+    localIdForRecord(category, reconciledRecord),
+    reconciledRecord,
     session.user.id
   );
   const logError = await writeSyncLog(session.user.id, 1, error ? 0 : 1, Boolean(error));
   if (error) {
-    updateRecordSyncStatus(storageKey, record.id, 'sync_failed', error, record);
+    updateRecordSyncStatus(storageKey, reconciledRecord.id, 'sync_failed', error, reconciledRecord, session.user.id);
     return logError ? `${error}; sync log failed: ${logError}` : error;
   }
-  updateRecordSyncStatus(storageKey, record.id, 'synced', '', record);
+  updateRecordSyncStatus(storageKey, reconciledRecord.id, 'synced', '', reconciledRecord, session.user.id);
   if (logError) console.error(`Record synced, but its sync log is queued for retry: ${logError}`);
   return null;
 }

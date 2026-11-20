@@ -361,7 +361,14 @@ export function getRecordSyncStatus(record) {
     : 'pending_sync';
 }
 
-export function updateRecordSyncStatus(key, recordId, syncStatus, syncError = '', expectedRecord = null) {
+export function updateRecordSyncStatus(
+  key,
+  recordId,
+  syncStatus,
+  syncError = '',
+  expectedRecord = null,
+  ownerUserId = ''
+) {
   const records = getRecords(key);
   let updated = false;
   const nextRecords = records.map((record) => {
@@ -374,6 +381,7 @@ export function updateRecordSyncStatus(key, recordId, syncStatus, syncError = ''
     updated = true;
     return {
       ...record,
+      ...(ownerUserId ? { created_by_user_id: ownerUserId } : {}),
       sync_status: syncStatus,
       sync_error: syncError || null,
       ...(syncStatus === 'synced' ? { synced: true, status: 'Synced' } : {}),
