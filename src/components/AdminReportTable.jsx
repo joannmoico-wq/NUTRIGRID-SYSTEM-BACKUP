@@ -106,10 +106,9 @@ export function ExpandableNote({ value, darkMode = false }) {
               </button>
             </div>
             <p
-              className="whitespace-pre-wrap break-words text-justify text-sm leading-relaxed"
+              className="whitespace-pre-wrap break-words text-left text-sm leading-relaxed"
               style={{
-                textAlign: 'justify',
-                textAlignLast: 'left',
+                textAlign: 'left',
                 overflowWrap: 'break-word',
                 hyphens: 'manual',
               }}
