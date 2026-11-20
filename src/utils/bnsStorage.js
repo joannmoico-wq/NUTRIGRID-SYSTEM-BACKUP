@@ -354,11 +354,12 @@ export function setRecords(key, records, change = null) {
 }
 
 export function getRecordSyncStatus(record) {
+  if (record?.synced === true || String(record?.status || '').toLowerCase() === 'synced') {
+    return 'synced';
+  }
   const status = String(record?.sync_status || '').toLowerCase();
   if (['pending_sync', 'syncing', 'synced', 'sync_failed'].includes(status)) return status;
-  return record?.synced || String(record?.status || '').toLowerCase() === 'synced'
-    ? 'synced'
-    : 'pending_sync';
+  return 'pending_sync';
 }
 
 export function updateRecordSyncStatus(
@@ -373,10 +374,11 @@ export function updateRecordSyncStatus(
   let updated = false;
   const nextRecords = records.map((record) => {
     if (String(record.id) !== String(recordId)) return record;
-    if (expectedRecord && !Object.entries(expectedRecord).every(([field, value]) =>
-      ['sync_status', 'sync_error'].includes(field) ||
-      JSON.stringify(record[field]) === JSON.stringify(value)
-    )) return record;
+    if (
+      expectedRecord &&
+      String(expectedRecord.id || recordId) !== String(recordId) &&
+      expectedRecord.id != null
+    ) return record;
 
     updated = true;
     return {
