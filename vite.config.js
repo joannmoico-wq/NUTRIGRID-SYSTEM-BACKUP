@@ -7,7 +7,7 @@ import viteReportEmailPlugin from './server/viteReportEmailPlugin.js'
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   process.env.VITE_SUPABASE_URL ||= env.VITE_SUPABASE_URL
-  process.env.VITE_SUPABASE_ANON_KEY ||= env.VITE_SUPABASE_ANON_KEY
+  process.env.VITE_SUPABASE_ANON_KEY ||= env.VITE_SUPABASE_ANON_KEY || env.VITE_SUPABASE_PUBLISHABLE_KEY
   process.env.GMAIL_USER ||= env.GMAIL_USER
   process.env.GMAIL_APP_PASS ||= env.GMAIL_APP_PASS
 
