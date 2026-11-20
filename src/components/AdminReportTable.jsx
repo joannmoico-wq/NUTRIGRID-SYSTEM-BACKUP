@@ -46,10 +46,21 @@ const SYNC_STATUS_DETAILS = {
   },
 };
 
+const addSoftHyphensToLongWords = (value) =>
+  value.split(' ').map((word) => {
+    const characters = Array.from(word);
+    if (characters.length <= 24) return word;
+
+    return characters.reduce((result, character, index) => {
+      const addBreak = (index + 1) % 16 === 0 && index < characters.length - 1;
+      return `${result}${character}${addBreak ? '\u00ad' : ''}`;
+    }, '');
+  }).join(' ');
+
 export function ExpandableNote({ value, darkMode = false }) {
   const [open, setOpen] = useState(false);
   const text = String(value ?? '');
-  const fullNoteText = text.replace(/\s+/g, ' ').trim();
+  const fullNoteText = addSoftHyphensToLongWords(text.replace(/\s+/g, ' ').trim());
   if (text.length <= 56) {
     return <span className="block min-w-0 max-w-full whitespace-pre-wrap break-words">{text || '—'}</span>;
   }
@@ -99,7 +110,8 @@ export function ExpandableNote({ value, darkMode = false }) {
               style={{
                 textAlign: 'justify',
                 textAlignLast: 'left',
-                overflowWrap: 'anywhere',
+                overflowWrap: 'break-word',
+                hyphens: 'manual',
               }}
             >
               {fullNoteText}
