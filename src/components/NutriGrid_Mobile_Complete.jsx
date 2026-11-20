@@ -2292,7 +2292,8 @@ const HomeScreen = ({
                     setEditingRecord(null);
                     setShowCategoryForm(true);
                   }}
-                  className="flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#2F5BD3] px-4 py-3 text-sm font-bold text-white shadow-md transition active:scale-[0.98]"
+                  className={`flex min-h-14 items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-bold text-white shadow-md transition active:scale-[0.98] ${selectedCategoryData.gradient ? `bg-gradient-to-r ${selectedCategoryData.gradient}` : ''}`}
+                  style={!selectedCategoryData.gradient ? { backgroundColor: selectedCategoryData.accentColor } : undefined}
                 >
                   <Plus size={20} />
                   New Visit
@@ -2300,7 +2301,11 @@ const HomeScreen = ({
                 <button
                   type="button"
                   onClick={() => setActiveView('records')}
-                  className="flex min-h-14 items-center justify-center gap-2 rounded-full border-2 border-[#2F5BD3] bg-white px-4 py-3 text-sm font-bold text-[#2F5BD3] shadow-sm transition active:scale-[0.98]"
+                  className="flex min-h-14 items-center justify-center gap-2 rounded-full border-2 bg-white px-4 py-3 text-sm font-bold shadow-sm transition active:scale-[0.98]"
+                  style={{
+                    borderColor: selectedCategoryData.accentColor,
+                    color: selectedCategoryData.accentColor,
+                  }}
                 >
                   <FileText size={20} />
                   Records

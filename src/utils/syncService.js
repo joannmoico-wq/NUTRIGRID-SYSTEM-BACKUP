@@ -549,8 +549,7 @@ async function uploadRecord(category, table, deviceId, localId, record, userId) 
     .eq('created_by_user_id', payload.created_by_user_id)
     .select('data');
 
-  if (updateError) return updateError.message;
-  if (updated?.length) return null;
+  if (!updateError && updated?.length) return null;
 
   const { error } = await supabase.from(table).insert(payload);
   return error ? error.message : null;
