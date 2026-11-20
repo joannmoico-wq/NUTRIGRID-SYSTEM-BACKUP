@@ -2753,7 +2753,7 @@ const NutriGridMobile = () => {
       .from('profiles')
       .select('assigned_purok')
       .eq('id', userId)
-      .single()
+      .maybeSingle()
       .then(({ data, error }) => {
         if (error) throw new Error(error.message);
         if (!data) throw new Error('The account profile was not returned.');

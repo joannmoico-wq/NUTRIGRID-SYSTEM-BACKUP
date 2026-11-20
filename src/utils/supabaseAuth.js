@@ -72,9 +72,9 @@ async function loadProfile(userId) {
     .from('profiles')
     .select('email, full_name, age, role, approved, assigned_purok')
     .eq('id', userId)
-    .single();
+    .maybeSingle();
   if (error) throw new Error(`Could not load your account: ${error.message}`);
-  if (!data) throw new Error('Could not load your account. Check your connection and try again.');
+  if (!data) throw new Error('Your account has no Supabase profile. Ask the admin to approve and create your profile.');
   return data;
 }
 
