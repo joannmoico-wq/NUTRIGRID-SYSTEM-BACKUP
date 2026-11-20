@@ -77,10 +77,7 @@ export async function handleReportEmail(request, response) {
     const supabaseUrl =
       process.env.VITE_SUPABASE_URL ||
       'https://mrfnuaysydeyxlqzzint.supabase.co';
-    const supabaseKey =
-      process.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
-      process.env.VITE_SUPABASE_ANON_KEY ||
-      'sb_publishable_Ryv2pQA0tgZe85YSXXgz_g_3eK56vrZ';
+    const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY;
     const gmailUser = process.env.GMAIL_USER;
     const gmailPassword = process.env.GMAIL_APP_PASS;
     if (!supabaseUrl || !supabaseKey || !gmailUser || !gmailPassword) {
