@@ -170,7 +170,7 @@ profile email is set as Reply-To; Gmail's authenticated mailbox remains the send
 address. The generated signed PDF is attached.
 
 For production, run `npm run email-api` as a separate Node service with
-`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `GMAIL_USER`, and `GMAIL_APP_PASS`
+`VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` (or legacy `VITE_SUPABASE_ANON_KEY`), `GMAIL_USER`, and `GMAIL_APP_PASS`
 configured as server secrets. Set `REPORT_EMAIL_ALLOWED_ORIGINS` to the exact
 frontend origin(s), and set `VITE_REPORT_EMAIL_API_URL` at frontend build time to
 `https://<api-host>/api/reports/email`. Static hosting alone cannot run the SMTP API.
