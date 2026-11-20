@@ -552,9 +552,7 @@ async function uploadRecord(category, table, deviceId, localId, record, userId) 
   if (updateError) return updateError.message;
   if (updated?.length) return null;
 
-  const { error } = await supabase.from(table).upsert(payload, {
-    onConflict: 'device_id,local_id',
-  });
+  const { error } = await supabase.from(table).insert(payload);
   return error ? error.message : null;
 }
 

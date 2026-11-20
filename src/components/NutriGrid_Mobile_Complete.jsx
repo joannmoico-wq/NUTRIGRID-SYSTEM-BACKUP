@@ -2268,7 +2268,12 @@ const HomeScreen = ({
         {selectedCategoryData && (
           <div className="space-y-3 pt-1">
             <div
-              className={`relative flex min-h-[220px] flex-col items-center justify-center overflow-hidden rounded-3xl bg-gradient-to-br ${selectedCategoryData.gradient} px-5 py-6 text-center text-white shadow-md`}
+              className={`relative flex min-h-[210px] flex-col items-center justify-center overflow-hidden rounded-[28px] px-5 py-6 text-center text-white shadow-md ${selectedCategory === 'residents' ? '' : `bg-gradient-to-br ${selectedCategoryData.gradient}`}`}
+              style={{
+                background: selectedCategory === 'residents'
+                  ? 'linear-gradient(135deg, #3D66B8 0%, #5B86DC 100%)'
+                  : undefined,
+              }}
             >
               <div className="absolute -top-7 -right-6 h-24 w-24 rounded-full bg-white/10" aria-hidden="true" />
               <div className="absolute -bottom-10 -left-5 h-28 w-28 rounded-full bg-black/5" aria-hidden="true" />
@@ -2279,6 +2284,28 @@ const HomeScreen = ({
               <p className="relative z-10 mt-3 text-6xl font-bold leading-none">{liveCount}</p>
               <p className="relative z-10 mt-2 text-base text-white/90">Total Records</p>
             </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingRecord(null);
+                    setShowCategoryForm(true);
+                  }}
+                  className="flex min-h-14 items-center justify-center gap-2 rounded-full bg-[#2F5BD3] px-4 py-3 text-sm font-bold text-white shadow-md transition active:scale-[0.98]"
+                >
+                  <Plus size={20} />
+                  New Visit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveView('records')}
+                  className="flex min-h-14 items-center justify-center gap-2 rounded-full border-2 border-[#2F5BD3] bg-white px-4 py-3 text-sm font-bold text-[#2F5BD3] shadow-sm transition active:scale-[0.98]"
+                >
+                  <FileText size={20} />
+                  Records
+                </button>
+              </div>
 
             <StatRow
               label="This Month"
@@ -2308,31 +2335,6 @@ const HomeScreen = ({
               textColor="#92400E"
             />
 
-            <div className="grid grid-cols-2 gap-3 pt-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingRecord(null);
-                  setShowCategoryForm(true);
-                }}
-                className={`flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-r ${selectedCategoryData.gradient} py-3.5 text-sm font-bold text-white shadow-md transition active:scale-[0.98]`}
-              >
-                <Plus size={20} />
-                New Visit
-              </button>
-              <button
-                type="button"
-                onClick={() => setActiveView('records')}
-                className="flex items-center justify-center gap-2 rounded-2xl border-2 bg-white py-3.5 text-sm font-bold shadow-sm transition active:scale-[0.98]"
-                style={{
-                  borderColor: selectedCategoryData.accentColor,
-                  color: selectedCategoryData.accentColor,
-                }}
-              >
-                <FileText size={20} />
-                Records
-              </button>
-            </div>
           </div>
         )}
 
