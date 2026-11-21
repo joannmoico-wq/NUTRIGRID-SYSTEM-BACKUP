@@ -167,7 +167,21 @@ Deno.serve(async (request) => {
     .select('fcm_token')
     .eq('id', task.assigned_to_user_id)
     .maybeSingle();
-  if (recipientError) return jsonResponse({ error: 'Could not load the recipient device token.' }, 500);
+  if (recipientError) {
+    console.error('Could not load the recipient device token:', {
+      userId: task.assigned_to_user_id,
+      code: recipientError.code,
+      message: recipientError.message,
+      details: recipientError.details,
+      hint: recipientError.hint,
+    });
+    const reason = recipientError.code
+      ? `${recipientError.code}: ${recipientError.message}`
+      : recipientError.message;
+    return jsonResponse({
+      error: `Could not load the recipient device token. ${reason || 'Check the Supabase function logs.'}`,
+    }, 500);
+  }
   if (!recipient?.fcm_token) {
     return jsonResponse({ sent: false, reason: 'device-not-registered' });
   }

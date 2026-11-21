@@ -61,6 +61,7 @@ create trigger nutrigrid_restrict_task_updates
 alter table public.tasks enable row level security;
 grant select, insert, update, delete on public.tasks to authenticated;
 grant select on public.tasks to service_role;
+grant select, update on public.profiles to service_role;
 
 drop policy if exists nutrigrid_tasks_read on public.tasks;
 create policy nutrigrid_tasks_read on public.tasks
