@@ -215,6 +215,12 @@ Deno.serve(async (request) => {
               task_id: String(task.task_id),
               url: '/',
             },
+            webpush: {
+              headers: {
+                TTL: '2419200',
+                Urgency: 'high',
+              },
+            },
           },
         }),
       },
