@@ -26,6 +26,66 @@ function isMissingTaskColumnError(error) {
   return message.includes('schema cache') && message.includes('column');
 }
 
+function isValidTaskId(taskId) {
+  return taskId !== null &&
+    taskId !== undefined &&
+    /^-?\d+$/.test(String(taskId).trim());
+}
+
+async function findMatchingRemoteTaskId(task) {
+  if (!task?.assigned_to_user_id || !task.title || !task.created_at) {
+    return {
+      error: 'The task has no valid ID and lacks enough details to safely find it in Supabase.',
+    };
+  }
+
+  let query = supabase
+    .from('tasks')
+    .select('task_id')
+    .eq('assigned_to_user_id', task.assigned_to_user_id)
+    .eq('title', task.title)
+    .eq('created_at', task.created_at);
+  query = task.due_date
+    ? query.eq('due_date', task.due_date)
+    : query.is('due_date', null);
+
+  const { data, error } = await query.limit(2);
+  if (error) return { error: error.message };
+  const matches = (data || []).filter((row) => isValidTaskId(row.task_id));
+  if (matches.length === 1) return { taskId: matches[0].task_id };
+  return {
+    error: matches.length
+      ? 'The task has no valid ID and matches multiple Supabase tasks; no task was changed.'
+      : 'The task has no valid ID and no matching Supabase task was found.',
+  };
+}
+
+function persistResolvedTaskId(change, taskId) {
+  const oldTaskId = String(change.taskId);
+  const syncedAt = change.updatedAt;
+  const updatedChange = {
+    ...change,
+    taskId: String(taskId),
+    task: { ...change.task, task_id: taskId },
+  };
+  const pending = getPendingTaskChanges().map((item) =>
+    String(item.taskId) === oldTaskId && item.updatedAt === syncedAt
+      ? updatedChange
+      : item
+  );
+  const tasks = getLocalTasks().map((task) =>
+    String(task.task_id) === oldTaskId &&
+    task.title === change.task?.title &&
+    task.assigned_to_user_id === change.task?.assigned_to_user_id &&
+    task.created_at === change.task?.created_at
+      ? { ...task, task_id: taskId }
+      : task
+  );
+  localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(pending));
+  publishTasks(tasks, null, 'refresh');
+  return updatedChange;
+}
+
 function publishTasks(tasks, task = null, operation = 'refresh', notify = true) {
   localStorage.setItem(TASKS_STORAGE_KEY, JSON.stringify(tasks));
   if (notify) {
@@ -262,7 +322,20 @@ export async function syncPendingTasks({ taskIds } = {}) {
       const pendingChanges = getPendingTaskChanges().filter(
         (change) => syncAll || taskIdsToSync.has(String(change.taskId))
       );
-      for (const change of pendingChanges) {
+      for (const pendingChange of pendingChanges) {
+        let change = pendingChange;
+        if (change.operation === 'upsert' && !isValidTaskId(change.taskId)) {
+          const resolved = await findMatchingRemoteTaskId(change.task);
+          if (!resolved.taskId) {
+            result.errors.push(`Task with invalid ID: ${resolved.error}`);
+            continue;
+          }
+          change = persistResolvedTaskId(change, resolved.taskId);
+        }
+        if (!isValidTaskId(change.taskId)) {
+          result.errors.push(`Task ${change.taskId} ${change.operation}: task ID is invalid.`);
+          continue;
+        }
         result.records++;
         let response;
         let syncedTaskId = change.taskId;
