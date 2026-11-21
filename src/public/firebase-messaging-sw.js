@@ -11,8 +11,8 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || 'New task assigned';
-  const body = payload.notification?.body || 'Open NutriGrid to view it.';
+  const title = payload.notification?.title || payload.data?.title || 'New task assigned';
+  const body = payload.notification?.body || payload.data?.body || 'Open NutriGrid to view it.';
   self.registration.showNotification(title, {
     body,
     icon: '/icon-192.png',

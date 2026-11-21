@@ -209,19 +209,11 @@ Deno.serve(async (request) => {
         body: JSON.stringify({
           message: {
             token: recipient.fcm_token,
-            notification: {
+            data: {
               title: body.notification_type === 'updated' ? 'Task updated' : 'New task assigned',
               body: task.title || 'Open NutriGrid to view your task.',
-            },
-            data: {
               task_id: String(task.task_id),
               url: '/',
-            },
-            webpush: {
-              notification: {
-                icon: '/icon-192.png',
-                badge: '/icon-192.png',
-              },
             },
           },
         }),

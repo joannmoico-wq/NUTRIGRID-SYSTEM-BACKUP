@@ -46,8 +46,8 @@ export async function preparePushNotifications() {
 export async function listenForPushNotifications(onNotification) {
   if (!(await preparePushNotifications())) return () => {};
   return onMessage(getMessaging(app), (payload) => {
-    const title = payload.notification?.title || 'New task assigned';
-    const body = payload.notification?.body || 'Open NutriGrid to view your task.';
+    const title = payload.notification?.title || payload.data?.title || 'New task assigned';
+    const body = payload.notification?.body || payload.data?.body || 'Open NutriGrid to view your task.';
     void getMessagingServiceWorker().then((registration) =>
       registration.showNotification(title, {
         body,
