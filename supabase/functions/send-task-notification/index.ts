@@ -110,7 +110,7 @@ Deno.serve(async (request) => {
   const { data: { user }, error: authError } = await authClient.auth.getUser(jwt);
   if (authError || !user) return jsonResponse({ error: 'The admin session is invalid.' }, 401);
 
-  let body: { task_id?: string };
+  let body: { task_id?: string; notification_type?: string };
   try {
     body = await request.json();
   } catch {
@@ -118,6 +118,9 @@ Deno.serve(async (request) => {
   }
   if (!body.task_id || !/^\d+$/.test(String(body.task_id))) {
     return jsonResponse({ error: 'The task_id is invalid.' }, 400);
+  }
+  if (body.notification_type && !['assigned', 'updated'].includes(body.notification_type)) {
+    return jsonResponse({ error: 'The notification type is invalid.' }, 400);
   }
 
   const { data: adminProfile, error: adminError } = await authClient
@@ -188,7 +191,7 @@ Deno.serve(async (request) => {
           message: {
             token: recipient.fcm_token,
             notification: {
-              title: 'New task assigned',
+              title: body.notification_type === 'updated' ? 'Task updated' : 'New task assigned',
               body: task.title || 'Open NutriGrid to view your task.',
             },
             data: {

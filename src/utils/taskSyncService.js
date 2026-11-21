@@ -203,10 +203,14 @@ function getPendingTaskNotifications() {
   return readArray(PENDING_TASK_NOTIFICATIONS_KEY);
 }
 
-function queueTaskNotification(taskId) {
+function queueTaskNotification(taskId, notificationType = 'assigned') {
   const notifications = getPendingTaskNotifications();
   if (!notifications.some((item) => String(item.taskId) === String(taskId))) {
-    notifications.push({ taskId: String(taskId), queuedAt: new Date().toISOString() });
+    notifications.push({
+      taskId: String(taskId),
+      notificationType,
+      queuedAt: new Date().toISOString(),
+    });
     localStorage.setItem(PENDING_TASK_NOTIFICATIONS_KEY, JSON.stringify(notifications));
   }
 }
@@ -218,7 +222,7 @@ function removePendingTaskNotification(taskId) {
   localStorage.setItem(PENDING_TASK_NOTIFICATIONS_KEY, JSON.stringify(remaining));
 }
 
-async function sendPendingTaskNotification(taskId) {
+async function sendPendingTaskNotification(taskId, notificationType = 'assigned') {
   const refresh = await supabase.auth.refreshSession();
   const session = refresh.data.session;
   if (refresh.error || !session?.access_token) {
@@ -235,16 +239,27 @@ async function sendPendingTaskNotification(taskId) {
         retry: true,
       };
     }
-    return invokeTaskNotification(taskId, currentSession.access_token);
+    return invokeTaskNotification(taskId, currentSession.access_token, notificationType);
   }
-  return invokeTaskNotification(taskId, session.access_token);
+  return invokeTaskNotification(taskId, session.access_token, notificationType);
 }
 
-async function invokeTaskNotification(taskId, accessToken) {
+async function sendTaskNotification(taskId, result, notificationType = 'assigned') {
+  queueTaskNotification(taskId, notificationType);
+  const notificationResult = await sendPendingTaskNotification(taskId, notificationType);
+  if (notificationResult.error) {
+    result.notificationErrors.push(notificationResult.error);
+    console.warn(
+      `Task ${taskId} was saved, but its push notification was not sent: ${notificationResult.error}`
+    );
+  }
+}
+
+async function invokeTaskNotification(taskId, accessToken, notificationType) {
   const { data, error } = await supabase.functions.invoke(
     'send-task-notification',
     {
-      body: { task_id: String(taskId) },
+      body: { task_id: String(taskId), notification_type: notificationType },
       headers: { Authorization: `Bearer ${accessToken}` },
     }
   );
@@ -504,10 +519,19 @@ export function saveTaskLocally(task, fieldsToSync) {
       ? String(item.task_id) === String(task.task_id)
       : !isValidTaskId(item.task_id) && sameLocalTask(item, task)
   );
+  const pendingChanges = getPendingTaskChanges();
+  const previousChange = pendingChanges.find(
+    (item) => samePendingTask(item, task.task_id, task)
+  );
+  const isRemoteTask =
+    isValidTaskId(task.task_id) && !String(task.task_id).startsWith('-');
+  const hasTaskDetailUpdate = fieldsToSync?.some(
+    (field) => field !== 'status' && field !== 'completed_at'
+  );
   if (index < 0) tasks.push(task);
   else tasks[index] = { ...tasks[index], ...task };
 
-  const pending = getPendingTaskChanges().filter(
+  const pending = pendingChanges.filter(
     (item) => !samePendingTask(item, task.task_id, task)
   );
   const change = {
@@ -515,14 +539,23 @@ export function saveTaskLocally(task, fieldsToSync) {
     operation: 'upsert',
     task,
     updatedAt: new Date().toISOString(),
+    notifyAssignee: Boolean(
+      previousChange?.notifyAssignee ||
+      previousChange?.notifyOnAssignment ||
+      (isRemoteTask && hasTaskDetailUpdate)
+    ),
   };
-  if (fieldsToSync) {
-    change.updates = Object.fromEntries(
+  const updates = {
+    ...(previousChange?.updates || {}),
+    ...(fieldsToSync
+      ? Object.fromEntries(
       fieldsToSync
         .filter((field) => Object.prototype.hasOwnProperty.call(task, field))
         .map((field) => [field, task[field]])
-    );
-  }
+        )
+      : {}),
+  };
+  if (Object.keys(updates).length) change.updates = updates;
   pending.push(change);
   localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(pending));
   publishTasks(tasks, task, 'upsert');
@@ -649,7 +682,10 @@ export async function syncPendingTasks({ taskIds } = {}) {
   const result = { synced: 0, records: 0, errors: [], notificationErrors: [], migrationPending: false };
   try {
     for (const notification of getPendingTaskNotifications()) {
-      const notificationResult = await sendPendingTaskNotification(notification.taskId);
+      const notificationResult = await sendPendingTaskNotification(
+        notification.taskId,
+        notification.notificationType
+      );
       if (notificationResult.error) {
         result.notificationErrors.push(notificationResult.error);
         console.warn(
@@ -863,14 +899,7 @@ export async function syncPendingTasks({ taskIds } = {}) {
                   .single();
                 if (!response.error && response.data) {
                   syncedTaskId = response.data.task_id;
-                  queueTaskNotification(syncedTaskId);
-                  const notificationResult = await sendPendingTaskNotification(syncedTaskId);
-                  if (notificationResult.error) {
-                    result.notificationErrors.push(notificationResult.error);
-                    console.warn(
-                      `Task ${syncedTaskId} was saved, but its push notification was not sent: ${notificationResult.error}`
-                    );
-                  }
+                  await sendTaskNotification(syncedTaskId, result);
                 }
               }
             }
@@ -942,6 +971,10 @@ export async function syncPendingTasks({ taskIds } = {}) {
             `Task ${change.taskId} update: Supabase did not confirm an updated task row. Check that the task exists and the signed-in user is allowed to update it.`
           );
           continue;
+        }
+
+        if (change.operation === 'upsert' && change.notifyAssignee) {
+          await sendTaskNotification(syncedTaskId, result, 'updated');
         }
 
         if (String(syncedTaskId) !== String(change.taskId)) {

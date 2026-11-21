@@ -312,7 +312,16 @@ export default function AdminTasks({
       action: async () => {
         setBusy(true);
         const actionLabel = editingTask ? 'Task updated' : 'Task assigned';
-        saveTaskLocally(task);
+        saveTaskLocally(task, [
+          'title',
+          'description',
+          'purok',
+          'priority',
+          'due_date',
+          'assigned_to_user_id',
+          'status',
+          'completed_at',
+        ]);
         setTasks(deduplicateTasks(getLocalTasks()));
         setForm(emptyForm);
         setShowForm(false);
