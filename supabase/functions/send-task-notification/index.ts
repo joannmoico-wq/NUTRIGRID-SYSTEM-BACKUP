@@ -105,6 +105,7 @@ Deno.serve(async (request) => {
 
   const authClient = createClient(supabaseUrl, anonKey, {
     auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${jwt}` } },
   });
   const { data: { user }, error: authError } = await authClient.auth.getUser(jwt);
   if (authError || !user) return jsonResponse({ error: 'The admin session is invalid.' }, 401);
@@ -119,32 +120,40 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: 'The task_id is invalid.' }, 400);
   }
 
-  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data: adminProfile, error: adminError } = await adminClient
+  const { data: adminProfile, error: adminError } = await authClient
     .from('profiles')
     .select('role, approved')
     .eq('id', user.id)
     .maybeSingle();
-  if (adminError) return jsonResponse({ error: 'Could not verify admin approval.' }, 500);
+  if (adminError) {
+    console.error('Could not verify the task-notification admin profile:', adminError);
+    return jsonResponse({ error: 'Could not verify admin approval.' }, 500);
+  }
   if (adminProfile?.role?.toLowerCase() !== 'admin' || adminProfile.approved !== true) {
     return jsonResponse({ error: 'Only approved admins can send task notifications.' }, 403);
   }
 
-  const { data: task, error: taskError } = await adminClient
+  const { data: task, error: taskError } = await authClient
     .from('tasks')
     .select('task_id, title, assigned_to_user_id')
     .eq('task_id', body.task_id)
     .maybeSingle();
   if (taskError) {
-    console.error('Could not load the assigned task for push notification:', taskError);
-    return jsonResponse({
-      error: `Could not load the assigned task: ${taskError.message}`,
-    }, 500);
+    console.error('Could not load the assigned task for notification:', {
+      taskId: body.task_id,
+      userId: user.id,
+      code: taskError.code,
+      message: taskError.message,
+      details: taskError.details,
+      hint: taskError.hint,
+    });
+    return jsonResponse({ error: 'Could not load the assigned task.' }, 500);
   }
   if (!task) return jsonResponse({ error: 'Task not found.' }, 404);
 
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
   const { data: recipient, error: recipientError } = await adminClient
     .from('profiles')
     .select('fcm_token')
