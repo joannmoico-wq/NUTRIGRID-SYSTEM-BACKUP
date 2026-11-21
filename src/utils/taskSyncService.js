@@ -8,6 +8,8 @@ const TASK_NOTIFICATION_PREFIX = 'nutrigrid_task_notification_';
 const TASK_PAGE_SIZE = 100;
 let syncingTasks = false;
 let syncRequested = false;
+let syncAllRequested = false;
+const requestedTaskIds = new Set();
 
 function readArray(key) {
   try {
@@ -167,12 +169,14 @@ export function deleteTaskLocally(taskId, source = 'admin') {
   const tasks = getLocalTasks().filter((item) => String(item.task_id) !== String(taskId));
   const pending = getPendingTaskChanges();
   const nextPending = pending.filter((item) => String(item.taskId) !== String(taskId));
-  nextPending.push({
-    taskId: String(taskId),
-    operation: 'delete',
-    source,
-    updatedAt: new Date().toISOString(),
-  });
+  if (!String(taskId).startsWith('-')) {
+    nextPending.push({
+      taskId: String(taskId),
+      operation: 'delete',
+      source,
+      updatedAt: new Date().toISOString(),
+    });
+  }
   localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(nextPending));
   publishTasks(tasks, { task_id: taskId }, 'delete');
 }
@@ -224,7 +228,13 @@ export async function loadTasks({ assignedToUserId } = {}) {
   return selectTasks(merged);
 }
 
-export async function syncPendingTasks() {
+export async function syncPendingTasks({ taskIds } = {}) {
+  const isTargetedSync = Array.isArray(taskIds) && taskIds.length > 0;
+  if (isTargetedSync) {
+    taskIds.forEach((taskId) => requestedTaskIds.add(String(taskId)));
+  } else {
+    syncAllRequested = true;
+  }
   if (syncingTasks) {
     syncRequested = true;
     return { synced: 0, errors: [], skipped: 'sync-in-progress' };
@@ -236,13 +246,23 @@ export async function syncPendingTasks() {
   syncingTasks = true;
   const result = { synced: 0, records: 0, errors: [], notificationErrors: [], migrationPending: false };
   try {
-    const pendingLogResult = await flushPendingSyncLogs();
-    if (pendingLogResult.errors.length) {
-      console.error('Previously queued sync logs are still waiting:', pendingLogResult.errors);
+    if (!isTargetedSync) {
+      void flushPendingSyncLogs()
+        .then(({ errors }) => {
+          if (errors.length) console.error('Previously queued sync logs are still waiting:', errors);
+        })
+        .catch((error) => console.error('Could not flush queued sync logs:', error));
     }
     do {
       syncRequested = false;
-      for (const change of getPendingTaskChanges()) {
+      const syncAll = syncAllRequested;
+      const taskIdsToSync = new Set(requestedTaskIds);
+      syncAllRequested = false;
+      requestedTaskIds.clear();
+      const pendingChanges = getPendingTaskChanges().filter(
+        (change) => syncAll || taskIdsToSync.has(String(change.taskId))
+      );
+      for (const change of pendingChanges) {
         result.records++;
         let response;
         let syncedTaskId = change.taskId;
@@ -271,7 +291,29 @@ export async function syncPendingTasks() {
               continue;
             }
           }
-          response = await supabase.from('tasks').delete().eq('task_id', change.taskId);
+          response = await supabase
+            .from('tasks')
+            .delete()
+            .eq('task_id', change.taskId)
+            .select('task_id');
+          if (!response.error && !response.data?.length) {
+            const existing = await supabase
+              .from('tasks')
+              .select('task_id')
+              .eq('task_id', change.taskId)
+              .maybeSingle();
+            if (existing.error) {
+              response = { error: existing.error };
+            } else {
+              response = {
+                error: {
+                  message: existing.data
+                    ? 'Supabase did not delete the task. Check the task delete policy.'
+                    : 'Supabase did not confirm task deletion. The task may already be deleted or hidden by row-level security.',
+                },
+              };
+            }
+          }
         } else {
           const { task } = change;
           if (!task) continue;
@@ -370,7 +412,12 @@ export async function syncPendingTasks() {
             result.migrationPending = true;
             continue;
           }
-          result.errors.push(`Task ${change.taskId} ${change.operation}: ${response.error.message}`);
+          const rlsHint = response.error.code === '42501'
+            ? ' Run supabase-tasks-rls-fix.sql and verify the signed-in admin profile is approved.'
+            : '';
+          result.errors.push(
+            `Task ${change.taskId} ${change.operation}: ${response.error.message}${rlsHint}`
+          );
           continue;
         }
         if (
@@ -408,13 +455,16 @@ export async function syncPendingTasks() {
       }
     } while (syncRequested && navigator.onLine);
 
-    const logError = await writeSyncLog(
+    void writeSyncLog(
       session.user.id,
       result.records,
       result.synced,
       result.errors.length > 0
-    );
-    if (logError) result.errors.push(`Could not write task sync log: ${logError}`);
+    )
+      .then((logError) => {
+        if (logError) console.error('Could not write task sync log:', logError);
+      })
+      .catch((error) => console.error('Could not write task sync log:', error));
   } finally {
     syncingTasks = false;
   }

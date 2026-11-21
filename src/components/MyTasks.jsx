@@ -9,7 +9,11 @@ import {
   isTaskOverdue,
   notifyTaskOnce,
 } from '../utils/taskSyncService';
-import { preparePushNotifications, registerPushToken } from '../utils/pushNotifications';
+import {
+  listenForPushNotifications,
+  preparePushNotifications,
+  registerPushToken,
+} from '../utils/pushNotifications';
 import { Calendar, MapPin, Bell, CheckCircle2, Circle, Clock, PartyPopper, X } from 'lucide-react';
 import BnsSearchBar from './BnsSearchBar';
 import TaskIcon from './TaskIcon';
@@ -117,6 +121,27 @@ export default function MyTasks() {
   }, [permission]);
 
   useEffect(() => {
+    if (permission !== 'granted') return undefined;
+    let active = true;
+    let unsubscribe;
+    listenForPushNotifications(({ title }) => {
+      if (active) setBanner(title);
+    })
+      .then((stopListening) => {
+        if (active) unsubscribe = stopListening;
+        else stopListening();
+      })
+      .catch((error) => {
+        console.error('Could not listen for task push notifications:', error);
+        if (active) setPushMessage(error.message);
+      });
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [permission]);
+
+  useEffect(() => {
     if (permission !== 'granted' || pushRegistrationAttempted.current) return;
     pushRegistrationAttempted.current = true;
     registerPushToken({ requestPermission: false })
@@ -198,7 +223,7 @@ export default function MyTasks() {
         (task.status !== 'Completed' || task.task_id === (next === 'Completed' ? t.task_id : completionTaskIdRef.current))
     ));
     try {
-      const result = await syncPendingTasks();
+      const result = await syncPendingTasks({ taskIds: [t.task_id] });
       if (result.errors?.length) {
         console.error('Task status is saved locally and waiting to sync:', result.errors);
         setSyncMessage(`Saved on this device; Supabase update failed and will retry automatically: ${result.errors[0]}`);

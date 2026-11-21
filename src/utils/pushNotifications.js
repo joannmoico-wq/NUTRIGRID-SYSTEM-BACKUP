@@ -1,4 +1,4 @@
-import { getMessaging, getToken, isSupported } from 'firebase/messaging';
+import { getMessaging, getToken, isSupported, onMessage } from 'firebase/messaging';
 import { initializeApp, getApps } from 'firebase/app';
 import { supabase } from './supabaseClient';
 
@@ -41,6 +41,26 @@ export async function preparePushNotifications() {
 
   await getMessagingServiceWorker();
   return true;
+}
+
+export async function listenForPushNotifications(onNotification) {
+  if (!(await preparePushNotifications())) return () => {};
+  return onMessage(getMessaging(app), (payload) => {
+    const title = payload.notification?.title || 'New task assigned';
+    const body = payload.notification?.body || 'Open NutriGrid to view your task.';
+    void getMessagingServiceWorker().then((registration) =>
+      registration.showNotification(title, {
+        body,
+        icon: '/icon-192.png',
+        badge: '/icon-192.png',
+        tag: `nutrigrid-task-${payload.data?.task_id || 'new'}`,
+        data: { url: payload.data?.url || '/', taskId: payload.data?.task_id },
+      })
+    ).catch((error) => {
+      console.error('Could not display the task push notification:', error);
+    });
+    onNotification?.({ title, body, taskId: payload.data?.task_id });
+  });
 }
 
 export async function registerPushToken({ requestPermission = true } = {}) {

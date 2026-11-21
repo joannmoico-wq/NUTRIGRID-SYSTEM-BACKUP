@@ -312,8 +312,10 @@ export default function AdminTasks({
 
         void (async () => {
           try {
-            const result = await syncPendingTasks();
-            if (result.errors?.length || result.skipped) {
+            const result = await syncPendingTasks({ taskIds: [task.task_id] });
+            if (result.errors?.length) {
+              setMessage(`Task sync failed; saved on this device and will retry: ${result.errors[0]}`);
+            } else if (result.skipped) {
               setMessage('Saved on this device. The task will sync when this device is online and signed in.');
             } else if (result.migrationPending) {
               setMessage('Saved on this device. Apply the latest task migration in Supabase to sync overdue details.');
@@ -342,10 +344,12 @@ export default function AdminTasks({
     deleteTaskLocally(id);
     setTasks(deduplicateTasks(getLocalTasks()));
     try {
-      const result = await syncPendingTasks();
-      setMessage(result.errors?.length || result.skipped
-        ? 'Deleted on this device. The deletion will sync when online.'
-        : 'Task deleted.');
+      const result = await syncPendingTasks({ taskIds: [id] });
+      setMessage(result.errors?.length
+        ? `Delete sync failed; the task is hidden on this device and will retry: ${result.errors[0]}`
+        : result.skipped
+          ? 'Deleted on this device. The deletion will sync when online.'
+          : 'Task deleted.');
     } catch (error) {
       console.error('Could not sync task deletion:', error);
       setMessage('Deleted on this device. The deletion will sync when Supabase is available.');
@@ -378,10 +382,12 @@ export default function AdminTasks({
     setRescheduleDate('');
 
     try {
-      const result = await syncPendingTasks();
-      setMessage(result.errors?.length || result.skipped
-        ? 'New due date saved on this device. It will sync when online.'
-        : 'Task rescheduled.');
+      const result = await syncPendingTasks({ taskIds: [updatedTask.task_id] });
+      setMessage(result.errors?.length
+        ? `Task sync failed; the new due date is saved on this device and will retry: ${result.errors[0]}`
+        : result.skipped
+          ? 'New due date saved on this device. It will sync when online.'
+          : 'Task rescheduled.');
     } catch (error) {
       console.error('Could not sync task reschedule:', error);
       setMessage('New due date saved on this device. It will sync when Supabase is available.');
