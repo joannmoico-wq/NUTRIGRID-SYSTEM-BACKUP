@@ -1,8 +1,8 @@
 // NutriGrid Service Worker - Offline-First PWA
 // This enables offline functionality and app installation
 
-const CACHE_NAME = 'nutrigrid-v4';
-const RUNTIME_CACHE = 'nutrigrid-runtime-v2';
+const CACHE_NAME = 'nutrigrid-v5';
+const RUNTIME_CACHE = 'nutrigrid-runtime-v3';
 
 // Assets to cache on install
 const ASSETS_TO_CACHE = [
@@ -46,10 +46,8 @@ self.addEventListener('activate', (event) => {
           }
         })
       );
-    })
+    }).then(() => self.clients.claim())
   );
-  
-  self.clients.claim();
 });
 
 // Fetch event - Serve from cache, fallback to network

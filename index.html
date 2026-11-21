@@ -67,9 +67,28 @@
             }
           } else {
             window.addEventListener('load', () => {
-              navigator.serviceWorker.register('/service-worker.js', { scope: '/' })
-                .then(() => console.log('NutriGrid service worker registered'))
-                .catch((error) => console.error('NutriGrid service worker registration failed:', error));
+              const hadController = Boolean(navigator.serviceWorker.controller);
+              if (hadController) {
+                navigator.serviceWorker.addEventListener(
+                  'controllerchange',
+                  () => window.location.reload(),
+                  { once: true }
+                );
+              }
+
+              navigator.serviceWorker.register('/service-worker.js', {
+                scope: '/',
+                updateViaCache: 'none',
+              }).then(async (registration) => {
+                console.log('NutriGrid service worker registered');
+                try {
+                  await registration.update();
+                } catch (error) {
+                  console.error('NutriGrid service worker update check failed:', error);
+                }
+              }).catch((error) => {
+                console.error('NutriGrid service worker registration failed:', error);
+              });
             });
           }
         }
