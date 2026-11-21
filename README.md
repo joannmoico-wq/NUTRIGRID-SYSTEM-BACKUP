@@ -208,8 +208,9 @@ record sync/pull refreshes the local copy.
 
 ## Live Admin/PWA record updates
 
-Run `supabase-records-realtime.sql` in the Supabase SQL Editor to enable live
-insert, edit, and delete notifications for health records. The script adds the
-record tables to the Realtime publication and configures full old-row data so
-deletions can be matched to the local record. Realtime changes are applied to
-the local cache directly; a full record reload is only used as a fallback.
+Run `supabase-records-realtime.sql` in the current Supabase project's SQL Editor
+to enable live insert, edit, and delete notifications for health records and
+activity logs. Re-run it after switching Supabase projects. The script adds the
+tables to the Realtime publication and configures full old-row data so deletions
+can be matched to the local record. Realtime changes are applied to the local
+cache directly; a full record reload is only used as a fallback.

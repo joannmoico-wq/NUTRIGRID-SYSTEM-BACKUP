@@ -30,5 +30,19 @@ begin
       execute format('alter publication supabase_realtime add table public.%I', table_name);
     end if;
   end loop;
+
+  if to_regclass('public.record_activity_logs') is not null then
+    alter table public.record_activity_logs replica identity full;
+
+    if not exists (
+      select 1
+      from pg_publication_tables publication_table
+      where publication_table.pubname = 'supabase_realtime'
+        and publication_table.schemaname = 'public'
+        and publication_table.tablename = 'record_activity_logs'
+    ) then
+      alter publication supabase_realtime add table public.record_activity_logs;
+    end if;
+  end if;
 end
 $$;

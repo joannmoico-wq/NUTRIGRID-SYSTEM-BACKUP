@@ -200,7 +200,7 @@ function normalizeAdminRecord(category, row, idColumn) {
 
   record.purok = row.purok ?? record.purok ?? '';
   record.id = payload.id ?? row.local_id ?? row[idColumn];
-  record.created_at = row.created_at || payload.created_at;
+  record.created_at = payload.created_at || row.created_at;
   const updatedAtCandidates = [row.updated_at, payload.updated_at]
     .filter((value) => value && !Number.isNaN(Date.parse(value)));
   record.updated_at = updatedAtCandidates.sort(

@@ -1,4 +1,8 @@
 import { supabase } from './supabaseClient';
+import {
+  getPhilippineMonthKey,
+  getPhilippineMonthRange,
+} from './philippineDateTime';
 
 const ACTIVITY_TABLE = 'record_activity_logs';
 const PENDING_ACTIVITY_KEY = 'nutrigrid_pending_record_activity';
@@ -217,13 +221,8 @@ export async function loadRecordActivityLogs(options = {}) {
 
   const monthMatch = String(month || '').match(/^(\d{4})-(\d{2})$/);
   if (monthMatch) {
-    const year = Number(monthMatch[1]);
-    const monthNumber = Number(monthMatch[2]);
-    if (monthNumber >= 1 && monthNumber <= 12) {
-      query = query
-        .gte('created_at', new Date(year, monthNumber - 1, 1).toISOString())
-        .lt('created_at', new Date(year, monthNumber, 1).toISOString());
-    }
+    const range = getPhilippineMonthRange(month);
+    if (range) query = query.gte('created_at', range.start).lt('created_at', range.end);
   }
 
   const { data, error } = await query.limit(limit);
@@ -231,9 +230,7 @@ export async function loadRecordActivityLogs(options = {}) {
 
   const pending = readPendingActivityLogs().filter((log) => {
     if (!monthMatch) return true;
-    const date = new Date(log.created_at);
-    return date.getFullYear() === Number(monthMatch[1])
-      && date.getMonth() + 1 === Number(monthMatch[2]);
+    return getPhilippineMonthKey(new Date(log.created_at)) === month;
   });
   const merged = new Map((data || []).map((log) => [log.id, log]));
   pending.forEach((log) => {

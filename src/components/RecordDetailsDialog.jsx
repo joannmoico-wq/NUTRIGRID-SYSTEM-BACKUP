@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { getRecords, storageKeyForCategory, toAdminEnvironmental } from '../utils/bnsStorage';
 import { calculateWhoBmiForAge } from '../utils/childGrowth';
+import { formatPhilippineDateTime } from '../utils/philippineDateTime';
 
 /**
  * Record details pop-up shared by the Admin Dashboard and the field-worker PWA.
@@ -179,10 +180,9 @@ function formatDateValue(value) {
   if (Number.isNaN(date.getTime())) return String(value);
   const dateOptions = { year: 'numeric', month: 'short', day: 'numeric' };
   const hasTime = /T\d{2}:\d{2}/.test(String(value));
-  return new Intl.DateTimeFormat(
-    'en-PH',
-    hasTime ? { ...dateOptions, hour: 'numeric', minute: '2-digit' } : dateOptions
-  ).format(date);
+  return formatPhilippineDateTime(value, hasTime
+    ? { ...dateOptions, hour: 'numeric', minute: '2-digit' }
+    : dateOptions);
 }
 
 function formatValue(value, key = '') {
@@ -205,8 +205,14 @@ function formatValue(value, key = '') {
 function formatStamp(value) {
   const date = value ? new Date(value) : null;
   if (!date || Number.isNaN(date.getTime())) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}/${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  return formatPhilippineDateTime(value, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).replace(/-/g, '/');
 }
 
 async function copyText(text) {
@@ -920,11 +926,13 @@ function buildProfile(raw, ctx) {
 function geoStamp(raw, fallback) {
   const lat = has(raw.gps_lat) ? Number(raw.gps_lat) : NaN;
   const lng = has(raw.gps_lng) ? Number(raw.gps_lng) : NaN;
-  const source = raw.photo_taken_at || raw.updated_at || raw.created_at;
+  const source = raw.photo_taken_at || raw.created_at || raw.updated_at;
   const when = toDate(source);
-  const date = when ? when.toLocaleDateString('en-US', SHORT_DATE) : '';
+  const date = when
+    ? formatPhilippineDateTime(when, SHORT_DATE)
+    : '';
   const time = when && /T\d{2}:\d{2}/.test(String(source))
-    ? new Date(source).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+    ? formatPhilippineDateTime(source, { hour: 'numeric', minute: '2-digit' })
     : '';
   const stampText = join([date, time]) || fallback;
   if (!Number.isFinite(lat) || !Number.isFinite(lng)) return { hasGeo: false, text: stampText };
@@ -1352,7 +1360,7 @@ function RecordDetailsDialogInner({ record, recordCategory, onClose, barangay = 
   const personName = raw.household_head || raw.child_name || raw.mother_name ||
     [raw.first_name, raw.middle_name, raw.last_name].filter(Boolean).join(' ');
   const purok = raw.purok ? formatValue(raw.purok, 'purok') : '';
-  const stamp = formatStamp(raw.photo_taken_at || raw.updated_at || raw.created_at);
+  const stamp = formatStamp(raw.photo_taken_at || raw.created_at || raw.updated_at);
 
   const doCopy = async (kind, text) => {
     setCopied((await copyText(text)) ? kind : `${kind}-failed`);

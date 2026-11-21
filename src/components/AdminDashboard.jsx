@@ -95,6 +95,10 @@ import {
   recordInformationEdit,
 } from '../utils/activityLogService';
 import {
+  formatPhilippineDateTime,
+  getPhilippineMonthKey,
+} from '../utils/philippineDateTime';
+import {
   PieChart,
   Pie,
   Cell,
@@ -489,7 +493,7 @@ function ActivityLogsView({
     if (!matchesActivityActorFilter(log, selectedActorType, currentUserId)) return false;
     const date = new Date(log.created_at);
     if (Number.isNaN(date.getTime())) return false;
-    if (`${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}` !== selectedMonth) {
+    if (getPhilippineMonthKey(date) !== selectedMonth) {
       return false;
     }
     const query = searchQuery.trim().toLowerCase();
@@ -500,7 +504,7 @@ function ActivityLogsView({
       getActivityCategoryLabel(log.category),
       log.action,
       log.record_id,
-      date.toLocaleString(),
+      formatPhilippineDateTime(date),
       ...changes.flatMap((change) => [
         change.label,
         change.field,
@@ -615,7 +619,7 @@ function ActivityLogsView({
                       {String(log.action || 'edited').toUpperCase()} BY {getActivityActorDisplayName(log.actor_name).toUpperCase()} · {getActivityCategoryLabel(log.category).toUpperCase()}
                     </h3>
                     <p className={`mt-0.5 text-xs ${darkMode ? 'text-slate-400' : 'text-gray-500'}`}>
-                      RECORD {log.record_id} · {new Date(log.created_at).toLocaleString()}
+                      RECORD {log.record_id} · {formatPhilippineDateTime(log.created_at)}
                       {log.pending_sync ? ' · Waiting to sync' : ''}
                     </p>
                   </div>
@@ -651,10 +655,7 @@ function ActivityLogsPage({
   currentUserId,
   onLoadMonth,
 }) {
-  const [selectedMonth, setSelectedMonth] = useState(() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-  });
+  const [selectedMonth, setSelectedMonth] = useState(() => getPhilippineMonthKey());
   const [searchQuery, setSearchQuery] = useState('');
   const [showSearchSuggestions, setShowSearchSuggestions] = useState(false);
   const [actionFilter, setActionFilter] = useState('all');
@@ -948,8 +949,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
   const [scheduledVisitPurok, setScheduledVisitPurok] = useState('');
   const notifRef = useRef(null);
   const currentActivityMonth = (() => {
-    const now = new Date();
-    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    return getPhilippineMonthKey();
   })();
   const activityLogMonthRef = useRef(currentActivityMonth);
 
@@ -1022,13 +1022,24 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
 
   useEffect(() => {
     void refreshActivityLogs();
-    const interval = window.setInterval(() => void refreshActivityLogs(), 30000);
+    const channel = supabase
+      .channel(`admin-activity-log-updates-${currentUserId || 'shared'}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'record_activity_logs' },
+        () => void refreshActivityLogs()
+      )
+      .subscribe((status, error) => {
+        if (['CHANNEL_ERROR', 'TIMED_OUT'].includes(status)) {
+          console.error('Could not subscribe to Admin Dashboard activity log updates:', error || status);
+        }
+      });
     window.addEventListener('nutrigrid-activity-logs-changed', refreshActivityLogs);
     return () => {
-      window.clearInterval(interval);
       window.removeEventListener('nutrigrid-activity-logs-changed', refreshActivityLogs);
+      void supabase.removeChannel(channel);
     };
-  }, [refreshActivityLogs]);
+  }, [currentUserId, refreshActivityLogs]);
 
   useEffect(() => {
     localStorage.setItem(DARK_MODE_KEY, String(darkMode));
