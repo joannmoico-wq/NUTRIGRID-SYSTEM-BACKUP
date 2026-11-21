@@ -88,7 +88,7 @@ function sameLocalTask(left, right) {
   const leftTimestamp = taskTimestamp(left);
   const rightTimestamp = taskTimestamp(right);
   if (leftTimestamp !== null && rightTimestamp !== null) {
-    return leftTimestamp === rightTimestamp;
+    return leftTimestamp === rightTimestamp && taskCoreMatches(left, right);
   }
   return taskIdentity(left) === taskIdentity(right);
 }
@@ -103,31 +103,86 @@ function samePendingTask(change, taskId, task) {
 
 async function findRemoteTaskForRetry(task) {
   const createdAt = taskTimestamp(task);
-  if (createdAt === null) return { taskId: null };
+  if (createdAt !== null) {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('task_id, created_at, title, description, purok, due_date, assigned_to_user_id')
+      .gte('created_at', new Date(createdAt - 1000).toISOString())
+      .lte('created_at', new Date(createdAt + 1000).toISOString())
+      .limit(100);
+    if (error) return { error: error.message };
 
-  const { data, error } = await supabase
-    .from('tasks')
-    .select('task_id, created_at, title, description, purok, due_date, assigned_to_user_id')
-    .gte('created_at', new Date(createdAt - 1000).toISOString())
-    .lte('created_at', new Date(createdAt + 1000).toISOString())
-    .limit(100);
-  if (error) return { error: error.message };
+    const exactTimestampMatches = (data || []).filter(
+      (row) =>
+        isValidTaskId(row.task_id) &&
+        taskTimestamp(row) === createdAt &&
+        row.assigned_to_user_id === task.assigned_to_user_id
+    );
+    if (exactTimestampMatches.length === 1) {
+      return { taskId: exactTimestampMatches[0].task_id };
+    }
 
-  const matches = (data || []).filter((row) => {
-    const rowTimestamp = taskTimestamp(row);
-    return isValidTaskId(row.task_id) &&
-      rowTimestamp !== null &&
-      Math.abs(rowTimestamp - createdAt) <= 1000 &&
-      taskCoreMatches(row, task);
-  });
+    const matches = (data || []).filter((row) => {
+      const rowTimestamp = taskTimestamp(row);
+      return isValidTaskId(row.task_id) &&
+        rowTimestamp !== null &&
+        Math.abs(rowTimestamp - createdAt) <= 1000 &&
+        taskCoreMatches(row, task);
+    });
+    if (matches.length === 1) return { taskId: matches[0].task_id };
+    if (matches.length > 1) {
+      const dueDateMatches = matches.filter(
+        (row) => String(row.due_date || '').slice(0, 10) === String(task.due_date || '').slice(0, 10)
+      );
+      if (dueDateMatches.length === 1) return { taskId: dueDateMatches[0].task_id };
+      return { error: 'Multiple matching Supabase tasks were found; no duplicate was created.' };
+    }
+  }
+
+  if (!task.assigned_to_user_id || !task.title) return { taskId: null };
+  const remoteTasks = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('tasks')
+      .select('task_id, created_at, title, description, purok, due_date, assigned_to_user_id')
+      .eq('assigned_to_user_id', task.assigned_to_user_id)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + TASK_PAGE_SIZE - 1);
+    if (error) return { error: error.message };
+    remoteTasks.push(...(data || []));
+    if (!data || data.length < TASK_PAGE_SIZE) break;
+    offset += TASK_PAGE_SIZE;
+  }
+
+  const matches = remoteTasks.filter(
+    (row) => isValidTaskId(row.task_id) && taskCoreMatches(row, task)
+  );
+  if (matches.length === 1) return { taskId: matches[0].task_id };
   if (matches.length > 1) {
     const dueDateMatches = matches.filter(
       (row) => String(row.due_date || '').slice(0, 10) === String(task.due_date || '').slice(0, 10)
     );
     if (dueDateMatches.length === 1) return { taskId: dueDateMatches[0].task_id };
+    if (createdAt !== null) {
+      const ranked = dueDateMatches.length ? dueDateMatches : matches;
+      const byDistance = ranked
+        .map((row) => ({
+          row,
+          distance: Math.abs(taskTimestamp(row) - createdAt),
+        }))
+        .filter((entry) => Number.isFinite(entry.distance))
+        .sort((left, right) => left.distance - right.distance);
+      if (
+        byDistance.length &&
+        (byDistance.length === 1 || byDistance[0].distance < byDistance[1].distance)
+      ) {
+        return { taskId: byDistance[0].row.task_id };
+      }
+    }
     return { error: 'Multiple matching Supabase tasks were found; no duplicate was created.' };
   }
-  return { taskId: matches[0]?.task_id || null };
+  return { taskId: null };
 }
 
 async function getFunctionErrorMessage(error) {
@@ -781,11 +836,24 @@ export async function syncPendingTasks({ taskIds } = {}) {
                       .select('task_id')
                   : { error: null, data: [{ task_id: syncedTaskId }] };
               } else if (change.updates && Object.keys(change.updates).length) {
-                response = {
-                  error: {
-                    message: 'Could not find the original Supabase task to apply this update. Reload the task list and try again; no duplicate task was created.',
-                  },
-                };
+                const remainingChanges = getPendingTaskChanges().filter(
+                  (item) => String(item.taskId) !== String(change.taskId)
+                );
+                const remainingTasks = getLocalTasks().filter(
+                  (item) =>
+                    String(item.task_id) !== String(change.taskId) &&
+                    !sameLocalTask(item, task)
+                );
+                localStorage.setItem(
+                  PENDING_TASKS_STORAGE_KEY,
+                  JSON.stringify(remainingChanges)
+                );
+                publishTasks(remainingTasks, null, 'refresh');
+                console.info(
+                  `Removed stale local task update ${change.taskId}; no matching Supabase task exists.`
+                );
+                result.synced++;
+                continue;
               } else {
                 const { task_id: _localTaskId, ...taskToInsert } = task;
                 response = await supabase
