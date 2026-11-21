@@ -1656,6 +1656,13 @@ const HomeScreen = ({
     records: getUserRecords(storageKeyForCategory(category.id), currentUserId),
   }));
   const [assignedTasks, setAssignedTasks] = useState([]);
+  const [pushPermission, setPushPermission] = useState(
+    typeof Notification === 'undefined' ? 'unsupported' : Notification.permission
+  );
+  const [pushMessage, setPushMessage] = useState('');
+  const [pushRegistered, setPushRegistered] = useState(false);
+  const [registeringPush, setRegisteringPush] = useState(false);
+  const pushRegistrationAttemptedUserId = useRef(null);
   const pendingSyncNotifications = userCategoryRecords.flatMap((category) =>
     category.records
       .filter((record) => !record.synced && String(record.status || '').toLowerCase() !== 'synced')
@@ -1766,20 +1773,31 @@ const HomeScreen = ({
           event: '*',
           schema: 'public',
           table: 'tasks',
-          filter: `assigned_to_user_id=eq.${currentUserId}`,
         },
         () => void refreshAssignedTasks()
       )
-      .subscribe();
+      .subscribe((status, error) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+          console.error('Could not subscribe to live task updates:', error || status);
+        }
+      });
     const interval = window.setInterval(refreshAssignedTasks, 60000);
     const handleOnline = () => void refreshAssignedTasks();
     const handleTaskChange = () => void refreshAssignedTasks();
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshAssignedTasks();
+        if (typeof Notification !== 'undefined') setPushPermission(Notification.permission);
+      }
+    };
     const handleStorage = (event) => {
       if (event.key === 'nutrigrid_tasks' || event.key === 'nutrigrid_pending_task_changes') {
         handleTaskChange();
       }
     };
     window.addEventListener('online', handleOnline);
+    window.addEventListener('focus', handleOnline);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('bns-tasks-changed', handleTaskChange);
     window.addEventListener('storage', handleStorage);
 
@@ -1787,11 +1805,65 @@ const HomeScreen = ({
       active = false;
       window.clearInterval(interval);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener('focus', handleOnline);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('bns-tasks-changed', handleTaskChange);
       window.removeEventListener('storage', handleStorage);
       void supabase.removeChannel(channel);
     };
   }, [currentUserId]);
+
+  useEffect(() => {
+    if (
+      !currentUserId ||
+      pushPermission !== 'granted' ||
+      pushRegistrationAttemptedUserId.current === currentUserId
+    ) return undefined;
+
+    let active = true;
+    registerPushToken({ requestPermission: false })
+      .then((result) => {
+        if (active) {
+          pushRegistrationAttemptedUserId.current = currentUserId;
+          setPushRegistered(result.ok);
+          if (!result.ok) setPushMessage('Push alerts are not available on this device.');
+        }
+      })
+      .catch((error) => {
+        console.error('Could not register this device for task push notifications:', error);
+        if (active) setPushMessage(error.message);
+      });
+    return () => {
+      active = false;
+    };
+  }, [currentUserId, pushPermission]);
+
+  const enableTaskPushAlerts = async () => {
+    setRegisteringPush(true);
+    setPushMessage('');
+    try {
+      const result = await registerPushToken();
+      setPushPermission(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission);
+      setPushRegistered(result.ok);
+      if (!result.ok) {
+        setPushMessage(
+          result.reason === 'denied'
+            ? 'Notifications are blocked. Allow them for NutriGrid in your browser settings.'
+            : result.reason === 'not-signed-in'
+              ? 'Sign in again to enable task alerts on this device.'
+              : 'Push alerts are not supported by this browser or device.'
+        );
+      } else {
+        pushRegistrationAttemptedUserId.current = currentUserId;
+        setPushMessage('Task alerts are enabled on this device.');
+      }
+    } catch (error) {
+      console.error('Could not enable task push notifications:', error);
+      setPushMessage(error.message);
+    } finally {
+      setRegisteringPush(false);
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -2084,6 +2156,45 @@ const HomeScreen = ({
                     </>
                   )}
                 </div>
+                {pushPermission !== 'unsupported' && (
+                  <div className="border-t border-gray-100 p-3">
+                    {pushPermission === 'granted' ? (
+                      <div>
+                        <p role="status" className={`text-xs font-medium ${pushRegistered ? 'text-emerald-700' : 'text-amber-700'}`}>
+                          {pushRegistered
+                            ? pushMessage || 'Task alerts are enabled on this device.'
+                            : pushMessage || 'Task alerts are not registered on this device yet.'}
+                        </p>
+                        {!pushRegistered && (
+                          <button
+                            type="button"
+                            onClick={() => void enableTaskPushAlerts()}
+                            disabled={registeringPush}
+                            className="mt-2 w-full rounded-lg bg-violet-50 p-2 text-left font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-60"
+                          >
+                            {registeringPush ? 'Setting up task alerts…' : 'Set up task alerts'}
+                          </button>
+                        )}
+                      </div>
+                    ) : pushPermission === 'denied' ? (
+                      <p className="text-xs text-amber-700">
+                        Notifications are blocked. Allow them for NutriGrid in your browser settings.
+                      </p>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => void enableTaskPushAlerts()}
+                        disabled={registeringPush}
+                        className="w-full rounded-lg bg-violet-50 p-2 text-left font-semibold text-violet-700 hover:bg-violet-100 disabled:opacity-60"
+                      >
+                        {registeringPush ? 'Enabling task alerts…' : 'Enable task alerts on this device'}
+                      </button>
+                    )}
+                    {pushMessage && pushPermission === 'default' && (
+                      <p role="status" className="mt-1 text-xs text-rose-600">{pushMessage}</p>
+                    )}
+                  </div>
+                )}
                 </div>
               </>
             )}

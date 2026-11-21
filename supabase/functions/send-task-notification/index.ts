@@ -137,7 +137,12 @@ Deno.serve(async (request) => {
     .select('task_id, title, assigned_to_user_id')
     .eq('task_id', body.task_id)
     .maybeSingle();
-  if (taskError) return jsonResponse({ error: 'Could not load the assigned task.' }, 500);
+  if (taskError) {
+    console.error('Could not load the assigned task for push notification:', taskError);
+    return jsonResponse({
+      error: `Could not load the assigned task: ${taskError.message}`,
+    }, 500);
+  }
   if (!task) return jsonResponse({ error: 'Task not found.' }, 404);
 
   const { data: recipient, error: recipientError } = await adminClient
