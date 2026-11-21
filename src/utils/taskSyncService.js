@@ -3,6 +3,7 @@ import { flushPendingSyncLogs, writeSyncLog } from './syncService';
 
 const TASKS_STORAGE_KEY = 'nutrigrid_tasks';
 const PENDING_TASKS_STORAGE_KEY = 'nutrigrid_pending_task_changes';
+const PENDING_TASK_NOTIFICATIONS_KEY = 'nutrigrid_pending_task_notifications';
 const BHW_PROFILES_STORAGE_KEY = 'nutrigrid_bhw_profiles';
 const TASK_NOTIFICATION_PREFIX = 'nutrigrid_task_notification_';
 const TASK_PAGE_SIZE = 100;
@@ -84,6 +85,42 @@ function samePendingTask(change, taskId, task) {
   );
 }
 
+function taskDetailsMatch(left, right) {
+  const normalize = (value) => String(value ?? '').trim().toLowerCase();
+  return (
+    normalize(left.title) === normalize(right.title) &&
+    normalize(left.description) === normalize(right.description) &&
+    normalize(left.purok) === normalize(right.purok) &&
+    normalize(left.due_date).slice(0, 10) === normalize(right.due_date).slice(0, 10) &&
+    normalize(left.assigned_to_user_id) === normalize(right.assigned_to_user_id)
+  );
+}
+
+async function findRemoteTaskForRetry(task) {
+  const createdAt = taskTimestamp(task);
+  if (createdAt === null) return { taskId: null };
+
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('task_id, created_at, title, description, purok, due_date, assigned_to_user_id')
+    .gte('created_at', new Date(createdAt - 1000).toISOString())
+    .lte('created_at', new Date(createdAt + 1000).toISOString())
+    .limit(100);
+  if (error) return { error: error.message };
+
+  const matches = (data || []).filter((row) => {
+    const rowTimestamp = taskTimestamp(row);
+    return isValidTaskId(row.task_id) &&
+      rowTimestamp !== null &&
+      Math.abs(rowTimestamp - createdAt) <= 1000 &&
+      taskDetailsMatch(row, task);
+  });
+  if (matches.length > 1) {
+    return { error: 'Multiple matching Supabase tasks were found; no duplicate was created.' };
+  }
+  return { taskId: matches[0]?.task_id || null };
+}
+
 async function getFunctionErrorMessage(error) {
   const fallback = error?.message || 'The Edge Function could not send the notification.';
   const response = error?.context;
@@ -96,6 +133,73 @@ async function getFunctionErrorMessage(error) {
     console.warn('Could not read the task notification error response:', parseError);
     return fallback;
   }
+}
+
+function getPendingTaskNotifications() {
+  return readArray(PENDING_TASK_NOTIFICATIONS_KEY);
+}
+
+function queueTaskNotification(taskId) {
+  const notifications = getPendingTaskNotifications();
+  if (!notifications.some((item) => String(item.taskId) === String(taskId))) {
+    notifications.push({ taskId: String(taskId), queuedAt: new Date().toISOString() });
+    localStorage.setItem(PENDING_TASK_NOTIFICATIONS_KEY, JSON.stringify(notifications));
+  }
+}
+
+function removePendingTaskNotification(taskId) {
+  const remaining = getPendingTaskNotifications().filter(
+    (item) => String(item.taskId) !== String(taskId)
+  );
+  localStorage.setItem(PENDING_TASK_NOTIFICATIONS_KEY, JSON.stringify(remaining));
+}
+
+async function sendPendingTaskNotification(taskId) {
+  const refresh = await supabase.auth.refreshSession();
+  const session = refresh.data.session;
+  if (refresh.error || !session?.access_token) {
+    const current = await supabase.auth.getSession();
+    const currentSession = current.data.session;
+    if (
+      current.error ||
+      !currentSession?.access_token ||
+      !currentSession.expires_at ||
+      currentSession.expires_at * 1000 <= Date.now()
+    ) {
+      return {
+        error: 'Your sign-in session expired before the notification could be sent. Sign in again to retry it.',
+        retry: true,
+      };
+    }
+    return invokeTaskNotification(taskId, currentSession.access_token);
+  }
+  return invokeTaskNotification(taskId, session.access_token);
+}
+
+async function invokeTaskNotification(taskId, accessToken) {
+  const { data, error } = await supabase.functions.invoke(
+    'send-task-notification',
+    {
+      body: { task_id: String(taskId) },
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+  if (error) {
+    const message = await getFunctionErrorMessage(error);
+    if (error.context?.status === 404) {
+      removePendingTaskNotification(taskId);
+      return { error: message, retry: false };
+    }
+    return { error: message, retry: true };
+  }
+  if (data?.sent) {
+    removePendingTaskNotification(taskId);
+    return { sent: true };
+  }
+  if (data?.reason === 'device-not-registered') {
+    return { error: 'The assigned BHW has not registered this device for push notifications.', retry: true };
+  }
+  return { error: data?.reason || 'The notification was not sent.', retry: true };
 }
 
 async function findMatchingRemoteTaskId(task) {
@@ -205,17 +309,18 @@ export function getLocalTasks() {
 export function deduplicateTasks(tasks) {
   const unique = new Map();
   for (const task of tasks) {
+    const normalize = (value) => String(value ?? '').trim().toLowerCase();
     const identity = task.title
       ? JSON.stringify([
-          task.assigned_to_user_id,
-          task.title,
-          task.description,
-          task.purok,
-          task.due_date,
-          task.created_at || task.createdAt,
-          task.priority || 'Normal',
-          task.status || 'Pending',
-        ].map((value) => String(value ?? '').trim().toLowerCase()))
+          normalize(task.assigned_to_user_id),
+          normalize(task.title),
+          normalize(task.description),
+          normalize(task.purok),
+          normalize(task.due_date).slice(0, 10),
+          taskTimestamp(task),
+          normalize(task.priority || 'Normal'),
+          normalize(task.status || 'Pending'),
+        ])
       : `task:${task.task_id}`;
     if (!unique.has(identity)) unique.set(identity, task);
   }
@@ -469,12 +574,25 @@ export async function syncPendingTasks({ taskIds } = {}) {
     return { synced: 0, errors: [], skipped: 'sync-in-progress' };
   }
   if (!navigator.onLine) return { synced: 0, skipped: 'offline' };
-  const { data: { session } } = await supabase.auth.getSession();
+  let { data: { session } } = await supabase.auth.getSession();
+  if (session?.expires_at && session.expires_at * 1000 <= Date.now() + 60_000) {
+    const refreshed = await supabase.auth.refreshSession();
+    session = refreshed.error ? null : refreshed.data.session;
+  }
   if (!session) return { synced: 0, skipped: 'not-signed-in' };
 
   syncingTasks = true;
   const result = { synced: 0, records: 0, errors: [], notificationErrors: [], migrationPending: false };
   try {
+    for (const notification of getPendingTaskNotifications()) {
+      const notificationResult = await sendPendingTaskNotification(notification.taskId);
+      if (notificationResult.error) {
+        result.notificationErrors.push(notificationResult.error);
+        console.warn(
+          `Task ${notification.taskId} notification is still waiting: ${notificationResult.error}`
+        );
+      }
+    }
     if (!isTargetedSync) {
       void flushPendingSyncLogs()
         .then(({ errors }) => {
@@ -609,7 +727,7 @@ export async function syncPendingTasks({ taskIds } = {}) {
                 error: {
                   message: existing.data
                     ? 'Supabase did not delete the task. Check the task delete policy.'
-                    : 'Supabase did not confirm task deletion. The task may already be deleted or hidden by row-level security.',
+                    : 'Supabase could not confirm task deletion. It may already be deleted or hidden by row-level security; verify the approved admin session.',
                 },
               };
             }
@@ -638,30 +756,30 @@ export async function syncPendingTasks({ taskIds } = {}) {
                     .select('task_id')
                 : { error: null, data: [{ task_id: existing.data.task_id }] };
             } else {
-              const { task_id: _localTaskId, ...taskToInsert } = task;
-              response = await supabase
-                .from('tasks')
-                .insert(taskToInsert)
-                .select('task_id')
-                .single();
-              if (!response.error && response.data) {
-                syncedTaskId = response.data.task_id;
-                const { data: notification, error: notificationError } = await supabase.functions.invoke(
-                  'send-task-notification',
-                  { body: { task_id: String(syncedTaskId) } }
-                );
-                if (notificationError) {
-                  const errorMessage = await getFunctionErrorMessage(notificationError);
-                  result.notificationErrors.push(errorMessage);
-                  console.error('Task was saved, but its push notification could not be sent:', notificationError);
-                } else if (!notification?.sent) {
-                  result.notificationErrors.push(
-                    notification?.reason || 'The assigned BHW has not registered this device for push notifications.'
-                  );
-                  console.warn(
-                    `Task was saved, but push notification was not sent: ${notification?.reason || 'unknown reason'}.`
-                  );
-                }
+                const retriedTask = await findRemoteTaskForRetry(task);
+                if (retriedTask.error) {
+                  response = { error: { message: retriedTask.error } };
+                } else if (retriedTask.taskId) {
+                  syncedTaskId = retriedTask.taskId;
+                  response = { error: null, data: { task_id: syncedTaskId } };
+                } else {
+                  const { task_id: _localTaskId, ...taskToInsert } = task;
+                  response = await supabase
+                    .from('tasks')
+                    .insert(taskToInsert)
+                    .select('task_id')
+                    .single();
+                  if (!response.error && response.data) {
+                    syncedTaskId = response.data.task_id;
+                    queueTaskNotification(syncedTaskId);
+                    const notificationResult = await sendPendingTaskNotification(syncedTaskId);
+                    if (notificationResult.error) {
+                      result.notificationErrors.push(notificationResult.error);
+                      console.warn(
+                        `Task ${syncedTaskId} was saved, but its push notification was not sent: ${notificationResult.error}`
+                      );
+                    }
+                  }
               }
             }
           } else {

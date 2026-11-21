@@ -358,6 +358,8 @@ export default function AdminTasks({
       if (result.errors?.length) {
         setMessage(`Delete sync failed; the task is hidden on this device and will retry: ${result.errors[0]}`);
         await load();
+      } else if (result.skipped === 'not-signed-in') {
+        setMessage('The task is hidden on this device. Sign in again to finish deleting it from Supabase and other devices.');
       } else {
         setMessage(result.skipped
           ? 'Deleted on this device. The deletion will sync when online.'
