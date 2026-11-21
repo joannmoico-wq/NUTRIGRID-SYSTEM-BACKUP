@@ -260,6 +260,25 @@ export function getPendingTaskChanges() {
   return readArray(PENDING_TASKS_STORAGE_KEY);
 }
 
+function purgeUnrecoverablePendingTaskChanges() {
+  const removed = [];
+  const usable = getPendingTaskChanges().filter((change) => {
+    if (
+      ['upsert', 'delete'].includes(change.operation) &&
+      !isValidTaskId(change.taskId) &&
+      !change.task
+    ) {
+      removed.push(change);
+      return false;
+    }
+    return true;
+  });
+  if (removed.length) {
+    localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(usable));
+  }
+  return removed;
+}
+
 export function cacheRemoteTasks(remoteTasks) {
   const pending = getPendingTaskChanges();
   const deletedIds = new Set(
@@ -433,6 +452,12 @@ export async function loadTasks({ assignedToUserId } = {}) {
 }
 
 export async function syncPendingTasks({ taskIds } = {}) {
+  const purgedChanges = purgeUnrecoverablePendingTaskChanges();
+  if (purgedChanges.length) {
+    console.warn(
+      `Removed ${purgedChanges.length} stale task sync action(s) that had no valid ID or task details.`
+    );
+  }
   const isTargetedSync = Array.isArray(taskIds) && taskIds.length > 0;
   if (isTargetedSync) {
     taskIds.forEach((taskId) => requestedTaskIds.add(String(taskId)));

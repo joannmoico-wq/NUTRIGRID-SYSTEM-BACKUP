@@ -272,8 +272,14 @@ export default function AdminTasks({
           ? searchedTasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t))
           : searchedTasks.filter((t) => t.status === filter)
   ).slice().sort((left, right) => {
-    const newestFirst = Date.parse(right.created_at || '') - Date.parse(left.created_at || '');
-    if (Number.isFinite(newestFirst) && newestFirst !== 0) return newestFirst;
+    const rightTimestamp = Date.parse(right.created_at || '');
+    const leftTimestamp = Date.parse(left.created_at || '');
+    if (Number.isFinite(rightTimestamp) && Number.isFinite(leftTimestamp) && rightTimestamp !== leftTimestamp) {
+      return rightTimestamp - leftTimestamp;
+    }
+    const rightLocalId = /^-\d+$/.test(String(right.task_id)) ? Number(String(right.task_id).slice(1)) : 0;
+    const leftLocalId = /^-\d+$/.test(String(left.task_id)) ? Number(String(left.task_id).slice(1)) : 0;
+    if (rightLocalId !== leftLocalId) return rightLocalId - leftLocalId;
     return Number(isTaskOverdue(right)) - Number(isTaskOverdue(left));
   });
 
