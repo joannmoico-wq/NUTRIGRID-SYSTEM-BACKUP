@@ -32,23 +32,114 @@ function isValidTaskId(taskId) {
     /^-?\d+$/.test(String(taskId).trim());
 }
 
+function taskTimestamp(task) {
+  const timestamp = Date.parse(task?.created_at || task?.createdAt || '');
+  return Number.isFinite(timestamp) ? timestamp : null;
+}
+
+function taskIdentity(task) {
+  const createdAt = taskTimestamp(task);
+  const details = JSON.stringify([
+    task?.assigned_to_user_id,
+    task?.title,
+    task?.description,
+    task?.purok,
+    task?.due_date,
+  ].map((value) => String(value ?? '').trim().toLowerCase()));
+  return createdAt === null ? `details:${details}` : `created:${createdAt}:${details}`;
+}
+
+function findUniqueRemoteTask(remoteTasks, task) {
+  const timestamp = taskTimestamp(task);
+  if (timestamp === null) return null;
+  const timestampMatches = remoteTasks.filter(
+    (remoteTask) => taskTimestamp(remoteTask) === timestamp
+  );
+  if (timestampMatches.length === 1) return timestampMatches[0];
+  if (timestampMatches.length < 2) return null;
+
+  const detailMatches = timestampMatches.filter(
+    (remoteTask) =>
+      String(remoteTask.title || '').trim() === String(task.title || '').trim() &&
+      remoteTask.assigned_to_user_id === task.assigned_to_user_id
+  );
+  return detailMatches.length === 1 ? detailMatches[0] : null;
+}
+
+function sameLocalTask(left, right) {
+  if (!left || !right) return false;
+  const leftTimestamp = taskTimestamp(left);
+  const rightTimestamp = taskTimestamp(right);
+  if (leftTimestamp !== null && rightTimestamp !== null) {
+    return leftTimestamp === rightTimestamp;
+  }
+  return taskIdentity(left) === taskIdentity(right);
+}
+
+function samePendingTask(change, taskId, task) {
+  if (isValidTaskId(taskId)) return String(change.taskId) === String(taskId);
+  return (
+    !isValidTaskId(change.taskId) &&
+    (task ? sameLocalTask(change.task, task) : String(change.taskId) === String(taskId))
+  );
+}
+
 async function findMatchingRemoteTaskId(task) {
-  if (!task?.assigned_to_user_id || !task.title || !task.created_at) {
+  const title = String(task?.title || '').trim();
+  if (!title) {
     return {
-      error: 'The task has no valid ID and lacks enough details to safely find it in Supabase.',
+      error: 'The task has no valid ID or title, so it cannot be safely matched in Supabase.',
     };
   }
 
-  let query = supabase
-    .from('tasks')
-    .select('task_id')
-    .eq('assigned_to_user_id', task.assigned_to_user_id)
-    .eq('title', task.title)
-    .eq('created_at', task.created_at);
-  query = task.due_date
-    ? query.eq('due_date', task.due_date)
-    : query.is('due_date', null);
+  const createdAt = taskTimestamp(task);
+  if (createdAt !== null) {
+    const exactResult = await supabase
+      .from('tasks')
+      .select('task_id')
+      .eq('created_at', new Date(createdAt).toISOString())
+      .limit(2);
+    if (exactResult.error) return { error: exactResult.error.message };
+    const exactMatches = (exactResult.data || []).filter((row) => isValidTaskId(row.task_id));
+    if (exactMatches.length === 1) return { taskId: exactMatches[0].task_id };
+    if (exactMatches.length > 1) {
+      return {
+        error: 'The task has no valid ID and matches multiple Supabase tasks; no task was changed.',
+      };
+    }
 
+    const nearbyResult = await supabase
+      .from('tasks')
+      .select('task_id, created_at, title, assigned_to_user_id')
+      .gte('created_at', new Date(createdAt - 1000).toISOString())
+      .lte('created_at', new Date(createdAt + 1000).toISOString())
+      .limit(100);
+    if (nearbyResult.error) return { error: nearbyResult.error.message };
+    const nearbyMatches = (nearbyResult.data || []).filter((row) => {
+      const rowTimestamp = taskTimestamp(row);
+      return isValidTaskId(row.task_id) &&
+        rowTimestamp !== null &&
+        Math.abs(rowTimestamp - createdAt) <= 1000 &&
+        String(row.title || '').trim() === title &&
+        (
+          !Object.prototype.hasOwnProperty.call(task, 'assigned_to_user_id') ||
+          row.assigned_to_user_id === task.assigned_to_user_id
+        );
+    });
+    if (nearbyMatches.length === 1) return { taskId: nearbyMatches[0].task_id };
+    if (nearbyMatches.length > 1) {
+      return {
+        error: 'The task has no valid ID and matches multiple Supabase tasks; no task was changed.',
+      };
+    }
+  }
+
+  let query = supabase.from('tasks').select('task_id').eq('title', title);
+  if (Object.prototype.hasOwnProperty.call(task, 'assigned_to_user_id')) {
+    query = task.assigned_to_user_id
+      ? query.eq('assigned_to_user_id', task.assigned_to_user_id)
+      : query.is('assigned_to_user_id', null);
+  }
   const { data, error } = await query.limit(2);
   if (error) return { error: error.message };
   const matches = (data || []).filter((row) => isValidTaskId(row.task_id));
@@ -75,9 +166,7 @@ function persistResolvedTaskId(change, taskId) {
   );
   const tasks = getLocalTasks().map((task) =>
     String(task.task_id) === oldTaskId &&
-    task.title === change.task?.title &&
-    task.assigned_to_user_id === change.task?.assigned_to_user_id &&
-    task.created_at === change.task?.created_at
+    sameLocalTask(task, change.task)
       ? { ...task, task_id: taskId }
       : task
   );
@@ -109,6 +198,7 @@ export function deduplicateTasks(tasks) {
           task.description,
           task.purok,
           task.due_date,
+          task.created_at || task.createdAt,
           task.priority || 'Normal',
           task.status || 'Pending',
         ].map((value) => String(value ?? '').trim().toLowerCase()))
@@ -167,6 +257,17 @@ export function cacheRemoteTasks(remoteTasks) {
       )
       .map((change) => String(change.taskId))
   );
+  pending
+    .filter((change) =>
+      change.operation === 'delete' &&
+      change.source === 'admin' &&
+      !isValidTaskId(change.taskId) &&
+      change.task
+    )
+    .forEach((change) => {
+      const remoteTask = findUniqueRemoteTask(remoteTasks, change.task);
+      if (remoteTask) deletedIds.add(String(remoteTask.task_id));
+    });
   const merged = new Map(
     remoteTasks
       .filter((task) => !deletedIds.has(String(task.task_id)))
@@ -175,7 +276,17 @@ export function cacheRemoteTasks(remoteTasks) {
 
   pending
     .filter((change) => change.operation === 'upsert' && change.task)
-    .forEach((change) => merged.set(String(change.taskId), change.task));
+    .forEach((change) => {
+      const remoteTask = isValidTaskId(change.taskId)
+        ? null
+        : findUniqueRemoteTask(remoteTasks, change.task);
+      const key = isValidTaskId(change.taskId)
+        ? String(change.taskId)
+        : remoteTask
+          ? String(remoteTask.task_id)
+          : `local:${taskIdentity(change.task)}`;
+      merged.set(key, change.task);
+    });
 
   const tasks = deduplicateTasks(Array.from(merged.values())).sort(
     (left, right) => new Date(right.created_at || 0) - new Date(left.created_at || 0)
@@ -186,11 +297,17 @@ export function cacheRemoteTasks(remoteTasks) {
 
 export function saveTaskLocally(task, fieldsToSync) {
   const tasks = getLocalTasks();
-  const index = tasks.findIndex((item) => String(item.task_id) === String(task.task_id));
+  const index = tasks.findIndex((item) =>
+    isValidTaskId(task.task_id)
+      ? String(item.task_id) === String(task.task_id)
+      : !isValidTaskId(item.task_id) && sameLocalTask(item, task)
+  );
   if (index < 0) tasks.push(task);
   else tasks[index] = { ...tasks[index], ...task };
 
-  const pending = getPendingTaskChanges().filter((item) => String(item.taskId) !== String(task.task_id));
+  const pending = getPendingTaskChanges().filter(
+    (item) => !samePendingTask(item, task.task_id, task)
+  );
   const change = {
     taskId: String(task.task_id),
     operation: 'upsert',
@@ -235,14 +352,12 @@ export function deleteTaskLocally(taskOrId, source = 'admin') {
   const taskIdString = String(taskId);
   const tasks = getLocalTasks().filter((item) => {
     if (isValidTaskId(taskId)) return String(item.task_id) !== taskIdString;
-    return !task || !(
-      item.title === task.title &&
-      item.assigned_to_user_id === task.assigned_to_user_id &&
-      item.created_at === task.created_at
-    );
+    return !task || !sameLocalTask(item, task);
   });
   const pending = getPendingTaskChanges();
-  const nextPending = pending.filter((item) => String(item.taskId) !== taskIdString);
+  const nextPending = pending.filter(
+    (item) => !samePendingTask(item, taskId, task)
+  );
   if (!taskIdString.startsWith('-')) {
     nextPending.push({
       taskId: taskIdString,

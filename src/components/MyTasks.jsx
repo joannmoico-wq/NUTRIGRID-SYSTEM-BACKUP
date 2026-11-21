@@ -33,7 +33,6 @@ export default function MyTasks() {
   const [taskStatusFilter, setTaskStatusFilter] = useState(null);
   const [banner, setBanner] = useState(null);
   const [completionCelebration, setCompletionCelebration] = useState(false);
-  const [completionTaskId, setCompletionTaskId] = useState(null);
   const [pendingTaskChange, setPendingTaskChange] = useState(null);
   const [taskChangeBusy, setTaskChangeBusy] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
@@ -44,7 +43,6 @@ export default function MyTasks() {
   const [selectedMonth, setSelectedMonth] = useState('');
   const [showTaskSuggestions, setShowTaskSuggestions] = useState(false);
   const pushRegistrationAttempted = useRef(false);
-  const completionTaskIdRef = useRef(null);
   const [permission, setPermission] = useState(
     typeof Notification !== 'undefined' ? Notification.permission : 'unsupported'
   );
@@ -61,15 +59,13 @@ export default function MyTasks() {
     }
     try {
       const assignedTasks = await loadTasks({ assignedToUserId: user.id });
-      setTasks(assignedTasks.filter((task) =>
-        task.status !== 'Completed' || task.task_id === completionTaskIdRef.current
-      ));
+      setTasks(assignedTasks.filter((task) => task.status !== 'Completed'));
       window.dispatchEvent(new Event('bns-tasks-refreshed'));
     } catch (error) {
       console.error('Could not load assigned tasks:', error);
       setTasks(deduplicateTasks(getLocalTasks()).filter(
         (task) => task.assigned_to_user_id === user.id &&
-          (task.status !== 'Completed' || task.task_id === completionTaskIdRef.current)
+          task.status !== 'Completed'
       ));
       window.dispatchEvent(new Event('bns-tasks-refreshed'));
     }
@@ -192,17 +188,14 @@ export default function MyTasks() {
   }, [banner]);
 
   const finishCompletionCelebration = () => {
-    completionTaskIdRef.current = null;
-    setTasks((current) => current.filter((task) => task.task_id !== completionTaskId));
-    setCompletionTaskId(null);
     setCompletionCelebration(false);
   };
 
   useEffect(() => {
-    if (!completionCelebration || !completionTaskId) return undefined;
+    if (!completionCelebration) return undefined;
     const timer = window.setTimeout(finishCompletionCelebration, 4000);
     return () => window.clearTimeout(timer);
-  }, [completionCelebration, completionTaskId]);
+  }, [completionCelebration]);
 
   const advance = async (t) => {
     const next = NEXT_STATUS[t.status] || 'Pending';
@@ -216,14 +209,12 @@ export default function MyTasks() {
       completed_at: next === 'Completed' ? new Date().toISOString() : null,
     }, ['status', 'completed_at']);
     if (next === 'Completed') {
-      completionTaskIdRef.current = t.task_id;
-      setCompletionTaskId(t.task_id);
       setCompletionCelebration(true);
       setTaskStatusFilter(null);
     }
     setTasks(deduplicateTasks(getLocalTasks()).filter(
       (task) => task.assigned_to_user_id === t.assigned_to_user_id &&
-        (task.status !== 'Completed' || task.task_id === (next === 'Completed' ? t.task_id : completionTaskIdRef.current))
+        task.status !== 'Completed'
     ));
     try {
       const result = await syncPendingTasks({ taskIds: [t.task_id] });
@@ -309,7 +300,7 @@ export default function MyTasks() {
     : monthFilteredTasks;
   const activeTasks = filteredTasks.filter((task) =>
     !isTaskOverdue(task) &&
-    (task.status !== 'Completed' || task.task_id === completionTaskId)
+    task.status !== 'Completed'
   );
   const taskStatusCounts = {
     Pending: activeTasks.filter((task) => task.status === 'Pending').length,
@@ -371,7 +362,7 @@ export default function MyTasks() {
             <h2 id="task-complete-title" className="mt-4 text-xl font-extrabold text-slate-900">
               You completed your task. Congratulations!
             </h2>
-            <p className="mt-2 text-sm text-slate-600">This task will leave your PWA list after the celebration.</p>
+            <p className="mt-2 text-sm text-slate-600">The completed task has been removed from your open tasks.</p>
             <button
               type="button"
               onClick={finishCompletionCelebration}
@@ -513,15 +504,10 @@ export default function MyTasks() {
               .filter(
                 (note) => !String(note?.message || note).includes('Automatically rescheduled from')
               );
-            const isCelebratingCompletion = t.task_id === completionTaskId && t.status === 'Completed';
             return (
               <li
                 key={t.task_id}
-                className={`rounded-2xl border p-4 shadow-sm ${
-                  isCelebratingCompletion
-                    ? 'border-emerald-300 bg-emerald-50'
-                    : 'border-[#E8C4F0] bg-white'
-                }`}
+                className="rounded-2xl border border-[#E8C4F0] bg-white p-4 shadow-sm"
               >
                 <div className="flex items-start gap-3">
                   <button
@@ -543,7 +529,7 @@ export default function MyTasks() {
                     />
                   </button>
                   <div className="min-w-0 flex-1">
-                    <p className={`font-bold ${isCelebratingCompletion ? 'text-gray-500 line-through' : 'text-gray-900'}`}>{t.title}</p>
+                    <p className="font-bold text-gray-900">{t.title}</p>
                     {t.description && <p className="mt-0.5 text-sm text-gray-600">{t.description}</p>}
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px] font-semibold text-gray-600">
                       {t.purok && (

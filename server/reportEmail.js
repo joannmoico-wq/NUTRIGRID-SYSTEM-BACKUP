@@ -13,6 +13,27 @@ function respond(response, status, payload) {
 }
 
 async function readJsonBody(request) {
+  if (request.body !== undefined) {
+    const body = request.body;
+    const serialized = typeof body === 'string' || Buffer.isBuffer(body)
+      ? body.toString()
+      : JSON.stringify(body);
+    if (Buffer.byteLength(serialized, 'utf8') > MAX_REQUEST_BYTES) {
+      const error = new Error('The PDF attachment is too large. Maximum size is 8 MB.');
+      error.statusCode = 413;
+      throw error;
+    }
+    try {
+      return typeof body === 'string' || Buffer.isBuffer(body)
+        ? JSON.parse(serialized)
+        : body;
+    } catch {
+      const error = new Error('The email request is not valid JSON.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
   const chunks = [];
   let totalBytes = 0;
   for await (const chunk of request) {
