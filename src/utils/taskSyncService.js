@@ -539,6 +539,7 @@ export function saveTaskLocally(task, fieldsToSync) {
     operation: 'upsert',
     task,
     updatedAt: new Date().toISOString(),
+    isNewTask: previousChange?.isNewTask ?? String(task.task_id).startsWith('-'),
     notifyAssignee: Boolean(
       previousChange?.notifyAssignee ||
       previousChange?.notifyOnAssignment ||
@@ -871,7 +872,11 @@ export async function syncPendingTasks({ taskIds } = {}) {
                       .eq('task_id', syncedTaskId)
                       .select('task_id')
                   : { error: null, data: [{ task_id: syncedTaskId }] };
-              } else if (change.updates && Object.keys(change.updates).length) {
+              } else if (
+                change.updates &&
+                Object.keys(change.updates).length &&
+                !change.isNewTask
+              ) {
                 const remainingChanges = getPendingTaskChanges().filter(
                   (item) => String(item.taskId) !== String(change.taskId)
                 );

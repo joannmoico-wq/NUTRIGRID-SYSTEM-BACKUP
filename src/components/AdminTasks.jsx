@@ -312,16 +312,19 @@ export default function AdminTasks({
       action: async () => {
         setBusy(true);
         const actionLabel = editingTask ? 'Task updated' : 'Task assigned';
-        saveTaskLocally(task, [
-          'title',
-          'description',
-          'purok',
-          'priority',
-          'due_date',
-          'assigned_to_user_id',
-          'status',
-          'completed_at',
-        ]);
+        const taskFieldsToSync = editingTask && !String(task.task_id).startsWith('-')
+          ? [
+              'title',
+              'description',
+              'purok',
+              'priority',
+              'due_date',
+              'assigned_to_user_id',
+              'status',
+              'completed_at',
+            ]
+          : undefined;
+        saveTaskLocally(task, taskFieldsToSync);
         setTasks(deduplicateTasks(getLocalTasks()));
         setForm(emptyForm);
         setShowForm(false);
