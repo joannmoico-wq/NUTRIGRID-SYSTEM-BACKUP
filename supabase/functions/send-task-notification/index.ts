@@ -133,17 +133,27 @@ Deno.serve(async (request) => {
     return jsonResponse({ error: 'Only approved admins can send task notifications.' }, 403);
   }
 
-  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-  const { data: task, error: taskError } = await adminClient
+  const { data: task, error: taskError } = await authClient
     .from('tasks')
     .select('task_id, title, assigned_to_user_id')
     .eq('task_id', body.task_id)
     .maybeSingle();
-  if (taskError) return jsonResponse({ error: 'Could not load the assigned task.' }, 500);
+  if (taskError) {
+    console.error('Could not load the assigned task for notification:', {
+      taskId: body.task_id,
+      userId: user.id,
+      code: taskError.code,
+      message: taskError.message,
+      details: taskError.details,
+      hint: taskError.hint,
+    });
+    return jsonResponse({ error: 'Could not load the assigned task.' }, 500);
+  }
   if (!task) return jsonResponse({ error: 'Task not found.' }, 404);
 
+  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
   const { data: recipient, error: recipientError } = await adminClient
     .from('profiles')
     .select('fcm_token')
