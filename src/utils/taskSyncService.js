@@ -511,12 +511,53 @@ export async function syncPendingTasks({ taskIds } = {}) {
             );
             continue;
           }
-          const resolved = await findMatchingRemoteTaskId(change.task);
-          if (!resolved.taskId) {
-            result.errors.push(`Task with invalid ID: ${resolved.error}`);
-            continue;
+          if (change.operation === 'upsert') {
+            const localTaskId = createLocalTaskId();
+            change = persistResolvedTaskId(change, localTaskId);
           }
-          change = persistResolvedTaskId(change, resolved.taskId);
+          if (change.operation === 'delete') {
+            const remaining = getPendingTaskChanges().filter(
+              (item) =>
+                String(item.taskId) !== String(change.taskId) ||
+                item.updatedAt !== change.updatedAt
+            );
+            localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(remaining));
+            const resolved = await findMatchingRemoteTaskId(change.task);
+            if (!resolved.taskId) {
+              console.warn(
+                `Stale delete for task "${change.task.title || 'unknown'}" was cleared because no matching Supabase row exists.`
+              );
+              result.synced++;
+              continue;
+            }
+            change = persistResolvedTaskId(change, resolved.taskId);
+          }
+        }
+        if (
+          ['upsert', 'delete'].includes(change.operation) &&
+          !isValidTaskId(change.taskId)
+        ) {
+          continue;
+        }
+        if (
+          ['upsert', 'delete'].includes(change.operation) &&
+          String(change.taskId).startsWith('-') &&
+          change.operation === 'delete'
+        ) {
+          const remaining = getPendingTaskChanges().filter(
+            (item) =>
+              String(item.taskId) !== String(change.taskId) ||
+              item.updatedAt !== change.updatedAt
+          );
+          localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(remaining));
+          result.synced++;
+          continue;
+        }
+        if (
+          ['upsert', 'delete'].includes(change.operation) &&
+          !isValidTaskId(change.taskId)
+        ) {
+          continue;
         }
         if (!isValidTaskId(change.taskId)) {
           result.errors.push(`Task ${change.taskId} ${change.operation}: task ID is invalid.`);
