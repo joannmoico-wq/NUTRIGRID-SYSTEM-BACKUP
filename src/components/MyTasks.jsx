@@ -474,6 +474,11 @@ export default function MyTasks() {
                 ? `No ${taskStatusFilter.toLowerCase()} tasks right now.`
                 : 'No tasks assigned to you yet.'}
           </p>
+          {!query && !taskStatusFilter && (
+            <p className="mt-2 text-xs text-gray-500">
+              Tap the watch icon to switch a task to In Progress and then Completed.
+            </p>
+          )}
         </div>
       ) : (
         <ul className="space-y-3">

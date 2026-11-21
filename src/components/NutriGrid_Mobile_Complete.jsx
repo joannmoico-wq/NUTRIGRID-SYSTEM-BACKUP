@@ -161,10 +161,35 @@ function readPwaViewState(userId) {
       (saved.activeView !== 'records' || selectedCategory)
       ? saved.activeView
       : 'home';
-    return { activeView, selectedCategory };
+    const showCategoryForm = Boolean(saved?.showCategoryForm && selectedCategory && activeView === 'home');
+    const editingRecordId = showCategoryForm && saved?.editingRecordId != null
+      ? String(saved.editingRecordId)
+      : null;
+    const previewRecord = activeView === 'records' &&
+      selectedCategory &&
+      saved?.previewRecord?.categoryId === selectedCategory &&
+      saved.previewRecord.recordId != null
+      ? {
+          categoryId: selectedCategory,
+          recordId: String(saved.previewRecord.recordId),
+        }
+      : null;
+    return {
+      activeView,
+      selectedCategory,
+      showCategoryForm,
+      editingRecordId,
+      previewRecord,
+    };
   } catch (error) {
     console.error('Could not restore the last PWA view:', error);
-    return { activeView: 'home', selectedCategory: null };
+    return {
+      activeView: 'home',
+      selectedCategory: null,
+      showCategoryForm: false,
+      editingRecordId: null,
+      previewRecord: null,
+    };
   }
 }
 
@@ -475,6 +500,8 @@ const RecordsList = ({
   actorRole,
   requestConfirmation,
   deleteCategoryRecords,
+  previewRecord,
+  setPreviewRecord,
 }) => {
   const [filter, setFilter] = useState('all');
   const [purokFilter, setPurokFilter] = useState('');
@@ -614,20 +641,27 @@ const RecordsList = ({
     searchQuery.trim() || purokFilter ? 'No records match the current filters.' : defaultMsg;
 
   const RecordActions = ({ record, allowView = true }) => {
-    const [viewingRecord, setViewingRecord] = useState(null);
+    const isViewingRecord = record.id != null &&
+      previewRecord?.categoryId === selectedCategory &&
+      String(previewRecord.recordId) === String(record.id);
     return (
       <>
         <ReportRowActions
-          onView={allowView ? () => setViewingRecord(record) : undefined}
+          onView={allowView && record.id != null
+            ? () => setPreviewRecord({
+                categoryId: selectedCategory,
+                recordId: String(record.id),
+              })
+            : undefined}
           onEdit={() => startEditRecord(record, selectedCategory)}
           onDelete={() => deleteCategoryRecord(selectedCategory, record)}
         />
         <RecordDetailsDialog
-          record={viewingRecord}
+          record={isViewingRecord ? record : null}
           records={categoryRecords}
           recordCategory={selectedCategory}
           compact
-          onClose={() => setViewingRecord(null)}
+          onClose={() => setPreviewRecord(null)}
         />
       </>
     );
@@ -1895,6 +1929,17 @@ const HomeScreen = ({
   });
 
   const selectedCategoryData = categoriesWithCounts.find((c) => c.id === selectedCategory);
+  const selectedCategoryPanelRef = useRef(null);
+  useEffect(() => {
+    if (!selectedCategory) return undefined;
+    const frameId = window.requestAnimationFrame(() => {
+      selectedCategoryPanelRef.current?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+    return () => window.cancelAnimationFrame(frameId);
+  }, [selectedCategory]);
   const selectedCategoryRecords = selectedCategory
     ? getUserRecords(storageKeyForCategory(selectedCategory), currentUserId)
     : [];
@@ -2285,7 +2330,7 @@ const HomeScreen = ({
         </div>
 
         {selectedCategoryData && (
-          <div className="space-y-3 pt-1">
+          <div ref={selectedCategoryPanelRef} className="space-y-3 pt-1">
             <div
               className={`relative flex min-h-[210px] flex-col items-center justify-center overflow-hidden rounded-[28px] px-5 py-6 text-center text-white shadow-md ${selectedCategory === 'residents' ? '' : `bg-gradient-to-br ${selectedCategoryData.gradient}`}`}
               style={{
@@ -2684,6 +2729,7 @@ const NutriGridMobile = () => {
   const [selectedCategory, setSelectedCategory] = useState(null);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [editingRecord, setEditingRecord] = useState(null);
+  const [previewRecord, setPreviewRecord] = useState(null);
   const [recordsRefresh, setRecordsRefresh] = useState(0);
   const [showNotifications, setShowNotifications] = useState(false);
   const [syncNotification, setSyncNotification] = useState('');
@@ -2807,12 +2853,34 @@ const NutriGridMobile = () => {
         JSON.stringify({
           activeView,
           selectedCategory: PWA_CATEGORY_IDS.has(selectedCategory) ? selectedCategory : null,
+          showCategoryForm: activeView === 'home' && showCategoryForm,
+          editingRecordId: activeView === 'home' && showCategoryForm && editingRecord?.id != null
+            ? String(editingRecord.id)
+            : null,
+          previewRecord: activeView === 'records' ? previewRecord : null,
         })
       );
     } catch (error) {
       console.error('Could not save the current PWA view:', error);
     }
-  }, [activeView, currentUser?.id, isAuthenticated, selectedCategory]);
+  }, [
+    activeView,
+    currentUser?.id,
+    editingRecord?.id,
+    isAuthenticated,
+    previewRecord,
+    selectedCategory,
+    showCategoryForm,
+  ]);
+
+  useEffect(() => {
+    if (activeView !== 'records' && previewRecord) setPreviewRecord(null);
+    if (
+      activeView === 'records' &&
+      previewRecord &&
+      previewRecord.categoryId !== selectedCategory
+    ) setPreviewRecord(null);
+  }, [activeView, previewRecord, selectedCategory]);
 
   // Initialize app
   useEffect(() => {
@@ -2897,13 +2965,23 @@ const NutriGridMobile = () => {
       throw new Error('Secure sign-in session could not be initialized. Please try again.');
     }
     const savedView = readPwaViewState(userData.id);
+    const restoredEditingRecord = savedView.editingRecordId
+      ? getUserRecords(
+          storageKeyForCategory(savedView.selectedCategory),
+          userData.id
+        ).find((record) => String(record.id) === savedView.editingRecordId) || null
+      : null;
     startLocationUpdates(userData.id);
     setCurrentUser(userData);
     setActiveView(savedView.activeView);
     setShowNotifications(false);
     setShowMenu(false);
-    setShowCategoryForm(false);
-    setEditingRecord(null);
+    setShowCategoryForm(
+      savedView.showCategoryForm &&
+      (!savedView.editingRecordId || Boolean(restoredEditingRecord))
+    );
+    setEditingRecord(restoredEditingRecord);
+    setPreviewRecord(savedView.previewRecord);
     setSearchQuery('');
     setSearchResults([]);
     setShowSearchSuggestions(false);
@@ -2978,6 +3056,7 @@ const NutriGridMobile = () => {
       setShowSearchSuggestions(false);
       setShowCategoryForm(false);
       setEditingRecord(null);
+      setPreviewRecord(null);
       setAppState('signin');
       setSessionTimeoutMessage(timeoutReason);
     }
@@ -3979,6 +4058,8 @@ const NutriGridMobile = () => {
               setShowSearchSuggestions={setShowSearchSuggestions}
               performSearch={performSearch}
               setSelectedCategory={setSelectedCategory}
+              previewRecord={previewRecord}
+              setPreviewRecord={setPreviewRecord}
               requestConfirmation={requestConfirmation}
             />
           )}
