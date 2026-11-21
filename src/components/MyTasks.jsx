@@ -56,6 +56,7 @@ export default function MyTasks() {
     const user = session?.user;
     if (!user) {
       setTasks([]);
+      window.dispatchEvent(new Event('bns-tasks-refreshed'));
       return;
     }
     try {
@@ -63,12 +64,14 @@ export default function MyTasks() {
       setTasks(assignedTasks.filter((task) =>
         task.status !== 'Completed' || task.task_id === completionTaskIdRef.current
       ));
+      window.dispatchEvent(new Event('bns-tasks-refreshed'));
     } catch (error) {
       console.error('Could not load assigned tasks:', error);
       setTasks(deduplicateTasks(getLocalTasks()).filter(
         (task) => task.assigned_to_user_id === user.id &&
           (task.status !== 'Completed' || task.task_id === completionTaskIdRef.current)
       ));
+      window.dispatchEvent(new Event('bns-tasks-refreshed'));
     }
   }, []);
 
@@ -305,7 +308,8 @@ export default function MyTasks() {
       )
     : monthFilteredTasks;
   const activeTasks = filteredTasks.filter((task) =>
-    task.status !== 'Completed' || task.task_id === completionTaskId
+    !isTaskOverdue(task) &&
+    (task.status !== 'Completed' || task.task_id === completionTaskId)
   );
   const taskStatusCounts = {
     Pending: activeTasks.filter((task) => task.status === 'Pending').length,

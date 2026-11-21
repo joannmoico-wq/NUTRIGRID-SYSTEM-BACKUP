@@ -63,7 +63,7 @@ export default function SideMenu({ open, onClose, taskNavigationDate }) {
     }
     try {
       const data = await loadTasks({ assignedToUserId: user.id });
-      setTasks(data.filter((task) => task.status !== 'Completed'));
+      setTasks(data.filter((task) => task.status !== 'Completed' && !isTaskOverdue(task)));
     } catch (error) {
       console.error('Could not load sidebar tasks:', error);
       setTasks(
@@ -92,15 +92,20 @@ export default function SideMenu({ open, onClose, taskNavigationDate }) {
       }
       if (open) void load();
     };
+    const handleTaskRefresh = () => {
+      if (open) void load();
+    };
     const handleStorage = (event) => {
       if (open && (!event.key || event.key === 'nutrigrid_tasks' || event.key === 'nutrigrid_pending_task_changes')) {
         void load();
       }
     };
     window.addEventListener('bns-tasks-changed', handleTaskChange);
+    window.addEventListener('bns-tasks-refreshed', handleTaskRefresh);
     window.addEventListener('storage', handleStorage);
     return () => {
       window.removeEventListener('bns-tasks-changed', handleTaskChange);
+      window.removeEventListener('bns-tasks-refreshed', handleTaskRefresh);
       window.removeEventListener('storage', handleStorage);
     };
   }, [open, load]);
@@ -137,7 +142,11 @@ export default function SideMenu({ open, onClose, taskNavigationDate }) {
   const weekLabel = `${weekStart.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })} – ${weekEnd.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}`;
 
   const todayKey = toKey(new Date());
-  const dayTasks = tasks.filter((t) => t.due_date === selected);
+  const dayTasks = tasks.filter((t) =>
+    t.due_date === selected &&
+    t.status !== 'Completed' &&
+    !isTaskOverdue(t)
+  );
   const openCount = tasks.length;
   const selectedIsToday = selected === todayKey;
 

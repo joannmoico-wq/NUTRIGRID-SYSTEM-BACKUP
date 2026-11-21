@@ -160,7 +160,11 @@ export function cacheRemoteTasks(remoteTasks) {
   const pending = getPendingTaskChanges();
   const deletedIds = new Set(
     pending
-      .filter((change) => change.operation === 'delete' && change.source === 'admin')
+      .filter((change) =>
+        change.operation === 'delete' &&
+        change.source === 'admin' &&
+        isValidTaskId(change.taskId)
+      )
       .map((change) => String(change.taskId))
   );
   const merged = new Map(
@@ -225,20 +229,31 @@ function reconcileSyncedTaskId(localTaskId, remoteTaskId, syncedAt) {
   publishTasks(tasks, null, 'refresh');
 }
 
-export function deleteTaskLocally(taskId, source = 'admin') {
-  const tasks = getLocalTasks().filter((item) => String(item.task_id) !== String(taskId));
+export function deleteTaskLocally(taskOrId, source = 'admin') {
+  const task = taskOrId && typeof taskOrId === 'object' ? taskOrId : null;
+  const taskId = task ? task.task_id : taskOrId;
+  const taskIdString = String(taskId);
+  const tasks = getLocalTasks().filter((item) => {
+    if (isValidTaskId(taskId)) return String(item.task_id) !== taskIdString;
+    return !task || !(
+      item.title === task.title &&
+      item.assigned_to_user_id === task.assigned_to_user_id &&
+      item.created_at === task.created_at
+    );
+  });
   const pending = getPendingTaskChanges();
-  const nextPending = pending.filter((item) => String(item.taskId) !== String(taskId));
-  if (!String(taskId).startsWith('-')) {
+  const nextPending = pending.filter((item) => String(item.taskId) !== taskIdString);
+  if (!taskIdString.startsWith('-')) {
     nextPending.push({
-      taskId: String(taskId),
+      taskId: taskIdString,
       operation: 'delete',
       source,
+      task,
       updatedAt: new Date().toISOString(),
     });
   }
   localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(nextPending));
-  publishTasks(tasks, { task_id: taskId }, 'delete');
+  publishTasks(tasks, task || { task_id: taskId }, 'delete');
 }
 
 export function getCachedBhwProfiles() {
@@ -324,7 +339,24 @@ export async function syncPendingTasks({ taskIds } = {}) {
       );
       for (const pendingChange of pendingChanges) {
         let change = pendingChange;
-        if (change.operation === 'upsert' && !isValidTaskId(change.taskId)) {
+        if (
+          ['upsert', 'delete'].includes(change.operation) &&
+          !isValidTaskId(change.taskId)
+        ) {
+          if (!change.task) {
+            if (change.operation === 'delete') {
+              const remaining = getPendingTaskChanges().filter(
+                (item) =>
+                  String(item.taskId) !== String(change.taskId) ||
+                  item.updatedAt !== change.updatedAt
+              );
+              localStorage.setItem(PENDING_TASKS_STORAGE_KEY, JSON.stringify(remaining));
+            }
+            result.errors.push(
+              `Task with invalid ID: ${change.operation} has no saved task details to identify the Supabase row. Reload and retry the action.`
+            );
+            continue;
+          }
           const resolved = await findMatchingRemoteTaskId(change.task);
           if (!resolved.taskId) {
             result.errors.push(`Task with invalid ID: ${resolved.error}`);

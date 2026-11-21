@@ -334,22 +334,25 @@ export default function AdminTasks({
     });
   };
 
-  const deleteTask = async (id) => {
+  const deleteTask = async (task) => {
     setConfirmation({
       title: 'Delete task',
       message: 'Are you sure you want to delete this task?',
       confirmLabel: 'Delete',
       destructive: true,
       action: async () => {
-    deleteTaskLocally(id);
+    deleteTaskLocally(task);
     setTasks(deduplicateTasks(getLocalTasks()));
     try {
-      const result = await syncPendingTasks({ taskIds: [id] });
-      setMessage(result.errors?.length
-        ? `Delete sync failed; the task is hidden on this device and will retry: ${result.errors[0]}`
-        : result.skipped
+      const result = await syncPendingTasks({ taskIds: [task.task_id] });
+      if (result.errors?.length) {
+        setMessage(`Delete sync failed; the task is hidden on this device and will retry: ${result.errors[0]}`);
+        await load();
+      } else {
+        setMessage(result.skipped
           ? 'Deleted on this device. The deletion will sync when online.'
           : 'Task deleted.');
+      }
     } catch (error) {
       console.error('Could not sync task deletion:', error);
       setMessage('Deleted on this device. The deletion will sync when Supabase is available.');
@@ -569,7 +572,7 @@ export default function AdminTasks({
                   </button>
                   <button
                     type="button"
-                    onClick={() => deleteTask(t.task_id)}
+                    onClick={() => deleteTask(t)}
                     className={`grid h-9 w-9 place-items-center rounded-lg transition hover:bg-rose-50 hover:text-rose-600 ${darkMode ? 'text-slate-300' : 'text-slate-400'}`}
                     aria-label="DELETE TASK"
                   >
