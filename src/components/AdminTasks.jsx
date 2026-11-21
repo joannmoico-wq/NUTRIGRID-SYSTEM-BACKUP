@@ -271,7 +271,11 @@ export default function AdminTasks({
         : filter === 'Pending'
           ? searchedTasks.filter((t) => t.status === 'Pending' && !isTaskOverdue(t))
           : searchedTasks.filter((t) => t.status === filter)
-  ).slice().sort((left, right) => Number(isTaskOverdue(right)) - Number(isTaskOverdue(left)));
+  ).slice().sort((left, right) => {
+    const newestFirst = Date.parse(right.created_at || '') - Date.parse(left.created_at || '');
+    if (Number.isFinite(newestFirst) && newestFirst !== 0) return newestFirst;
+    return Number(isTaskOverdue(right)) - Number(isTaskOverdue(left));
+  });
 
   const saveTask = async (e) => {
     e.preventDefault();

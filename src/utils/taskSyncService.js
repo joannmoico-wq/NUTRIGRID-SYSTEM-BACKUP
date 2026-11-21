@@ -84,6 +84,20 @@ function samePendingTask(change, taskId, task) {
   );
 }
 
+async function getFunctionErrorMessage(error) {
+  const fallback = error?.message || 'The Edge Function could not send the notification.';
+  const response = error?.context;
+  if (!response || typeof response.clone !== 'function') return fallback;
+
+  try {
+    const body = await response.clone().json();
+    return body?.error || body?.message || fallback;
+  } catch (parseError) {
+    console.warn('Could not read the task notification error response:', parseError);
+    return fallback;
+  }
+}
+
 async function findMatchingRemoteTaskId(task) {
   const title = String(task?.title || '').trim();
   if (!title) {
@@ -571,7 +585,7 @@ export async function syncPendingTasks({ taskIds } = {}) {
                   { body: { task_id: String(syncedTaskId) } }
                 );
                 if (notificationError) {
-                  const errorMessage = notificationError.message || 'The Edge Function is unavailable.';
+                  const errorMessage = await getFunctionErrorMessage(notificationError);
                   result.notificationErrors.push(errorMessage);
                   console.error('Task was saved, but its push notification could not be sent:', notificationError);
                 } else if (!notification?.sent) {

@@ -45,6 +45,7 @@ async function getGoogleAccessToken(serviceAccount: {
     }),
   ].join('.');
   const pem = serviceAccount.private_key
+    .replace(/\\n/g, '\n')
     .replace(/-----BEGIN PRIVATE KEY-----/g, '')
     .replace(/-----END PRIVATE KEY-----/g, '')
     .replace(/\s/g, '');
@@ -72,7 +73,11 @@ async function getGoogleAccessToken(serviceAccount: {
   });
   const tokenBody = await tokenResponse.json();
   if (!tokenResponse.ok || !tokenBody.access_token) {
-    throw new Error('Could not authenticate with Firebase Cloud Messaging.');
+    throw new Error(
+      `Firebase authentication failed (HTTP ${tokenResponse.status}): ${
+        tokenBody.error_description || tokenBody.error || 'Google rejected the service account.'
+      }`
+    );
   }
 
   cachedGoogleToken = {
@@ -200,12 +205,15 @@ Deno.serve(async (request) => {
         return jsonResponse({ sent: false, reason: 'device-token-expired' });
       }
       console.error('FCM rejected a task notification:', fcmResponse.status, errorBody);
-      return jsonResponse({ error: 'Firebase rejected the task notification.' }, 502);
+      return jsonResponse({
+        error: `Firebase rejected the task notification (HTTP ${fcmResponse.status}).`,
+      }, 502);
     }
 
     return jsonResponse({ sent: true });
   } catch (error) {
     console.error('Task push notification failed:', error);
-    return jsonResponse({ error: 'Could not send the Firebase task notification.' }, 502);
+    const message = error instanceof Error ? error.message : 'Unknown Firebase error.';
+    return jsonResponse({ error: `Could not send the Firebase task notification: ${message}` }, 502);
   }
 });
