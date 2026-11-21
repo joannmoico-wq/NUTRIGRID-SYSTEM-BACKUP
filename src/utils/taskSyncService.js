@@ -50,21 +50,37 @@ function taskIdentity(task) {
   return createdAt === null ? `details:${details}` : `created:${createdAt}:${details}`;
 }
 
+function taskCoreMatches(left, right) {
+  const normalize = (value) => String(value ?? '').trim().toLowerCase();
+  return (
+    normalize(left.title) === normalize(right.title) &&
+    normalize(left.assigned_to_user_id) === normalize(right.assigned_to_user_id) &&
+    normalize(left.description) === normalize(right.description) &&
+    normalize(left.purok) === normalize(right.purok)
+  );
+}
+
 function findUniqueRemoteTask(remoteTasks, task) {
   const timestamp = taskTimestamp(task);
   if (timestamp === null) return null;
   const timestampMatches = remoteTasks.filter(
-    (remoteTask) => taskTimestamp(remoteTask) === timestamp
+    (remoteTask) =>
+      taskTimestamp(remoteTask) !== null &&
+      Math.abs(taskTimestamp(remoteTask) - timestamp) <= 1000 &&
+      taskCoreMatches(remoteTask, task)
   );
   if (timestampMatches.length === 1) return timestampMatches[0];
   if (timestampMatches.length < 2) return null;
 
-  const detailMatches = timestampMatches.filter(
-    (remoteTask) =>
-      String(remoteTask.title || '').trim() === String(task.title || '').trim() &&
-      remoteTask.assigned_to_user_id === task.assigned_to_user_id
+  const exactTimestampMatches = timestampMatches.filter(
+    (remoteTask) => taskTimestamp(remoteTask) === timestamp
   );
-  return detailMatches.length === 1 ? detailMatches[0] : null;
+  if (exactTimestampMatches.length === 1) return exactTimestampMatches[0];
+
+  const dueDateMatches = timestampMatches.filter(
+    (remoteTask) => String(remoteTask.due_date || '').slice(0, 10) === String(task.due_date || '').slice(0, 10)
+  );
+  return dueDateMatches.length === 1 ? dueDateMatches[0] : null;
 }
 
 function sameLocalTask(left, right) {
@@ -85,17 +101,6 @@ function samePendingTask(change, taskId, task) {
   );
 }
 
-function taskDetailsMatch(left, right) {
-  const normalize = (value) => String(value ?? '').trim().toLowerCase();
-  return (
-    normalize(left.title) === normalize(right.title) &&
-    normalize(left.description) === normalize(right.description) &&
-    normalize(left.purok) === normalize(right.purok) &&
-    normalize(left.due_date).slice(0, 10) === normalize(right.due_date).slice(0, 10) &&
-    normalize(left.assigned_to_user_id) === normalize(right.assigned_to_user_id)
-  );
-}
-
 async function findRemoteTaskForRetry(task) {
   const createdAt = taskTimestamp(task);
   if (createdAt === null) return { taskId: null };
@@ -113,9 +118,13 @@ async function findRemoteTaskForRetry(task) {
     return isValidTaskId(row.task_id) &&
       rowTimestamp !== null &&
       Math.abs(rowTimestamp - createdAt) <= 1000 &&
-      taskDetailsMatch(row, task);
+      taskCoreMatches(row, task);
   });
   if (matches.length > 1) {
+    const dueDateMatches = matches.filter(
+      (row) => String(row.due_date || '').slice(0, 10) === String(task.due_date || '').slice(0, 10)
+    );
+    if (dueDateMatches.length === 1) return { taskId: dueDateMatches[0].task_id };
     return { error: 'Multiple matching Supabase tasks were found; no duplicate was created.' };
   }
   return { taskId: matches[0]?.task_id || null };
@@ -756,30 +765,45 @@ export async function syncPendingTasks({ taskIds } = {}) {
                     .select('task_id')
                 : { error: null, data: [{ task_id: existing.data.task_id }] };
             } else {
-                const retriedTask = await findRemoteTaskForRetry(task);
-                if (retriedTask.error) {
-                  response = { error: { message: retriedTask.error } };
-                } else if (retriedTask.taskId) {
-                  syncedTaskId = retriedTask.taskId;
-                  response = { error: null, data: { task_id: syncedTaskId } };
-                } else {
-                  const { task_id: _localTaskId, ...taskToInsert } = task;
-                  response = await supabase
-                    .from('tasks')
-                    .insert(taskToInsert)
-                    .select('task_id')
-                    .single();
-                  if (!response.error && response.data) {
-                    syncedTaskId = response.data.task_id;
-                    queueTaskNotification(syncedTaskId);
-                    const notificationResult = await sendPendingTaskNotification(syncedTaskId);
-                    if (notificationResult.error) {
-                      result.notificationErrors.push(notificationResult.error);
-                      console.warn(
-                        `Task ${syncedTaskId} was saved, but its push notification was not sent: ${notificationResult.error}`
-                      );
-                    }
+              const retriedTask = await findRemoteTaskForRetry(task);
+              if (retriedTask.error) {
+                response = { error: { message: retriedTask.error } };
+              } else if (retriedTask.taskId) {
+                syncedTaskId = retriedTask.taskId;
+                const updates = change.updates || Object.fromEntries(
+                  Object.entries(task).filter(([field]) => field !== 'task_id')
+                );
+                response = Object.keys(updates).length
+                  ? await supabase
+                      .from('tasks')
+                      .update(updates)
+                      .eq('task_id', syncedTaskId)
+                      .select('task_id')
+                  : { error: null, data: [{ task_id: syncedTaskId }] };
+              } else if (change.updates && Object.keys(change.updates).length) {
+                response = {
+                  error: {
+                    message: 'Could not find the original Supabase task to apply this update. Reload the task list and try again; no duplicate task was created.',
+                  },
+                };
+              } else {
+                const { task_id: _localTaskId, ...taskToInsert } = task;
+                response = await supabase
+                  .from('tasks')
+                  .insert(taskToInsert)
+                  .select('task_id')
+                  .single();
+                if (!response.error && response.data) {
+                  syncedTaskId = response.data.task_id;
+                  queueTaskNotification(syncedTaskId);
+                  const notificationResult = await sendPendingTaskNotification(syncedTaskId);
+                  if (notificationResult.error) {
+                    result.notificationErrors.push(notificationResult.error);
+                    console.warn(
+                      `Task ${syncedTaskId} was saved, but its push notification was not sent: ${notificationResult.error}`
+                    );
                   }
+                }
               }
             }
           } else {
