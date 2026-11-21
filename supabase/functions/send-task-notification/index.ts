@@ -153,7 +153,12 @@ Deno.serve(async (request) => {
       details: taskError.details,
       hint: taskError.hint,
     });
-    return jsonResponse({ error: 'Could not load the assigned task.' }, 500);
+    const reason = taskError.code
+      ? `${taskError.code}: ${taskError.message}`
+      : taskError.message;
+    return jsonResponse({
+      error: `Could not load the assigned task. ${reason || 'Check the Supabase function logs.'}`,
+    }, 500);
   }
   if (!task) return jsonResponse({ error: 'Task not found.' }, 404);
 
