@@ -368,6 +368,15 @@ export default function SideMenu({ open, onClose, taskNavigationDate }) {
             <MyTasks />
           </div>
 
+          <div className="px-3 pb-2 pt-1 text-center">
+            <p className="text-xs font-bold uppercase tracking-[0.12em] text-gray-700">
+              NOTES:
+            </p>
+            <p className="mt-1 text-xs text-gray-700">
+              Tap the watch icon to switch a task to In Progress and then Completed.
+            </p>
+          </div>
+
         </div>
 
       </aside>
