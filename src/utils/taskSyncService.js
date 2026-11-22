@@ -515,7 +515,7 @@ export function cacheRemoteTasks(remoteTasks) {
   return tasks;
 }
 
-export function saveTaskLocally(task, fieldsToSync) {
+export function saveTaskLocally(task, fieldsToSync, notifyAssigneeOnSave = false) {
   const tasks = getLocalTasks();
   const index = tasks.findIndex((item) =>
     isValidTaskId(task.task_id)
@@ -544,6 +544,7 @@ export function saveTaskLocally(task, fieldsToSync) {
     updatedAt: new Date().toISOString(),
     isNewTask: previousChange?.isNewTask ?? String(task.task_id).startsWith('-'),
     notifyAssignee: Boolean(
+      notifyAssigneeOnSave ||
       previousChange?.notifyAssignee ||
       previousChange?.notifyOnAssignment ||
       (isRemoteTask && hasTaskDetailUpdate)

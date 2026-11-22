@@ -324,7 +324,7 @@ export default function AdminTasks({
               'completed_at',
             ]
           : undefined;
-        saveTaskLocally(task, taskFieldsToSync);
+        saveTaskLocally(task, taskFieldsToSync, Boolean(editingTask && taskFieldsToSync?.length));
         setTasks(deduplicateTasks(getLocalTasks()));
         setForm(emptyForm);
         setShowForm(false);

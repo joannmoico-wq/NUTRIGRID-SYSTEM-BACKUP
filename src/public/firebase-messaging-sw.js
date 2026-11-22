@@ -10,6 +10,14 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
+self.addEventListener('install', (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 messaging.onBackgroundMessage((payload) => {
   const isTaskUpdate = payload.data?.notification_type === 'updated';
   const title = isTaskUpdate
