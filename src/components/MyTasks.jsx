@@ -200,7 +200,9 @@ export default function MyTasks() {
   const advance = async (t) => {
     const next = NEXT_STATUS[t.status] || 'Pending';
     setPendingTaskChange({
-      message: `Are you sure you want to update "${t.title}" to ${next}?`,
+      message: next === 'Completed'
+        ? 'Are you sure you are done with your task?'
+        : `Are you sure you want to update "${t.title}" to ${next}?`,
       confirmLabel: 'Save changes',
       action: async () => {
     saveTaskLocally({
