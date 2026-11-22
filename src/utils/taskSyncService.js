@@ -205,14 +205,17 @@ function getPendingTaskNotifications() {
 
 function queueTaskNotification(taskId, notificationType = 'assigned') {
   const notifications = getPendingTaskNotifications();
-  if (!notifications.some((item) => String(item.taskId) === String(taskId))) {
-    notifications.push({
-      taskId: String(taskId),
-      notificationType,
-      queuedAt: new Date().toISOString(),
-    });
-    localStorage.setItem(PENDING_TASK_NOTIFICATIONS_KEY, JSON.stringify(notifications));
-  }
+  const notification = {
+    taskId: String(taskId),
+    notificationType,
+    queuedAt: new Date().toISOString(),
+  };
+  const existingIndex = notifications.findIndex(
+    (item) => String(item.taskId) === String(taskId)
+  );
+  if (existingIndex < 0) notifications.push(notification);
+  else notifications[existingIndex] = { ...notifications[existingIndex], ...notification };
+  localStorage.setItem(PENDING_TASK_NOTIFICATIONS_KEY, JSON.stringify(notifications));
 }
 
 function removePendingTaskNotification(taskId) {
@@ -682,7 +685,18 @@ export async function syncPendingTasks({ taskIds } = {}) {
   syncingTasks = true;
   const result = { synced: 0, records: 0, errors: [], notificationErrors: [], migrationPending: false };
   try {
+    const taskIdsWithPendingUpdates = new Set(
+      getPendingTaskChanges()
+        .filter((change) =>
+          change.operation === 'upsert' &&
+          change.notifyAssignee &&
+          !change.isNewTask &&
+          (!isTargetedSync || taskIds.some((taskId) => String(taskId) === String(change.taskId)))
+        )
+        .map((change) => String(change.taskId))
+    );
     for (const notification of getPendingTaskNotifications()) {
+      if (taskIdsWithPendingUpdates.has(String(notification.taskId))) continue;
       const notificationResult = await sendPendingTaskNotification(
         notification.taskId,
         notification.notificationType
