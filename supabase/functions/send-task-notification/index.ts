@@ -122,6 +122,7 @@ Deno.serve(async (request) => {
   if (body.notification_type && !['assigned', 'updated'].includes(body.notification_type)) {
     return jsonResponse({ error: 'The notification type is invalid.' }, 400);
   }
+  const notificationType = body.notification_type || 'assigned';
 
   const { data: adminProfile, error: adminError } = await authClient
     .from('profiles')
@@ -210,8 +211,15 @@ Deno.serve(async (request) => {
           message: {
             token: recipient.fcm_token,
             data: {
-              title: body.notification_type === 'updated' ? 'Task updated' : 'New task assigned',
-              body: task.title || 'Open NutriGrid to view your task.',
+              title: notificationType === 'updated'
+                ? 'Your task has been updated'
+                : 'New task assigned',
+              body: task.title || (
+                notificationType === 'updated'
+                  ? 'Open NutriGrid to view the changes.'
+                  : 'Open NutriGrid to view your task.'
+              ),
+              notification_type: notificationType,
               task_id: String(task.task_id),
               url: '/',
             },

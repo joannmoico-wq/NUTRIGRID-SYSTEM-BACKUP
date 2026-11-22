@@ -11,8 +11,13 @@ firebase.initializeApp({
 const messaging = firebase.messaging();
 
 messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || payload.data?.title || 'New task assigned';
-  const body = payload.notification?.body || payload.data?.body || 'Open NutriGrid to view it.';
+  const isTaskUpdate = payload.data?.notification_type === 'updated';
+  const title = isTaskUpdate
+    ? 'Your task has been updated'
+    : payload.notification?.title || payload.data?.title || 'New task assigned';
+  const body = payload.notification?.body || payload.data?.body || (
+    isTaskUpdate ? 'Open NutriGrid to view the changes.' : 'Open NutriGrid to view it.'
+  );
   self.registration.showNotification(title, {
     body,
     icon: '/icon-192.png',
