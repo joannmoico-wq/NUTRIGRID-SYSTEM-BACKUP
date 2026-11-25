@@ -423,7 +423,7 @@ export default function MyTasks() {
           {pushMessage}
         </p>
       )}
-      <div className="flex min-w-0 items-center gap-2">
+      <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
         <BnsSearchBar
           query={taskSearch}
           onSearch={(value) => {

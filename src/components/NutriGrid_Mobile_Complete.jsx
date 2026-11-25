@@ -2236,7 +2236,7 @@ const HomeScreen = ({
                 >
                   <Icon size={19} strokeWidth={2.2} aria-hidden="true" />
                 </span>
-                <span className="relative z-10 w-full min-w-0 pl-10 pr-0.5 text-center">
+                <span className="relative z-10 w-full min-w-0 text-center">
                   <span className="block whitespace-normal break-words text-[10px] font-semibold uppercase leading-tight text-gray-700">{label}</span>
                   <span className="mt-1 block w-full translate-y-1 text-center text-xl font-bold leading-none text-gray-900">{value}</span>
                   {subtitle && (
@@ -3296,8 +3296,6 @@ const NutriGridMobile = () => {
             `${result.synced} record(s) uploaded; ${result.errors.length} failed.\n\n${firstError}` +
             (remainingErrors ? `\n\n${remainingErrors} more error(s). Check the browser console.` : '')
           );
-        } else if (currentUser?.id && pulledRecords === 0) {
-          showSyncNotification('Supabase returned no records for this signed-in account. Confirm this is the BHW account that owns the records.');
         }
       } else if (result.errors.length) {
         const syncError = result.errors[0];
