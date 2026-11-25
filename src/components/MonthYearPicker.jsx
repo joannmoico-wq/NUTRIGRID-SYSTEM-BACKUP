@@ -18,6 +18,8 @@ export default function MonthYearPicker({
   minYear = 2000,
   maxYear,
   buttonClassName = '',
+  compact = false,
+  chevronSize = compact ? 13 : 16,
 }) {
   const [open, setOpen] = useState(false);
   const pickerRef = useRef(null);
@@ -28,7 +30,10 @@ export default function MonthYearPicker({
   const lastYear = Math.max(maxYear ?? now.getFullYear() + 5, selectedYear);
   const years = Array.from({ length: Math.max(1, lastYear - minYear + 1) }, (_, index) => minYear + index);
   const selectedLabel = value
-    ? new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString('en', { month: 'long', year: 'numeric' })
+    ? new Date(selectedYear, selectedMonth - 1, 1).toLocaleDateString('en', {
+        month: compact ? 'short' : 'long',
+        year: 'numeric',
+      })
     : 'All months';
 
   useEffect(() => {
@@ -58,7 +63,9 @@ export default function MonthYearPicker({
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        className={`inline-flex min-h-12 min-w-44 items-center justify-between gap-3 rounded-xl border px-3.5 py-2 text-sm font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300 ${buttonClassName} ${
+        className={`${compact
+          ? 'inline-flex min-h-10 min-w-0 items-center justify-between gap-2 rounded-xl border px-2.5 py-2 text-xs'
+          : 'inline-flex min-h-12 min-w-44 items-center justify-between gap-3 rounded-xl border px-3.5 py-2 text-sm'} font-semibold shadow-sm focus:outline-none focus:ring-2 focus:ring-violet-300 ${buttonClassName} ${
           darkMode
             ? 'border-[#67445F] bg-[#302338] text-[#FCE7F3]'
             : 'border-gray-300 bg-white text-gray-800'
@@ -68,7 +75,7 @@ export default function MonthYearPicker({
         aria-expanded={open}
       >
         <span className="whitespace-nowrap">{selectedLabel}</span>
-        <ChevronDown size={16} aria-hidden="true" />
+        <ChevronDown size={chevronSize} aria-hidden="true" />
       </button>
       {open && (
         <div

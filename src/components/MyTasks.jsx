@@ -423,45 +423,48 @@ export default function MyTasks() {
           {pushMessage}
         </p>
       )}
-      <BnsSearchBar
-        query={taskSearch}
-        onSearch={(value) => {
-          setTaskSearch(value);
-          setShowTaskSuggestions(true);
-        }}
-        results={taskSuggestions}
-        showSuggestions={showTaskSuggestions}
-        onFocusSuggestions={() => setShowTaskSuggestions(true)}
-        onBlurSuggestions={() => setShowTaskSuggestions(false)}
-        onSelectResult={(result) => {
-          setTaskSearch(result.data.title || '');
-          setShowTaskSuggestions(false);
-        }}
-        placeholder="Search your tasks..."
-        emptyMessage="No matching tasks"
-        tone="field"
-        portalSuggestions
-      />
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="flex items-center gap-2 text-sm font-semibold text-gray-700">
-          <Calendar size={16} />
+      <div className="flex min-w-0 items-center gap-2">
+        <BnsSearchBar
+          query={taskSearch}
+          onSearch={(value) => {
+            setTaskSearch(value);
+            setShowTaskSuggestions(true);
+          }}
+          results={taskSuggestions}
+          showSuggestions={showTaskSuggestions}
+          onFocusSuggestions={() => setShowTaskSuggestions(true)}
+          onBlurSuggestions={() => setShowTaskSuggestions(false)}
+          onSelectResult={(result) => {
+            setTaskSearch(result.data.title || '');
+            setShowTaskSuggestions(false);
+          }}
+          placeholder="Search your tasks..."
+          emptyMessage="No matching tasks"
+          tone="field"
+          portalSuggestions
+          widthClass="min-w-0 flex-1"
+        />
+        <div className="flex shrink-0 items-center gap-1 text-xs font-semibold uppercase text-gray-700">
+          <Calendar size={14} aria-hidden="true" />
           Month
           <MonthYearPicker
             value={selectedMonth}
             onChange={setSelectedMonth}
             label="Filter tasks by month"
+            compact
+            chevronSize={10}
           />
-        </label>
-        {selectedMonth && (
-          <button
-            type="button"
-            onClick={() => setSelectedMonth('')}
-            className="rounded-full border border-[#E8DCEF] px-3 py-2 text-xs font-semibold text-gray-600"
-          >
-            All months
-          </button>
-        )}
+        </div>
       </div>
+      {selectedMonth && (
+        <button
+          type="button"
+          onClick={() => setSelectedMonth('')}
+          className="rounded-full border border-[#E8DCEF] px-3 py-2 text-xs font-semibold text-gray-600"
+        >
+          All months
+        </button>
+      )}
       {permission === 'denied' && (
         <p className="rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
           Notifications are blocked. Allow them for NutriGrid in your browser settings to receive task alerts.

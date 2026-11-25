@@ -3296,8 +3296,6 @@ const NutriGridMobile = () => {
             `${result.synced} record(s) uploaded; ${result.errors.length} failed.\n\n${firstError}` +
             (remainingErrors ? `\n\n${remainingErrors} more error(s). Check the browser console.` : '')
           );
-        } else if (currentUser?.id && pulledRecords > 0) {
-          showSyncNotification(`Loaded ${pulledRecords} record(s) from Supabase for this account.`);
         } else if (currentUser?.id && pulledRecords === 0) {
           showSyncNotification('Supabase returned no records for this signed-in account. Confirm this is the BHW account that owns the records.');
         }
