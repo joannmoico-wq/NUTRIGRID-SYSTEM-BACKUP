@@ -444,9 +444,7 @@ export default function MyTasks() {
           portalSuggestions
           widthClass="min-w-0 flex-1"
         />
-        <div className="flex shrink-0 items-center gap-1 text-xs font-semibold uppercase text-gray-700">
-          <Calendar size={14} aria-hidden="true" />
-          Month
+        <div className="flex shrink-0 items-center">
           <MonthYearPicker
             value={selectedMonth}
             onChange={setSelectedMonth}
