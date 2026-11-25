@@ -40,6 +40,15 @@ export function checkSessionTimeout(userId, now = Date.now()) {
   return null;
 }
 
+export function restoreSessionTimeout(userId, now = Date.now()) {
+  const reason = checkSessionTimeout(userId, now);
+  if (reason === 'missing') {
+    startSessionTimeout(userId, now);
+    return null;
+  }
+  return reason;
+}
+
 export function recordSessionActivity(userId, now = Date.now()) {
   if (!userId) return;
   const session = readSession(userId);

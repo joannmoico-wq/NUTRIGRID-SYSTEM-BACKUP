@@ -55,6 +55,7 @@ import {
   checkSessionTimeout,
   clearSessionTimeout,
   recordSessionActivity,
+  restoreSessionTimeout,
   startSessionTimeout,
 } from '../utils/sessionTimeout';
 import {
@@ -131,7 +132,6 @@ const LEGACY_RECORD_KEYS = {
 const PWA_READ_NOTIFICATIONS_KEY = 'nutrigrid_pwa_read_notifications';
 const SHARED_PUROK_CACHE_KEY = 'nutrigrid_shared_purok_counts_v3';
 const SHARED_PUROK_CACHE_TTL_MS = 5 * 60 * 1000;
-const PWA_INITIAL_SYNC_KEY = 'nutrigrid_initial_sync';
 const PWA_VIEW_STATE_KEY_PREFIX = 'nutrigrid_pwa_view_state:';
 const PWA_PERSISTED_VIEWS = new Set(['home', 'records', 'profile']);
 const PWA_CATEGORY_IDS = new Set([
@@ -142,10 +142,6 @@ const PWA_CATEGORY_IDS = new Set([
   'pregnantwoman',
   'monthlynatal',
 ]);
-
-function getInitialSyncKey(userId) {
-  return `${PWA_INITIAL_SYNC_KEY}:${userId}`;
-}
 
 function getPwaViewStateKey(userId) {
   return `${PWA_VIEW_STATE_KEY_PREFIX}${userId}`;
@@ -190,23 +186,6 @@ function readPwaViewState(userId) {
       editingRecordId: null,
       previewRecord: null,
     };
-  }
-}
-
-function hasCompletedInitialSync(userId) {
-  try {
-    return sessionStorage.getItem(getInitialSyncKey(userId)) === 'completed';
-  } catch (error) {
-    console.error('Could not read PWA sync state:', error);
-    return false;
-  }
-}
-
-function markInitialSyncCompleted(userId) {
-  try {
-    sessionStorage.setItem(getInitialSyncKey(userId), 'completed');
-  } catch (error) {
-    console.error('Could not save PWA sync state:', error);
   }
 }
 
@@ -3001,7 +2980,7 @@ const NutriGridMobile = () => {
     window.addEventListener('offline', handleOffline);
 
     const restoreUser = async (userData) => {
-      const timeoutReason = checkSessionTimeout(userData.id);
+      const timeoutReason = restoreSessionTimeout(userData.id);
       if (timeoutReason) {
         try {
           await signOutSupabase(userData.id);
@@ -3346,12 +3325,10 @@ const NutriGridMobile = () => {
   useEffect(() => {
     if (!isAuthenticated || currentUser?.role?.toLowerCase() === 'admin') return undefined;
 
-    const syncWhenOnline = ({ notify = false, force = false } = {}) => {
+    const syncWhenOnline = ({ notify = false } = {}) => {
       if (!navigator.onLine || syncInFlight.current) return;
-      if (!force && hasCompletedInitialSync(currentUser.id)) return;
 
       syncInFlight.current = true;
-      if (!force) markInitialSyncCompleted(currentUser.id);
       void Promise.all([
         syncData({ notify }),
         syncPendingActivityLogs().then((result) => {
@@ -3379,7 +3356,7 @@ const NutriGridMobile = () => {
       wasOffline.current = true;
     };
     const handleOnline = () => {
-      if (wasOffline.current) syncWhenOnline({ notify: true, force: true });
+      if (wasOffline.current) syncWhenOnline({ notify: true });
       wasOffline.current = false;
     };
 
