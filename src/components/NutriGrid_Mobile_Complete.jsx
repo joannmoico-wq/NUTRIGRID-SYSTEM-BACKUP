@@ -2222,7 +2222,7 @@ const HomeScreen = ({
             ].map(({ label, value, subtitle, icon: Icon, color, background, trend }) => (
               <div
                 key={label}
-                className="relative flex min-h-[82px] min-w-0 items-center gap-2 overflow-hidden rounded-xl border border-black/5 px-2 py-2 pb-3 shadow-sm"
+                className="relative flex min-h-[96px] min-w-0 items-center gap-2 overflow-hidden rounded-xl border border-black/5 px-2 py-2 pb-3 shadow-sm"
                 style={{ background: `linear-gradient(135deg, #FFFFFF 0%, ${background} 100%)` }}
               >
                 <span
@@ -2236,8 +2236,8 @@ const HomeScreen = ({
                 >
                   <Icon size={19} strokeWidth={2.2} aria-hidden="true" />
                 </span>
-                <span className="relative z-10 w-full min-w-0 text-center">
-                  <span className="block truncate text-[10px] font-semibold uppercase leading-tight text-gray-700">{label}</span>
+                <span className="relative z-10 w-full min-w-0 pl-10 pr-0.5 text-center">
+                  <span className="block whitespace-normal break-words text-[10px] font-semibold uppercase leading-tight text-gray-700">{label}</span>
                   <span className="mt-1 block w-full translate-y-1 text-center text-xl font-bold leading-none text-gray-900">{value}</span>
                   {subtitle && (
                     <span className="mt-0.5 block text-[9px] leading-tight text-gray-500">{subtitle}</span>
