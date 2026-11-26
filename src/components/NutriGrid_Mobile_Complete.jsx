@@ -88,6 +88,11 @@ import {
 import { calculateMonthlyTrend } from '../utils/recordTrends';
 import { calculateAgeInYears } from '../utils/childGrowth';
 import {
+  findRecordDuplicate,
+  getDuplicateRecordName,
+  updateDuplicateRecord,
+} from '../utils/recordDuplicates';
+import {
   recordInformationCreate,
   recordInformationDelete,
   recordInformationEdit,
@@ -3451,18 +3456,27 @@ const NutriGridMobile = () => {
     };
   }, []);
 
-  const saveCategoryForm = async (formData) => {
-    const wasEditingRecord = Boolean(editingRecord);
+  const saveCategoryForm = async (formData, duplicateRecord = null, preserveExistingPurok = false) => {
+    const existingRecord = duplicateRecord || editingRecord;
+    const wasEditingFormRecord = Boolean(editingRecord);
     const key = storageKeyForCategory(formData.category);
     const editedAt = new Date().toISOString();
-    const recordFormData = currentUser?.assignedPurok
-      ? { ...formData, purok: currentUser.assignedPurok }
+    let recordFormData = duplicateRecord
+      ? updateDuplicateRecord(duplicateRecord, formData, {
+          preservePurok: preserveExistingPurok,
+        })
       : formData;
+    if (currentUser?.assignedPurok && !preserveExistingPurok) {
+      recordFormData = {
+        ...recordFormData,
+        purok: currentUser.assignedPurok,
+      };
+    }
     const pending = {
       ...recordFormData,
-      updated_at: editingRecord ? editedAt : formData.updated_at,
-      last_edited_at: editingRecord ? editedAt : formData.last_edited_at,
-      created_by_user_id: currentUser?.id || '',
+      updated_at: existingRecord ? editedAt : formData.updated_at,
+      last_edited_at: existingRecord ? editedAt : formData.last_edited_at,
+      created_by_user_id: currentUser?.id || recordFormData.created_by_user_id || '',
       synced: false,
       status: 'pending',
       sync_status: 'pending_sync',
@@ -3476,11 +3490,11 @@ const NutriGridMobile = () => {
       showSyncNotification('Could not save the record on this device. Check device storage and try again.');
       throw error;
     }
-    if (editingRecord) {
+    if (existingRecord) {
       void recordInformationEdit({
         category: formData.category,
         recordId: ownedPending.id,
-        before: editingRecord,
+        before: existingRecord,
         after: recordFormData,
         actorRole: currentUser?.role,
       });
@@ -3494,7 +3508,7 @@ const NutriGridMobile = () => {
     removeLegacyRecord(formData.category, ownedPending.id);
     setEditingRecord(null);
     setShowCategoryForm(false);
-    if (wasEditingRecord) setActiveView('records');
+    if (wasEditingFormRecord) setActiveView('records');
     setRecordsRefresh((v) => v + 1);
     showSyncNotification('Record saved on this device. Syncing to Supabase…');
     updateRecordSyncStatus(key, ownedPending.id, 'syncing', '', ownedPending);
@@ -3527,11 +3541,49 @@ const NutriGridMobile = () => {
       });
   };
 
-  const handleCategoryFormSubmit = (formData) => requestConfirmation(
-    `Are you sure you want to ${editingRecord ? 'edit' : 'save'} this ${DASHBOARD_CATEGORIES.find(({ id }) => id === formData.category)?.name || 'record'}?`,
-    () => saveCategoryForm(formData),
-    { confirmLabel: editingRecord ? 'Save changes' : 'Save' }
-  );
+  const handleCategoryFormSubmit = (formData) => {
+    if (editingRecord) {
+      requestConfirmation(
+        'Are you sure you want to edit this record?',
+        () => saveCategoryForm(formData),
+        { confirmLabel: 'Save changes' }
+      );
+      return;
+    }
+
+    const key = storageKeyForCategory(formData.category);
+    const duplicate = findRecordDuplicate(
+      formData.category,
+      formData,
+      getRecords(key),
+      { includeEnvironmental: formData.category === 'environmental' }
+    );
+    if (!duplicate) {
+      requestConfirmation(
+        `Are you sure you want to save this ${DASHBOARD_CATEGORIES.find(({ id }) => id === formData.category)?.name || 'record'}?`,
+        () => saveCategoryForm(formData),
+        { confirmLabel: 'Save' }
+      );
+      return;
+    }
+
+    const existingPurok = duplicate.record.purok || 'the existing Purok';
+    const saveDuplicateUpdate = () => saveCategoryForm(formData, duplicate.record, true);
+    if (duplicate.type === 'different-purok') {
+      requestConfirmation(
+        `This record already exists in ${existingPurok}. Please ask an Admin to update it in that Purok.`,
+        () => {},
+        { confirmLabel: 'OK' }
+      );
+      return;
+    }
+
+    const name = getDuplicateRecordName(formData.category, formData);
+    const message = formData.category === 'environmental'
+      ? `This environmental record already exists for ${formData.visit_date}. Do you want to update the existing record?`
+      : `This record already exists. Do you want to update the existing record with the name of: ${name}?`;
+    requestConfirmation(message, saveDuplicateUpdate, { confirmLabel: 'Update existing record' });
+  };
 
   const deleteCategoryRecords = (categoryId, records) => requestConfirmation(
     `Are you sure you want to delete ${records.length === 1 ? 'this record' : `these ${records.length} selected records`}? This removes them from Field Worker and Admin.`,

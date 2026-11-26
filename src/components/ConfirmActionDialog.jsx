@@ -5,10 +5,12 @@ export default function ConfirmActionDialog({
   title = 'Confirm action',
   message,
   confirmLabel = 'Save',
+  alternateConfirmLabel,
   cancelLabel = 'Cancel',
   destructive = false,
   busy = false,
   onConfirm,
+  onAlternateConfirm,
   onCancel,
 }) {
   if (!open) return null;
@@ -36,7 +38,7 @@ export default function ConfirmActionDialog({
             <p className="mt-1 text-sm leading-5 text-gray-600">{message}</p>
           </div>
         </div>
-        <div className="mt-5 flex justify-end gap-2">
+        <div className="mt-5 flex flex-wrap justify-end gap-2">
           <button
             type="button"
             disabled={busy}
@@ -45,6 +47,16 @@ export default function ConfirmActionDialog({
           >
             {cancelLabel}
           </button>
+          {alternateConfirmLabel && onAlternateConfirm && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onAlternateConfirm}
+              className="rounded-lg border border-violet-200 px-4 py-2 text-sm font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-50"
+            >
+              {alternateConfirmLabel}
+            </button>
+          )}
           <button
             type="button"
             disabled={busy}

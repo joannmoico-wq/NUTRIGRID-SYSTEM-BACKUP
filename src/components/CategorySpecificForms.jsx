@@ -1908,6 +1908,7 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
       purok: '',
       mother_name: '',
       child_name: '',
+      visit_date: initialData?.visit_date || (initialData ? '' : new Date().toISOString().split('T')[0]),
       feeding_1_week: '',
       feeding_1_month: '',
       feeding_2_month: '',
@@ -1993,6 +1994,16 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
         assignedPurok={assignedPurok}
         className={fieldClass}
       />
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-2">Date of Visit *</label>
+        <input
+          type="date"
+          required
+          value={formData.visit_date}
+          onChange={(event) => updateField('visit_date', event.target.value)}
+          className={fieldClass}
+        />
+      </div>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Pangalan ng Nanay *</label>
         <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} placeholder="Hal. Maria Santos" />

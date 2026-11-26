@@ -86,6 +86,11 @@ import {
 import { isTaskOverdue } from '../utils/taskSyncService';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
 import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
+import {
+  findRecordDuplicate,
+  getDuplicateRecordName,
+  updateDuplicateRecord,
+} from '../utils/recordDuplicates';
 import { removeNotesColumns } from '../utils/reportExport';
 import {
   getActivityCategoryLabel,
@@ -1973,12 +1978,14 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     );
   };
 
-  const confirmAdminAction = async () => {
+  const confirmAdminAction = async (actionKey = 'action') => {
     if (!adminConfirmation) return;
     const confirmation = adminConfirmation;
+    const action = confirmation[actionKey];
+    if (!action) return;
     setAdminConfirmationBusy(true);
     try {
-      const nextConfirmation = await confirmation.action();
+      const nextConfirmation = await action();
       setAdminConfirmation(nextConfirmation || null);
     } finally {
       setAdminConfirmationBusy(false);
@@ -2081,6 +2088,131 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
     ),
   });
+
+  const saveAdminCategoryRecord = async (
+    record,
+    existingRecord = null,
+    { preservePurok = false } = {}
+  ) => {
+    const key = storageKeyForCategory(record.category);
+    const editedAt = new Date().toISOString();
+    const recordForSave = existingRecord
+      ? updateDuplicateRecord(existingRecord, record, {
+          preservePurok,
+          preserveMissingPhotos: !adminEditingRecord,
+        })
+      : record;
+    const pending = {
+      ...recordForSave,
+      updated_at: existingRecord ? editedAt : recordForSave.updated_at,
+      last_edited_at: existingRecord ? editedAt : recordForSave.last_edited_at,
+      created_by_user_id:
+        existingRecord?.created_by_user_id || recordForSave.created_by_user_id || currentUserId,
+      synced: false,
+      status: 'pending',
+      sync_status: 'pending_sync',
+      sync_error: null,
+    };
+    await upsertRecord(key, pending);
+    if (existingRecord) {
+      void recordInformationEdit({
+        category: record.category,
+        recordId: pending.id,
+        before: existingRecord,
+        after: recordForSave,
+        actorRole: 'admin',
+      });
+    } else {
+      void recordInformationCreate({
+        category: record.category,
+        record: pending,
+        actorRole: 'admin',
+      });
+    }
+    refreshData();
+    closeCategoryForm();
+    setAdminDataStatus('loaded');
+    void (async () => {
+      try {
+        updateRecordSyncStatus(key, pending.id, 'syncing', '', pending);
+        const syncError = await syncSingleRecord(record.category, pending, {
+          includeShared: true,
+        });
+        if (syncError) {
+          if (['offline', 'not-signed-in'].includes(syncError)) {
+            updateRecordSyncStatus(key, pending.id, 'pending_sync', '', pending);
+          } else {
+            updateRecordSyncStatus(key, pending.id, 'sync_failed', syncError, pending);
+          }
+          const message = syncError === 'offline'
+            ? 'Saved locally. The changes will sync to Supabase when you are back online.'
+            : syncError === 'not-signed-in'
+              ? 'Saved locally. Sign in to Supabase to sync these changes.'
+              : `Saved locally, but Supabase sync failed: ${syncError}`;
+          if (!['offline', 'not-signed-in'].includes(syncError)) {
+            console.error('Admin record changes are still waiting to sync:', syncError);
+            setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
+          }
+          alert(message);
+          return;
+        }
+        refreshData();
+      } catch (error) {
+        updateRecordSyncStatus(key, pending.id, 'sync_failed', error.message || 'Unknown error', pending);
+        console.error('Could not sync the admin record to Supabase:', error);
+        setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
+        alert(`Saved locally, but Supabase sync failed: ${error.message || 'request failed'}`);
+      }
+    })();
+  };
+
+  const handleAdminCategoryFormSubmit = (record) => {
+    if (adminEditingRecord) {
+      requestAdminConfirmation(
+        'Are you sure you want to edit this record?',
+        () => saveAdminCategoryRecord(record, adminEditingRecord),
+        { confirmLabel: 'Save changes' }
+      );
+      return;
+    }
+
+    const duplicate = findRecordDuplicate(
+      record.category,
+      record,
+      getRecords(storageKeyForCategory(record.category))
+    );
+    if (!duplicate) {
+      requestAdminConfirmation(
+        'Are you sure you want to save this record?',
+        () => saveAdminCategoryRecord(record),
+        { confirmLabel: 'Save' }
+      );
+      return;
+    }
+
+    const saveDuplicateUpdate = () =>
+      saveAdminCategoryRecord(record, duplicate.record, { preservePurok: true });
+    if (duplicate.type === 'different-purok') {
+      const existingPurok = duplicate.record.purok || 'the existing Purok';
+      requestAdminConfirmation(
+        `There is already an existing record with the same information in another Purok (${existingPurok}). Do you want to add another record or update it in the existing Purok?`,
+        () => saveAdminCategoryRecord(record),
+        {
+          confirmLabel: 'Add another record',
+          alternateConfirmLabel: 'Update in existing Purok',
+          alternateAction: saveDuplicateUpdate,
+        }
+      );
+      return;
+    }
+
+    const name = getDuplicateRecordName(record.category, record);
+    requestAdminConfirmation(
+      `This record already exists. Do you want to update the existing record with the name of: ${name}?`,
+      saveDuplicateUpdate,
+      { confirmLabel: 'Update existing record' }
+    );
+  };
 
   const showImportError = (error) => {
     setAdminConfirmation({
@@ -4255,74 +4387,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
               <AdminCategoryForm
                 userName={adminName}
                 initialData={adminEditingRecord}
-                onSubmit={(record) => requestAdminConfirmation(
-                  `Are you sure you want to ${adminEditingRecord ? 'edit' : 'save'} this record?`,
-                  async () => {
-                  const key = storageKeyForCategory(record.category);
-                  const editedAt = new Date().toISOString();
-                  const pending = {
-                    ...record,
-                    updated_at: adminEditingRecord ? editedAt : record.updated_at,
-                    last_edited_at: adminEditingRecord ? editedAt : record.last_edited_at,
-                    created_by_user_id: record.created_by_user_id || currentUserId,
-                    synced: false,
-                    status: 'pending',
-                    sync_status: 'pending_sync',
-                    sync_error: null,
-                  };
-                  await upsertRecord(key, pending);
-                  if (adminEditingRecord) {
-                    void recordInformationEdit({
-                      category: record.category,
-                      recordId: pending.id,
-                      before: adminEditingRecord,
-                      after: record,
-                      actorRole: 'admin',
-                    });
-                  } else {
-                    void recordInformationCreate({
-                      category: record.category,
-                      record: pending,
-                      actorRole: 'admin',
-                    });
-                  }
-                  refreshData();
-                  closeCategoryForm();
-                  setAdminDataStatus('loaded');
-                  void (async () => {
-                    try {
-                      updateRecordSyncStatus(key, pending.id, 'syncing', '', pending);
-                      const syncError = await syncSingleRecord(record.category, pending, {
-                        includeShared: true,
-                      });
-                      if (syncError) {
-                        if (['offline', 'not-signed-in'].includes(syncError)) {
-                          updateRecordSyncStatus(key, pending.id, 'pending_sync', '', pending);
-                        } else {
-                          updateRecordSyncStatus(key, pending.id, 'sync_failed', syncError, pending);
-                        }
-                        const message = syncError === 'offline'
-                          ? 'Saved locally. The changes will sync to Supabase when you are back online.'
-                          : syncError === 'not-signed-in'
-                            ? 'Saved locally. Sign in to Supabase to sync these changes.'
-                            : `Saved locally, but Supabase sync failed: ${syncError}`;
-                        if (!['offline', 'not-signed-in'].includes(syncError)) {
-                          console.error('Admin record changes are still waiting to sync:', syncError);
-                          setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
-                        }
-                        alert(message);
-                        return;
-                      }
-                      refreshData();
-                    } catch (error) {
-                      updateRecordSyncStatus(key, pending.id, 'sync_failed', error.message || 'Unknown error', pending);
-                      console.error('Could not sync the admin record to Supabase:', error);
-                      setAdminDataStatus(navigator.onLine ? 'error' : 'offline');
-                      alert(`Saved locally, but Supabase sync failed: ${error.message || 'request failed'}`);
-                    }
-                  })();
-                  }
-                )}
+                onSubmit={handleAdminCategoryFormSubmit}
                 onCancel={closeCategoryForm}
               />
             </div>
@@ -4390,10 +4455,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         title={adminConfirmation?.title || 'Confirm changes'}
         message={adminConfirmation?.message}
         confirmLabel={adminConfirmation?.confirmLabel || (adminEditingRecord ? 'Save changes' : 'Save')}
+        alternateConfirmLabel={adminConfirmation?.alternateConfirmLabel}
         destructive={adminConfirmation?.destructive}
         busy={adminConfirmationBusy}
         onCancel={() => setAdminConfirmation(null)}
         onConfirm={() => void confirmAdminAction()}
+        onAlternateConfirm={() => void confirmAdminAction('alternateAction')}
       />
     </div>
   );
