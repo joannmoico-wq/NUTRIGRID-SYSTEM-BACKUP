@@ -1,7 +1,9 @@
+import { useEffect } from 'react';
 import { AlertTriangle } from 'lucide-react';
 
 export default function ConfirmActionDialog({
   open,
+  highlightDuplicateFields = false,
   title = 'Confirm action',
   message,
   confirmLabel = 'Save',
@@ -13,6 +15,12 @@ export default function ConfirmActionDialog({
   onAlternateConfirm,
   onCancel,
 }) {
+  useEffect(() => {
+    if (!open || !highlightDuplicateFields) return undefined;
+    document.body.classList.add('duplicate-record-warning');
+    return () => document.body.classList.remove('duplicate-record-warning');
+  }, [open, highlightDuplicateFields]);
+
   if (!open) return null;
 
   return (
@@ -23,11 +31,22 @@ export default function ConfirmActionDialog({
         if (event.target === event.currentTarget && !busy) onCancel();
       }}
     >
+      <style>{`
+        body.duplicate-record-warning .category-record-form :is(
+          input:not([type="hidden"]):not([type="file"]):not([type="checkbox"]):not([type="radio"]),
+          select,
+          textarea
+        ) {
+          border-color: #dc2626 !important;
+          background-color: #fef2f2 !important;
+          box-shadow: 0 0 0 1px #dc2626;
+        }
+      `}</style>
       <section
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="confirm-action-title"
-        className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl"
+        className={`w-full ${alternateConfirmLabel ? 'max-w-xl' : 'max-w-sm'} rounded-2xl bg-white p-5 shadow-2xl`}
       >
         <div className="flex items-start gap-3">
           <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-full ${destructive ? 'bg-rose-100 text-rose-600' : 'bg-violet-100 text-violet-700'}`}>
@@ -38,12 +57,12 @@ export default function ConfirmActionDialog({
             <p className="mt-1 text-sm leading-5 text-gray-600">{message}</p>
           </div>
         </div>
-        <div className="mt-5 flex flex-wrap justify-end gap-2">
+        <div className={`mt-5 flex justify-end gap-2 ${alternateConfirmLabel ? 'flex-wrap min-[560px]:flex-nowrap' : 'flex-nowrap'}`}>
           <button
             type="button"
             disabled={busy}
             onClick={onCancel}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
+            className="shrink-0 rounded-lg border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50 disabled:opacity-50"
           >
             {cancelLabel}
           </button>
@@ -61,7 +80,7 @@ export default function ConfirmActionDialog({
             type="button"
             disabled={busy}
             onClick={onConfirm}
-            className={`rounded-lg px-4 py-2 text-sm font-semibold text-white disabled:opacity-50 ${destructive ? 'bg-rose-600 hover:bg-rose-700' : 'bg-violet-600 hover:bg-violet-700'}`}
+            className={`min-w-0 flex-1 rounded-lg px-4 py-2 text-center text-sm font-semibold text-white disabled:opacity-50 ${destructive ? 'bg-rose-600 hover:bg-rose-700' : 'bg-violet-600 hover:bg-violet-700'}`}
           >
             {busy ? 'Please wait…' : confirmLabel}
           </button>

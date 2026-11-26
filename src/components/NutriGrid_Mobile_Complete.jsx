@@ -2227,7 +2227,7 @@ const HomeScreen = ({
             ].map(({ label, value, subtitle, icon: Icon, color, background, trend }) => (
               <div
                 key={label}
-                className="relative flex min-h-[96px] min-w-0 items-center gap-2 overflow-hidden rounded-xl border border-black/5 px-2 pb-4 pt-2 shadow-sm"
+                className="relative flex min-h-[112px] min-w-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 px-2 pb-5 pt-2 shadow-sm"
                 style={{ background: `linear-gradient(135deg, #FFFFFF 0%, ${background} 100%)` }}
               >
                 <span
@@ -2236,14 +2236,14 @@ const HomeScreen = ({
                   aria-hidden="true"
                 />
                 <span
-                  className="relative z-10 grid h-10 w-10 shrink-0 place-items-center rounded-full text-white shadow-sm"
+                  className="absolute left-3 top-1/2 z-20 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full text-white shadow-sm"
                   style={{ background: `linear-gradient(145deg, ${color} 0%, ${color}CC 100%)` }}
                 >
                   <Icon size={22} strokeWidth={2.2} aria-hidden="true" />
                 </span>
-                <span className="relative z-10 flex min-w-0 flex-1 flex-col items-center justify-center gap-1 text-center">
-                  <span className="flex min-h-6 w-full items-center justify-center text-[10px] font-semibold leading-tight text-gray-700">{label}</span>
-                  <span className="block w-full text-xl font-bold leading-none text-gray-900">{value}</span>
+                <span className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 px-2 pl-14 text-center min-[520px]:pl-2">
+                  <span className="flex min-h-6 w-full items-center justify-center text-[10px] font-semibold leading-tight text-gray-700 min-[520px]:text-sm">{label}</span>
+                  <span className="block w-full text-xl font-bold leading-none text-gray-900 min-[520px]:text-3xl">{value}</span>
                   {subtitle && (
                     <span className="block text-[9px] leading-tight text-gray-500">{subtitle}</span>
                   )}
@@ -3573,7 +3573,7 @@ const NutriGridMobile = () => {
       requestConfirmation(
         `This record already exists in ${existingPurok}. Please ask an Admin to update it in that Purok.`,
         () => {},
-        { confirmLabel: 'OK' }
+        { confirmLabel: 'OK', highlightDuplicateFields: true }
       );
       return;
     }
@@ -3582,7 +3582,7 @@ const NutriGridMobile = () => {
     const message = formData.category === 'environmental'
       ? `This environmental record already exists for ${formData.visit_date}. Do you want to update the existing record?`
       : `This record already exists. Do you want to update the existing record with the name of: ${name}?`;
-    requestConfirmation(message, saveDuplicateUpdate, { confirmLabel: 'Update existing record' });
+    requestConfirmation(message, saveDuplicateUpdate, { confirmLabel: 'Update existing record', highlightDuplicateFields: true });
   };
 
   const deleteCategoryRecords = (categoryId, records) => requestConfirmation(
@@ -4207,6 +4207,7 @@ const NutriGridMobile = () => {
           title={pendingConfirmation?.title || 'Confirm changes'}
           message={pendingConfirmation?.message}
           confirmLabel={pendingConfirmation?.confirmLabel || 'Save'}
+          highlightDuplicateFields={pendingConfirmation?.highlightDuplicateFields}
           destructive={pendingConfirmation?.destructive}
           busy={confirmationBusy}
           onCancel={() => setPendingConfirmation(null)}

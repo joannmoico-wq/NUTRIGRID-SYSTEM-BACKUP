@@ -2201,6 +2201,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
           confirmLabel: 'Add another record',
           alternateConfirmLabel: 'Update in existing Purok',
           alternateAction: saveDuplicateUpdate,
+          highlightDuplicateFields: true,
         }
       );
       return;
@@ -2210,7 +2211,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     requestAdminConfirmation(
       `This record already exists. Do you want to update the existing record with the name of: ${name}?`,
       saveDuplicateUpdate,
-      { confirmLabel: 'Update existing record' }
+      { confirmLabel: 'Update existing record', highlightDuplicateFields: true }
     );
   };
 
@@ -4456,6 +4457,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         message={adminConfirmation?.message}
         confirmLabel={adminConfirmation?.confirmLabel || (adminEditingRecord ? 'Save changes' : 'Save')}
         alternateConfirmLabel={adminConfirmation?.alternateConfirmLabel}
+        highlightDuplicateFields={adminConfirmation?.highlightDuplicateFields}
         destructive={adminConfirmation?.destructive}
         busy={adminConfirmationBusy}
         onCancel={() => setAdminConfirmation(null)}
