@@ -79,10 +79,7 @@ import RecordDetailsDialog from './RecordDetailsDialog';
 import { exportTableToExcel } from '../utils/recordExcel';
 import { NUTRI_GRID_THEME } from '../utils/nutriGridTheme';
 import {
-  comparePurokRecords,
-  normalizeEnvironmentalPurokName,
   normalizePurokName,
-  PUROK_FILTER_OPTIONS,
   PUROK_FORM_OPTIONS,
 } from '../utils/purok';
 import { calculateMonthlyTrend } from '../utils/recordTrends';
@@ -90,6 +87,7 @@ import { calculateAgeInYears } from '../utils/childGrowth';
 import {
   findRecordDuplicate,
   getDuplicateRecordName,
+  getRecordCategoryLabel,
   updateDuplicateRecord,
 } from '../utils/recordDuplicates';
 import {
@@ -391,8 +389,6 @@ const PageHeader = ({
   setShowSearchSuggestions,
   setSelectedCategory,
   setActiveView,
-  purokFilter,
-  setPurokFilter,
   excelRecords,
   excelHeaders,
   excelRows,
@@ -422,33 +418,8 @@ const PageHeader = ({
         className="mt-4"
       />
     )}
-    {(setPurokFilter || excelRecords) && (
+    {excelRecords && (
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-        {setPurokFilter && (
-          <label className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-slate-700">
-            <span>Filter:</span>
-            <span className="relative inline-flex">
-              <select
-                value={purokFilter || ''}
-                onChange={(event) => setPurokFilter(event.target.value)}
-                className="min-w-32 appearance-none rounded-xl border border-[#E8DCEF] bg-white py-1.5 pl-2.5 pr-7 text-xs text-slate-800 shadow-sm outline-none focus:border-pink-300 focus:ring-2 focus:ring-pink-100"
-                aria-label="Filter records by Purok"
-              >
-                <option value="">All Puroks</option>
-                <option value="__sorted__">Purok 1-10</option>
-                {PUROK_FILTER_OPTIONS.map((purok) => (
-                  <option key={purok} value={purok}>{purok}</option>
-                ))}
-              </select>
-              <ChevronDown
-                size={14}
-                aria-hidden="true"
-                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-slate-600"
-              />
-            </span>
-          </label>
-        )}
-        {excelRecords && (
         <button
           type="button"
           onClick={() => exportTableToExcel(excelHeaders, excelRows, excelFileName)}
@@ -458,7 +429,6 @@ const PageHeader = ({
           <Download size={14} />
           SAVE AS EXCEL FILE
         </button>
-        )}
       </div>
     )}
   </div>
@@ -488,12 +458,11 @@ const RecordsList = ({
   setPreviewRecord,
 }) => {
   const [filter, setFilter] = useState('all');
-  const [purokFilter, setPurokFilter] = useState('');
   const [selectedRecordIds, setSelectedRecordIds] = useState(() => new Set());
 
   useEffect(() => {
     setSelectedRecordIds(new Set());
-  }, [selectedCategory, recordsRefresh, searchQuery, purokFilter]);
+  }, [selectedCategory, recordsRefresh, searchQuery]);
 
   const selectionKey = (record, index) => String(record.id ?? `row-${index}`);
   const selectedFrom = (records) => records.filter((record, index) =>
@@ -590,11 +559,8 @@ const RecordsList = ({
       storedRecords,
       searchQuery
     );
-    if (purokFilter === '__sorted__') return [...records].sort(comparePurokRecords);
-    return purokFilter
-      ? records.filter((record) => normalizeEnvironmentalPurokName(record.purok) === purokFilter)
-      : records;
-  }, [selectedCategory, recordsRefresh, searchQuery, currentUserId, purokFilter]);
+    return records;
+  }, [selectedCategory, recordsRefresh, searchQuery, currentUserId]);
 
   const mergeWithLegacyFiltered = (canonicalRecords, legacyKey) => {
     let legacy = [];
@@ -606,23 +572,20 @@ const RecordsList = ({
     const filteredLegacy = filterRecordsBySearch(
       legacy.filter((record) => isOwnedByUser(record, currentUserId)),
       searchQuery
-    ).filter((record) =>
-      !purokFilter || purokFilter === '__sorted__' ||
-      normalizeEnvironmentalPurokName(record.purok) === purokFilter
     );
     const ids = new Set(canonicalRecords.map((r) => String(r.id)));
     const merged = [
       ...canonicalRecords,
       ...filteredLegacy.filter((r) => !ids.has(String(r.id))),
     ];
-    return purokFilter === '__sorted__' ? merged.sort(comparePurokRecords) : sortRecordsNewestFirst(merged);
+    return sortRecordsNewestFirst(merged);
   };
 
   const recordsSubtitle = (count, label = 'record(s)') =>
     `${count} ${label}${searchQuery.trim() ? ` matching “${searchQuery.trim()}”` : ''}`;
 
   const emptyRecordsMessage = (defaultMsg) =>
-    searchQuery.trim() || purokFilter ? 'No records match the current filters.' : defaultMsg;
+    searchQuery.trim() ? 'No records match your search.' : defaultMsg;
 
   const RecordActions = ({ record, allowView = true }) => {
     const isViewingRecord = record.id != null &&
@@ -654,23 +617,19 @@ const RecordsList = ({
   const filteredRecords = (filter === 'all'
     ? pendingVisits
     : pendingVisits.filter((visit) => filter === 'pending' ? !visit.synced : visit.synced)
-  ).filter((visit) =>
-    !purokFilter || purokFilter === '__sorted__' ||
-    normalizeEnvironmentalPurokName(visit.purok) === purokFilter
   );
-  const sortedFilteredRecords = purokFilter === '__sorted__'
-    ? [...filteredRecords].sort(comparePurokRecords)
-    : filteredRecords;
+  const sortedFilteredRecords = filteredRecords;
 
   const handleDeleteRecord = (id) => {
+    const record = pendingVisits.find((visit) => String(visit.id) === String(id));
+    const recordName = getDuplicateRecordName('residents', record || {});
     requestConfirmation(
-      'Are you sure you want to delete this record permanently from your phone?',
+      `Are you sure you want to delete ${recordName}? This action cannot be undone.`,
       () => {
-      const deletedRecord = pendingVisits.find((visit) => String(visit.id) === String(id));
-      if (deletedRecord) {
+      if (record) {
         void recordInformationDelete({
           category: 'residents',
-          record: deletedRecord,
+          record,
           actorRole,
         });
       }
@@ -682,7 +641,11 @@ const RecordsList = ({
       );
       setPendingVisits(updated);
       },
-      { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
+      {
+        title: 'DELETE RESIDENT?',
+        confirmLabel: 'DELETE',
+        destructive: true,
+      }
     );
   };
 
@@ -772,8 +735,6 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
-          purokFilter={purokFilter}
-          setPurokFilter={setPurokFilter}
           excelRecords={categoryRecords}
           excelHeaders={residentHeaders}
           excelRows={residentRows}
@@ -874,8 +835,6 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
-          purokFilter={purokFilter}
-          setPurokFilter={setPurokFilter}
           excelRecords={allEnvironmentalRecords}
           excelHeaders={environmentalColumns
             .filter(([key]) => key !== 'actions')
@@ -1022,8 +981,6 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
-          purokFilter={purokFilter}
-          setPurokFilter={setPurokFilter}
           excelRecords={allPwRecords}
           excelHeaders={pwHeader}
           excelRows={pwRows}
@@ -1156,8 +1113,6 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
-          purokFilter={purokFilter}
-          setPurokFilter={setPurokFilter}
           excelRecords={allLwRecords}
           excelHeaders={lwHeader}
           excelRows={lwRows}
@@ -1291,8 +1246,6 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
-          purokFilter={purokFilter}
-          setPurokFilter={setPurokFilter}
           excelRecords={categoryRecords}
           excelHeaders={natalityHeader}
           excelRows={natalityRows}
@@ -1366,6 +1319,7 @@ const RecordsList = ({
     const ifHeader = [
       'Purok',
       'No',
+      'Date of Visit',
       'Nanay',
       'Bata',
       '1 Linggo',
@@ -1382,6 +1336,7 @@ const RecordsList = ({
     const ifRows = allIfRecords.map((record, index) => [
       formatPurokCell(record.purok),
       String(index + 1).padStart(2, '0'),
+      record.visit_date || '—',
       record.mother_name || '—',
       record.child_name || '—',
       record.feeding_1_week || '—',
@@ -1410,8 +1365,6 @@ const RecordsList = ({
           setShowSearchSuggestions={setShowSearchSuggestions}
           setSelectedCategory={setSelectedCategory}
           setActiveView={setActiveView}
-          purokFilter={purokFilter}
-          setPurokFilter={setPurokFilter}
           excelRecords={allIfRecords}
           excelHeaders={ifHeader}
           excelRows={ifRows}
@@ -1421,8 +1374,8 @@ const RecordsList = ({
         <div className="px-3 pt-4">
           <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="overflow-x-auto">
-              <div className="min-w-[1320px]">
-                <div className="grid grid-cols-[repeat(16,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
+              <div className="min-w-[1400px]">
+                <div className="grid grid-cols-[repeat(17,minmax(5rem,1fr))] gap-1 px-3 py-3 bg-pink-50 border-b border-pink-200 text-[10px] font-semibold text-pink-900 uppercase tracking-wide text-center">
                   {selectionHeader(allIfRecords)}
                   {[...ifHeader, 'Actions'].map((label) => (
                     <span key={label} className="truncate">{label}</span>
@@ -1436,11 +1389,12 @@ const RecordsList = ({
                   allIfRecords.map((record, idx) => (
                     <div
                       key={record.id ?? idx}
-                      className={`grid grid-cols-[repeat(16,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center ${selectedRecordIds.has(selectionKey(record, idx)) ? 'bg-violet-50' : ''}`}
+                      className={`grid grid-cols-[repeat(17,minmax(5rem,1fr))] gap-1 px-3 py-2.5 border-b border-gray-100 text-[11px] text-gray-800 items-center text-center ${selectedRecordIds.has(selectionKey(record, idx)) ? 'bg-violet-50' : ''}`}
                     >
                       {selectionCell(record, idx)}
                       <span>{formatPurokCell(record.purok)}</span>
                       <span>{String(idx + 1).padStart(2, '0')}</span>
+                      <span>{record.visit_date || '—'}</span>
                       {updatedName(record.mother_name, record)}
                       <span className="truncate">{record.child_name || '—'}</span>
                       <span>{record.feeding_1_week || '—'}</span>
@@ -1484,8 +1438,6 @@ const RecordsList = ({
         setShowSearchSuggestions={setShowSearchSuggestions}
         setSelectedCategory={setSelectedCategory}
         setActiveView={setActiveView}
-        purokFilter={purokFilter}
-        setPurokFilter={setPurokFilter}
       />
 
       {selectedCategory ? (
@@ -2241,7 +2193,7 @@ const HomeScreen = ({
                 >
                   <Icon size={22} strokeWidth={2.2} aria-hidden="true" />
                 </span>
-                <span className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 px-2 pl-14 text-center min-[520px]:pl-2">
+                <span className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 px-2 text-center">
                   <span className="flex min-h-6 w-full items-center justify-center text-[10px] font-semibold leading-tight text-gray-700 min-[520px]:text-sm">{label}</span>
                   <span className="block w-full text-xl font-bold leading-none text-gray-900 min-[520px]:text-3xl">{value}</span>
                   {subtitle && (
@@ -2872,11 +2824,13 @@ const NutriGridMobile = () => {
     setPendingConfirmation({ message, action, ...options });
   };
 
-  const runConfirmedAction = async () => {
+  const runConfirmedAction = async (actionKey = 'action') => {
     if (!pendingConfirmation) return;
+    const action = pendingConfirmation[actionKey];
+    if (!action) return;
     setConfirmationBusy(true);
     try {
-      await pendingConfirmation.action();
+      await action();
       setPendingConfirmation(null);
     } catch (error) {
       console.error('Confirmed action failed:', error);
@@ -3542,11 +3496,12 @@ const NutriGridMobile = () => {
   };
 
   const handleCategoryFormSubmit = (formData) => {
+    const categoryLabel = getRecordCategoryLabel(formData.category);
     if (editingRecord) {
       requestConfirmation(
-        'Are you sure you want to edit this record?',
+        `Are you sure you want to update this ${categoryLabel}?`,
         () => saveCategoryForm(formData),
-        { confirmLabel: 'Save changes' }
+        { title: 'CONFIRM CHANGES', confirmLabel: 'UPDATE' }
       );
       return;
     }
@@ -3560,9 +3515,9 @@ const NutriGridMobile = () => {
     );
     if (!duplicate) {
       requestConfirmation(
-        `Are you sure you want to save this ${DASHBOARD_CATEGORIES.find(({ id }) => id === formData.category)?.name || 'record'}?`,
+        `Are you sure you want to save this ${categoryLabel}?`,
         () => saveCategoryForm(formData),
-        { confirmLabel: 'Save' }
+        { title: `SAVE NEW ${categoryLabel.toUpperCase()}?`, confirmLabel: 'SAVE' }
       );
       return;
     }
@@ -3573,66 +3528,81 @@ const NutriGridMobile = () => {
       requestConfirmation(
         `This record already exists in ${existingPurok}. Please ask an Admin to update it in that Purok.`,
         () => {},
-        { confirmLabel: 'OK', highlightDuplicateFields: true }
+        {
+          title: 'DUPLICATE RECORD',
+          confirmLabel: 'OK',
+          highlightDuplicateFields: true,
+        }
       );
       return;
     }
 
     const name = getDuplicateRecordName(formData.category, formData);
-    const message = formData.category === 'environmental'
-      ? `This environmental record already exists for ${formData.visit_date}. Do you want to update the existing record?`
-      : `This record already exists. Do you want to update the existing record with the name of: ${name}?`;
-    requestConfirmation(message, saveDuplicateUpdate, { confirmLabel: 'Update existing record', highlightDuplicateFields: true });
+    const message = `Are you sure you want to update this ${categoryLabel}? Matching record: ${name}.`;
+    requestConfirmation(message, saveDuplicateUpdate, {
+      title: 'CONFIRM CHANGES',
+      confirmLabel: 'UPDATE',
+      highlightDuplicateFields: true,
+    });
   };
 
-  const deleteCategoryRecords = (categoryId, records) => requestConfirmation(
-    `Are you sure you want to delete ${records.length === 1 ? 'this record' : `these ${records.length} selected records`}? This removes them from Field Worker and Admin.`,
-    async () => {
-      records.forEach((record) => {
-        const id = record.id;
-        void recordInformationDelete({
-          category: categoryId,
-          record,
-          actorRole: currentUser?.role,
+  const deleteCategoryRecords = (categoryId, records) => {
+    const categoryLabel = getRecordCategoryLabel(categoryId);
+    const singleRecord = records.length === 1;
+    const recordName = singleRecord
+      ? getDuplicateRecordName(categoryId, records[0])
+      : '';
+    return requestConfirmation(
+      singleRecord
+        ? `Are you sure you want to delete ${recordName}? This action cannot be undone.`
+        : `Are you sure you want to delete these ${records.length} ${categoryLabel} records? This action cannot be undone.`,
+      async () => {
+        records.forEach((record) => {
+          const id = record.id;
+          void recordInformationDelete({
+            category: categoryId,
+            record,
+            actorRole: currentUser?.role,
+          });
+          queueRecordDeletion(
+            categoryId,
+            id,
+            Boolean(record.synced || String(record.status || '').toLowerCase() === 'synced'),
+            record.created_by_user_id || currentUser?.id
+          );
+          deleteRecordById(storageKeyForCategory(categoryId), id);
+          removeLegacyRecord(categoryId, id);
+          if (String(editingRecord?.id) === String(id)) {
+            setEditingRecord(null);
+            setShowCategoryForm(false);
+          }
         });
-        queueRecordDeletion(
-          categoryId,
-          id,
-          Boolean(record.synced || String(record.status || '').toLowerCase() === 'synced'),
-          record.created_by_user_id || currentUser?.id
-        );
-        deleteRecordById(storageKeyForCategory(categoryId), id);
-        removeLegacyRecord(categoryId, id);
-        if (String(editingRecord?.id) === String(id)) {
-          setEditingRecord(null);
-          setShowCategoryForm(false);
-        }
-      });
-      setRecordsRefresh((v) => v + 1);
+        setRecordsRefresh((v) => v + 1);
 
-      if (!navigator.onLine) {
-        alert(`${records.length} record(s) deleted on this device. The deletions will sync when you are back online.`);
-        return;
-      }
-
-      try {
-        const result = await syncPendingRecordDeletions();
-        if (result.skipped || result.errors?.length) {
-          alert('Records deleted locally, but some deletions are still waiting to sync. Check your connection and sign-in, then retry.');
+        if (!navigator.onLine) {
+          alert(`${records.length} record(s) deleted on this device. The deletions will sync when you are back online.`);
           return;
         }
-        showSyncNotification('Record deletion synced to the Admin Dashboard and database.');
-      } catch (error) {
-        console.error('Record deletions are saved locally and waiting to sync:', error);
-        alert('Records deleted locally, but the deletions could not sync. Check your connection and try again.');
+
+        try {
+          const result = await syncPendingRecordDeletions();
+          if (result.skipped || result.errors?.length) {
+            alert('Records deleted locally, but some deletions are still waiting to sync. Check your connection and sign-in, then retry.');
+            return;
+          }
+          showSyncNotification('Record deletion synced to the Admin Dashboard and database.');
+        } catch (error) {
+          console.error('Record deletions are saved locally and waiting to sync:', error);
+          alert('Records deleted locally, but the deletions could not sync. Check your connection and try again.');
+        }
+      },
+      {
+        title: `DELETE ${categoryLabel.toUpperCase()}?`,
+        confirmLabel: 'DELETE',
+        destructive: true,
       }
-    },
-    {
-      title: records.length === 1 ? 'Delete record' : 'Delete selected records',
-      confirmLabel: records.length === 1 ? 'Delete' : 'Delete records',
-      destructive: true,
-    }
-  );
+    );
+  };
 
   const deleteCategoryRecord = (categoryId, record) =>
     deleteCategoryRecords(categoryId, [record]);
@@ -3736,7 +3706,7 @@ const NutriGridMobile = () => {
 
     const handleSubmit = async (e) => {
       e.preventDefault();
-      requestConfirmation('Are you sure you want to save this household visit?', async () => {
+      requestConfirmation('Are you sure you want to save this Resident?', async () => {
       setIsSubmitting(true);
 
       const visitData = {
@@ -3789,7 +3759,7 @@ const NutriGridMobile = () => {
       setIsSubmitting(false);
 
       setTimeout(() => setActiveView('home'), 1500);
-      }, { confirmLabel: 'Save' });
+      }, { title: 'SAVE NEW RESIDENT?', confirmLabel: 'SAVE' });
     };
 
     return (
@@ -4207,11 +4177,13 @@ const NutriGridMobile = () => {
           title={pendingConfirmation?.title || 'Confirm changes'}
           message={pendingConfirmation?.message}
           confirmLabel={pendingConfirmation?.confirmLabel || 'Save'}
+          alternateConfirmLabel={pendingConfirmation?.alternateConfirmLabel}
           highlightDuplicateFields={pendingConfirmation?.highlightDuplicateFields}
           destructive={pendingConfirmation?.destructive}
           busy={confirmationBusy}
           onCancel={() => setPendingConfirmation(null)}
           onConfirm={() => void runConfirmedAction()}
+          onAlternateConfirm={() => void runConfirmedAction('alternateAction')}
         />
       </div>
     );

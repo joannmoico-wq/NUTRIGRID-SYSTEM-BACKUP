@@ -89,6 +89,7 @@ import { calculateWhoGrowthStatuses } from '../utils/childGrowth';
 import {
   findRecordDuplicate,
   getDuplicateRecordName,
+  getRecordCategoryLabel,
   updateDuplicateRecord,
 } from '../utils/recordDuplicates';
 import { removeNotesColumns } from '../utils/reportExport';
@@ -2082,11 +2083,23 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         });
       }
     },
-    onDelete: (id) => requestAdminConfirmation(
-      'Are you sure you want to delete this record? This cannot be undone.',
-      () => adminDelete(storageKey, id, dataset.find((row) => row.id === id)?._raw),
-      { title: 'Delete record', confirmLabel: 'Delete', destructive: true }
-    ),
+    onDelete: (id) => {
+      const row = dataset.find((item) => String(item.id) === String(id));
+      const record = row?._raw || getRecords(storageKey).find(
+        (item) => String(item.id) === String(id)
+      ) || row || {};
+      const recordName = getDuplicateRecordName(formCategory, record);
+      const categoryLabel = getRecordCategoryLabel(formCategory);
+      return requestAdminConfirmation(
+        `Are you sure you want to delete ${recordName}? This action cannot be undone.`,
+        () => adminDelete(storageKey, id, row?._raw),
+        {
+          title: `DELETE ${categoryLabel.toUpperCase()}?`,
+          confirmLabel: 'DELETE',
+          destructive: true,
+        }
+      );
+    },
   });
 
   const saveAdminCategoryRecord = async (
@@ -2167,11 +2180,12 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
   };
 
   const handleAdminCategoryFormSubmit = (record) => {
+    const categoryLabel = getRecordCategoryLabel(record.category);
     if (adminEditingRecord) {
       requestAdminConfirmation(
-        'Are you sure you want to edit this record?',
+        `Are you sure you want to update this ${categoryLabel}?`,
         () => saveAdminCategoryRecord(record, adminEditingRecord),
-        { confirmLabel: 'Save changes' }
+        { title: 'CONFIRM CHANGES', confirmLabel: 'UPDATE' }
       );
       return;
     }
@@ -2183,9 +2197,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     );
     if (!duplicate) {
       requestAdminConfirmation(
-        'Are you sure you want to save this record?',
+        `Are you sure you want to save this ${categoryLabel}?`,
         () => saveAdminCategoryRecord(record),
-        { confirmLabel: 'Save' }
+        { title: `SAVE NEW ${categoryLabel.toUpperCase()}?`, confirmLabel: 'SAVE' }
       );
       return;
     }
@@ -2198,8 +2212,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         `There is already an existing record with the same information in another Purok (${existingPurok}). Do you want to add another record or update it in the existing Purok?`,
         () => saveAdminCategoryRecord(record),
         {
-          confirmLabel: 'Add another record',
-          alternateConfirmLabel: 'Update in existing Purok',
+          title: 'DUPLICATE RECORD',
+          confirmLabel: 'ADD ANOTHER RECORD',
+          alternateConfirmLabel: 'UPDATE IN EXISTING PUROK',
           alternateAction: saveDuplicateUpdate,
           highlightDuplicateFields: true,
         }
@@ -2209,9 +2224,9 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
 
     const name = getDuplicateRecordName(record.category, record);
     requestAdminConfirmation(
-      `This record already exists. Do you want to update the existing record with the name of: ${name}?`,
+      `Are you sure you want to update this ${categoryLabel}? Matching record: ${name}.`,
       saveDuplicateUpdate,
-      { confirmLabel: 'Update existing record', highlightDuplicateFields: true }
+      { title: 'CONFIRM CHANGES', confirmLabel: 'UPDATE', highlightDuplicateFields: true }
     );
   };
 
@@ -2498,11 +2513,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
   );
 
   const residentActions = categoryCrud(STORAGE_KEYS.residents, 'residents', households);
-  const environmentalActions = categoryCrud(
-    STORAGE_KEYS.environmental,
-    'environmental',
-    environmentalSanitationData
-  );
   const infantFeedingActions = categoryCrud(
     STORAGE_KEYS.infantfeeding,
     'infantfeeding',
@@ -3107,13 +3117,13 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     <div className="space-y-6">
       <div>
         <p className="text-sm font-semibold mb-3" style={{ color: mutedColor }}>
-          Over View
+          Overview
         </p>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-          <OverviewCard icon={Home} label="Total Households" value={stats.totalHouseholds} accent="#7048E8" tint="#F1EDFF" trend={stats.trends.totalHouseholds} />
-          <OverviewCard icon={Heart} label="Pregnant Women" value={stats.pregnantWomen} accent="#D94E9F" tint="#FFF0F7" trend={stats.trends.pregnantWomen} />
-          <OverviewCard icon={Baby} label="Children (0-5)" value={stats.childrenUnderFive} accent="#35AFC1" tint="#E9FAFC" trend={stats.trends.childrenUnderFive} />
-          <OverviewCard icon={FileText} label="Total Records" value={stats.totalRecords} accent="#E99A45" tint="#FFF5E9" trend={stats.trends.totalRecords} />
+          <OverviewCard icon={Home} label="TOTAL HOUSEHOLDS" value={stats.totalHouseholds} accent="#7048E8" tint="#F1EDFF" trend={stats.trends.totalHouseholds} />
+          <OverviewCard icon={Heart} label="PREGNANT WOMEN" value={stats.pregnantWomen} accent="#D94E9F" tint="#FFF0F7" trend={stats.trends.pregnantWomen} />
+          <OverviewCard icon={Baby} label="CHILDREN (0-5)" value={stats.childrenUnderFive} accent="#35AFC1" tint="#E9FAFC" trend={stats.trends.childrenUnderFive} />
+          <OverviewCard icon={FileText} label="TOTAL RECORDS" value={stats.totalRecords} accent="#E99A45" tint="#FFF5E9" trend={stats.trends.totalRecords} />
         </div>
       </div>
 
@@ -3420,6 +3430,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     [
       { label: 'No.', rowSpan: 2 },
       { label: 'Purok', rowSpan: 2 },
+      { label: 'Date of Visit', rowSpan: 2 },
       { label: 'Pangalan ng Nanay', rowSpan: 2 },
       { label: 'Pangalan ng Bata', rowSpan: 2 },
       { label: 'Paraan ng Pagpapakain o Pagpapainom', colSpan: 9 },
@@ -3674,7 +3685,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
             })}
           />
         }
-        {...environmentalActions}
       />
     );
   };
@@ -3693,7 +3703,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
       }
       purokFilter={adminPurokFilter}
       onPurokFilterChange={setAdminPurokFilter}
-      columnKeys={['no', 'purok', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5', 'month6', 'month7', 'month8', 'notes']}
+      columnKeys={['no', 'purok', 'visitDate', 'motherName', 'childName', 'week1', 'month1', 'month2', 'month3', 'month4', 'month5', 'month6', 'month7', 'month8', 'notes']}
       headRows={infantFeedingHeadRows}
       legend="Code: E — Exclusive Breastfeeding | M — Mixed Feeding | N — Not Breastfeeding"
       minTableWidth={1260}
@@ -3716,10 +3726,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
         <ReportExportActions
           title="Infant Feeding (0-8 mo)"
           fileName="alawihao-infant-feeding"
-          headers={['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', '6 Months', '7 Months', '8 Months', 'Notes']}
+          headers={['No.', 'Purok', 'Date of Visit', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', '6 Months', '7 Months', '8 Months', 'Notes']}
           rows={filteredInfantFeeding.map((row) => [
             row.no,
             row.purok,
+            row.visitDate,
             row.motherName,
             row.childName,
             row.week1,
@@ -3737,10 +3748,11 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
           onExportPdf={(signatures, options = {}) => exportPdfFile({
           fileName: 'alawihao-infant-feeding',
           title: 'Infant Feeding (0-8 mo)',
-          headers: ['No.', 'Purok', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', '6 Months', '7 Months', '8 Months', 'Notes'],
+          headers: ['No.', 'Purok', 'Date of Visit', 'Mother', 'Child', '1 Week', '1 Month', '2 Months', '3 Months', '4 Months', '5 Months', '6 Months', '7 Months', '8 Months', 'Notes'],
           rows: filteredInfantFeeding.map((row) => [
             row.no,
             row.purok,
+            row.visitDate,
             row.motherName,
             row.childName,
             row.week1,
@@ -4120,6 +4132,7 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
     <MonthlyReportTable
       darkMode={darkMode}
       data={autoMonthlyReportData}
+      showRowActions={false}
       searchQuery={searchTerm}
       onBatchChange={updateMonthlyReportBatch}
       selectedBatch={monthlyReportBatch}
@@ -4299,11 +4312,6 @@ const AdminDashboard = ({ onLogout, adminName: profileName, currentUserId }) => 
             setSelectedTaskFilter={setSelectedTaskFilter}
           />
           <div className="min-w-0 flex-1 overflow-y-auto px-3 pb-5 sm:px-5 sm:pb-6 lg:px-8 lg:pb-8">
-            {adminDataStatus === 'loading' && (
-              <p className="mb-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800" role="status">
-                Loading shared BHW records from Supabase...
-              </p>
-            )}
             {(adminDataStatus === 'error' || adminDataStatus === 'offline') && (
               <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
                 {adminDataStatus === 'offline'

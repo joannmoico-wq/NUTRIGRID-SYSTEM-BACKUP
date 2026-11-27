@@ -25,6 +25,8 @@ const FormNotes = ({ title, entries }) => (
   </section>
 );
 
+const withoutDigits = (value) => value.replace(/\d/g, '');
+
 const FormValidationStyles = () => {
   useEffect(() => {
     const addPlaceholders = () => {
@@ -1185,15 +1187,15 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Last Name *</label>
-          <input type="text" required value={formData.last_name} onChange={(e) => updateField('last_name', e.target.value)} className={fieldClass} placeholder="e.g., Santos" />
+          <input type="text" required value={formData.last_name} onChange={(e) => updateField('last_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Santos" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">First Name *</label>
-          <input type="text" required value={formData.first_name} onChange={(e) => updateField('first_name', e.target.value)} className={fieldClass} placeholder="e.g., Maria" />
+          <input type="text" required value={formData.first_name} onChange={(e) => updateField('first_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Maria" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Middle Name</label>
-          <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} className={fieldClass} placeholder="e.g., Reyes" />
+          <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Reyes" />
         </div>
       </div>
 
@@ -1229,7 +1231,7 @@ export const PregnantWomanForm = ({ onSubmit, onCancel, currentLocation, userNam
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Spouse</label>
-        <input type="text" value={formData.spouse_name} onChange={(e) => updateField('spouse_name', e.target.value)} className={fieldClass} placeholder="e.g., Juan Santos" />
+        <input type="text" value={formData.spouse_name} onChange={(e) => updateField('spouse_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Juan Santos" />
       </div>
 
       <div>
@@ -1445,15 +1447,15 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Last Name *</label>
-          <input type="text" required value={formData.last_name} onChange={(e) => updateField('last_name', e.target.value)} className={fieldClass} placeholder="e.g., Santos" />
+          <input type="text" required value={formData.last_name} onChange={(e) => updateField('last_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Santos" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">First Name *</label>
-          <input type="text" required value={formData.first_name} onChange={(e) => updateField('first_name', e.target.value)} className={fieldClass} placeholder="e.g., Maria" />
+          <input type="text" required value={formData.first_name} onChange={(e) => updateField('first_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Maria" />
         </div>
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Middle Name</label>
-          <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} className={fieldClass} placeholder="e.g., Reyes" />
+          <input type="text" value={formData.middle_name} onChange={(e) => updateField('middle_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Reyes" />
         </div>
       </div>
 
@@ -1472,7 +1474,7 @@ export const LactatingWomanForm = ({ onSubmit, onCancel, currentLocation, userNa
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Spouse</label>
-        <input type="text" value={formData.spouse_name} onChange={(e) => updateField('spouse_name', e.target.value)} className={fieldClass} placeholder="e.g., Juan Santos" />
+        <input type="text" value={formData.spouse_name} onChange={(e) => updateField('spouse_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Juan Santos" />
       </div>
 
       <div>
@@ -1709,7 +1711,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
       <div className="space-y-3">
         <div>
           <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Mother *</label>
-          <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} placeholder="e.g., Maria Santos" />
+          <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Maria Santos" />
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="min-w-0">
@@ -1725,7 +1727,7 @@ export const MonthlyNatalityForm = ({ onSubmit, onCancel, currentLocation, userN
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Name of Child *</label>
-        <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', e.target.value)} className={fieldClass} placeholder="e.g., Juan Santos" />
+        <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="e.g., Juan Santos" />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div>
@@ -1906,9 +1908,9 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
   const [formData, setFormData] = useState(() => {
     const initial = {
       purok: '',
+      visit_date: initialData?.visit_date || (initialData ? '' : new Date().toISOString().split('T')[0]),
       mother_name: '',
       child_name: '',
-      visit_date: initialData?.visit_date || (initialData ? '' : new Date().toISOString().split('T')[0]),
       feeding_1_week: '',
       feeding_1_month: '',
       feeding_2_month: '',
@@ -2006,12 +2008,12 @@ export const InfantFeedingForm = ({ onSubmit, onCancel, currentLocation, userNam
       </div>
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Pangalan ng Nanay *</label>
-        <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', e.target.value)} className={fieldClass} placeholder="Hal. Maria Santos" />
+        <input type="text" required value={formData.mother_name} onChange={(e) => updateField('mother_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="Hal. Maria Santos" />
       </div>
 
       <div>
         <label className="block text-sm font-semibold text-gray-700 mb-2">Pangalan ng Bata *</label>
-        <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', e.target.value)} className={fieldClass} placeholder="Hal. Juan Santos" />
+        <input type="text" required value={formData.child_name} onChange={(e) => updateField('child_name', withoutDigits(e.target.value))} className={fieldClass} placeholder="Hal. Juan Santos" />
       </div>
 
       <div className="space-y-3 bg-violet-50 rounded-xl p-4 border border-violet-200">

@@ -298,10 +298,14 @@ export default function AdminTasks({
       task_id: editingTask?.task_id ?? createLocalTaskId(),
       title: form.title.trim(),
       description: form.description.trim() || null,
-      purok: (selectedBhw?.assigned_purok || form.purok).trim() || null,
+      purok: editingTask
+        ? editingTask.purok || null
+        : (selectedBhw?.assigned_purok || form.purok).trim() || null,
       priority: form.priority,
       due_date: form.due_date || null,
-      assigned_to_user_id: form.assigned_to_user_id,
+      assigned_to_user_id: editingTask
+        ? editingTask.assigned_to_user_id
+        : form.assigned_to_user_id,
       status: editingTask?.status || 'Pending',
       completed_at: editingTask?.completed_at || null,
       created_at: editingTask?.created_at || new Date().toISOString(),
@@ -586,14 +590,16 @@ export default function AdminTasks({
                   )}
                 </div>
                 <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => editTask(t)}
-                    className={`grid h-9 w-9 place-items-center rounded-lg transition hover:bg-violet-50 hover:text-violet-600 ${darkMode ? 'text-slate-300' : 'text-slate-400'}`}
-                    aria-label="EDIT TASK"
-                  >
-                    <Edit size={18} />
-                  </button>
+                  {t.status !== 'Completed' && (
+                    <button
+                      type="button"
+                      onClick={() => editTask(t)}
+                      className={`grid h-9 w-9 place-items-center rounded-lg transition hover:bg-violet-50 hover:text-violet-600 ${darkMode ? 'text-slate-300' : 'text-slate-400'}`}
+                      aria-label="EDIT TASK"
+                    >
+                      <Edit size={18} />
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => deleteTask(t)}
@@ -699,8 +705,9 @@ export default function AdminTasks({
               <label className={`block text-xs font-semibold ${mutedTextClass}`}>
                 Assign to approved BHW
                 <select
-                  className={`${inputClass} mt-1`}
+                  className={`${inputClass} mt-1 ${editingTask ? 'cursor-not-allowed opacity-80' : ''}`}
                   required
+                  disabled={Boolean(editingTask)}
                   value={form.assigned_to_user_id}
                   onChange={(event) => {
                     const selectedBhw = bhws.find((bhw) => String(bhw.id) === event.target.value);
@@ -724,12 +731,13 @@ export default function AdminTasks({
                     type="text"
                     readOnly
                     aria-readonly="true"
-                    value={selectedBhw.assigned_purok || form.purok}
+                    value={editingTask ? form.purok : selectedBhw.assigned_purok || form.purok}
                     className={`${inputClass} mt-1 cursor-not-allowed opacity-80`}
                   />
                 ) : (
                   <select
-                    className={`${inputClass} mt-1`}
+                    className={`${inputClass} mt-1 ${editingTask ? 'cursor-not-allowed opacity-80' : ''}`}
+                    disabled={Boolean(editingTask)}
                     value={form.purok}
                     onChange={(e) => setForm({ ...form, purok: e.target.value })}
                   >

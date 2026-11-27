@@ -206,6 +206,14 @@ health records and updates the local record cache when an Admin Dashboard edit
 arrives. If the PWA is offline or Realtime is unavailable, the next successful
 record sync/pull refreshes the local copy.
 
+## Sync log permissions
+
+If Supabase reports `permission denied for table sync_log`, run
+`supabase-fix-sync-log-permissions.sql` in the Supabase SQL Editor for the
+project used by the app. It grants authenticated users permission to insert
+only their own sync log entries. A sync-log write failure is queued for retry
+and no longer reported as a failed health-record upload.
+
 ## Live Admin/PWA record updates
 
 Run `supabase-records-realtime.sql` in the current Supabase project's SQL Editor

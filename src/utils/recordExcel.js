@@ -57,6 +57,8 @@ const IMPORT_COLUMN_ALIASES = {
     'household head': 'household_head',
     members: 'total_members',
     'last visit': 'visit_date',
+    'visit date': 'visit_date',
+    'date of visit': 'visit_date',
     notes: 'notes',
     note: 'notes',
   },

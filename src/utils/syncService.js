@@ -591,6 +591,16 @@ function getPendingSyncLogs() {
   }
 }
 
+function savePendingSyncLogs(logs) {
+  try {
+    localStorage.setItem(PENDING_SYNC_LOGS_KEY, JSON.stringify(logs));
+    return null;
+  } catch (error) {
+    console.error('Could not queue sync logs for retry:', error);
+    return error.message || 'Local sync-log storage is unavailable.';
+  }
+}
+
 export async function flushPendingSyncLogs() {
   if (!navigator.onLine) return { errors: ['offline'] };
   const pending = getPendingSyncLogs();
@@ -603,7 +613,8 @@ export async function flushPendingSyncLogs() {
       errors.push(error.message);
     }
   }
-  localStorage.setItem(PENDING_SYNC_LOGS_KEY, JSON.stringify(remaining));
+  const storageError = savePendingSyncLogs(remaining);
+  if (storageError) errors.push(storageError);
   return { errors };
 }
 
@@ -621,8 +632,15 @@ export async function writeSyncLog(userId, records, synced, failed) {
 
   const pending = getPendingSyncLogs();
   pending.push(log);
-  localStorage.setItem(PENDING_SYNC_LOGS_KEY, JSON.stringify(pending));
-  return error.message;
+  const queueError = savePendingSyncLogs(pending);
+  if (queueError) {
+    console.error('Sync log could not be saved or queued for retry:', error.message, queueError);
+  } else {
+    console.warn('Sync log could not be saved and was queued for retry:', error.message);
+  }
+  return queueError
+    ? `${error.message}; local retry queue failed: ${queueError}`
+    : error.message;
 }
 
 export async function syncPendingRecords({ includeShared = false } = {}) {
@@ -745,7 +763,9 @@ export async function syncPendingRecords({ includeShared = false } = {}) {
     results.synced,
     results.errors.length > 0
   );
-  if (logError) results.errors.push(`Could not write sync log: ${logError}`);
+  if (logError) {
+    console.warn('Record sync completed, but its log is waiting to sync:', logError);
+  }
 
   if (results.errors.length) console.error('Sync errors:', results.errors);
   else localStorage.setItem(FIELD_MAPPING_VERSION_KEY, FIELD_MAPPING_VERSION);
@@ -780,10 +800,10 @@ export async function syncSingleRecord(category, record, { includeShared = false
   const logError = await writeSyncLog(session.user.id, 1, error ? 0 : 1, Boolean(error));
   if (error) {
     updateRecordSyncStatus(storageKey, reconciledRecord.id, 'sync_failed', error, reconciledRecord, session.user.id);
-    return logError ? `${error}; sync log failed: ${logError}` : error;
+    return error;
   }
   updateRecordSyncStatus(storageKey, reconciledRecord.id, 'synced', '', reconciledRecord, session.user.id);
-  if (logError) console.error(`Record synced, but its sync log is queued for retry: ${logError}`);
+  if (logError) console.warn(`Record synced, but its log is queued for retry: ${logError}`);
   return null;
 }
 

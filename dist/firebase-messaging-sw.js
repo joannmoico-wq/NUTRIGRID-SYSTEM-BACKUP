@@ -10,9 +10,22 @@ firebase.initializeApp({
 
 const messaging = firebase.messaging();
 
+self.addEventListener('install', (event) => {
+  event.waitUntil(self.skipWaiting());
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 messaging.onBackgroundMessage((payload) => {
-  const title = payload.notification?.title || 'New task assigned';
-  const body = payload.notification?.body || 'Open NutriGrid to view it.';
+  const isTaskUpdate = payload.data?.notification_type === 'updated';
+  const title = isTaskUpdate
+    ? 'Your task has been updated'
+    : payload.notification?.title || payload.data?.title || 'New task assigned';
+  const body = payload.notification?.body || payload.data?.body || (
+    isTaskUpdate ? 'Open NutriGrid to view the changes.' : 'Open NutriGrid to view it.'
+  );
   self.registration.showNotification(title, {
     body,
     icon: '/icon-192.png',

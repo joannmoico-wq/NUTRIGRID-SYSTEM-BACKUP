@@ -62,6 +62,7 @@ export default function MonthlyReportTable({
   onBatchChange,
   selectedBatch,
   searchQuery = '',
+  showRowActions = true,
 }) {
   const [editing, setEditing] = useState(null);
   const [adding, setAdding] = useState(false);
@@ -248,9 +249,11 @@ export default function MonthlyReportTable({
               <th colSpan={2} className={totalTh}>
                 Total
               </th>
-              <th rowSpan={2} className={`${th} sticky right-0 z-20 min-w-[88px] text-center`}>
-                Actions
-              </th>
+              {showRowActions && (
+                <th rowSpan={2} className={`${th} sticky right-0 z-20 min-w-[88px] text-center`}>
+                  Actions
+                </th>
+              )}
             </tr>
             <tr>
               {['Male', 'Female', 'Male', 'Female', 'Male', 'Female', 'Male', 'Female'].map((label, i) => (
@@ -263,7 +266,7 @@ export default function MonthlyReportTable({
           <tbody>
             {rows.length === 0 && searchQuery.trim() ? (
               <tr>
-                <td colSpan={10} className={`${td} py-6 text-center text-gray-500`}>
+                <td colSpan={showRowActions ? 10 : 9} className={`${td} py-6 text-center text-gray-500`}>
                   No records match your search.
                 </td>
               </tr>
@@ -279,7 +282,7 @@ export default function MonthlyReportTable({
                     <td colSpan={8} className={`${td} text-center text-gray-400`}>
                       —
                     </td>
-                    <td className={`${td} sticky right-0 bg-white dark:bg-[#26263B]`} />
+                    {showRowActions && <td className={`${td} sticky right-0 bg-white dark:bg-[#26263B]`} />}
                   </>
                 ) : (
                   <>
@@ -299,13 +302,15 @@ export default function MonthlyReportTable({
                         </td>
                       ))
                     )}
-                    <td className={`${td} sticky right-0 bg-white text-center dark:bg-[#26263B]`}>
-                      <ReportRowActions
-                        darkMode={darkMode}
-                        onEdit={() => openEdit(row)}
-                        onDelete={() => onDeleteLine?.(row)}
-                      />
-                    </td>
+                    {showRowActions && (
+                      <td className={`${td} sticky right-0 bg-white text-center dark:bg-[#26263B]`}>
+                        <ReportRowActions
+                          darkMode={darkMode}
+                          onEdit={() => openEdit(row)}
+                          onDelete={() => onDeleteLine?.(row)}
+                        />
+                      </td>
+                    )}
                   </>
                 )}
               </tr>

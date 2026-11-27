@@ -58,6 +58,15 @@ const FIELD_ALIASES = [
   ['visit_date', 'visitDate', 'lastVisit'],
 ];
 
+const RECORD_CATEGORY_LABELS = {
+  residents: 'Resident',
+  environmental: 'Environmental Sanitation',
+  infantfeeding: 'Infant Feeding',
+  lactatingwoman: 'Lactating Woman',
+  pregnantwoman: 'Pregnant Woman',
+  monthlynatal: 'Monthly Natality',
+};
+
 function normalizedText(value) {
   return String(value ?? '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
 }
@@ -185,6 +194,10 @@ export function getDuplicateRecordName(category, record) {
     return [child, mother ? `(mother: ${mother})` : ''].filter(Boolean).join(' ') || 'this child';
   }
   return 'this record';
+}
+
+export function getRecordCategoryLabel(category) {
+  return RECORD_CATEGORY_LABELS[category] || 'Record';
 }
 
 export function updateDuplicateRecord(
