@@ -2179,28 +2179,28 @@ const HomeScreen = ({
             ].map(({ label, value, subtitle, icon: Icon, color, background, trend }) => (
               <div
                 key={label}
-                className="relative flex min-h-[112px] min-w-0 items-center justify-center overflow-hidden rounded-xl border border-black/5 px-2 pb-5 pt-2 shadow-sm"
+                className="relative flex min-h-[124px] min-w-0 items-center overflow-hidden rounded-2xl border border-black/5 px-2 py-2 shadow-sm min-[520px]:min-h-[156px] min-[520px]:px-3"
                 style={{ background: `linear-gradient(135deg, #FFFFFF 0%, ${background} 100%)` }}
               >
                 <span
-                  className="absolute -bottom-5 -right-2 h-10 w-14 rotate-[-18deg] rounded-full opacity-20"
+                  className="absolute bottom-0 right-0 h-12 w-20 rounded-tl-[2.5rem] opacity-20 min-[520px]:h-16 min-[520px]:w-24"
                   style={{ backgroundColor: color }}
                   aria-hidden="true"
                 />
                 <span
-                  className="absolute left-3 top-1/2 z-20 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full text-white shadow-sm"
+                  className="absolute left-2.5 top-1/2 z-20 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full text-white shadow-sm min-[520px]:left-3 min-[520px]:h-14 min-[520px]:w-14"
                   style={{ background: `linear-gradient(145deg, ${color} 0%, ${color}CC 100%)` }}
                 >
-                  <Icon size={22} strokeWidth={2.2} aria-hidden="true" />
+                  <Icon size={22} strokeWidth={2.2} className="min-[520px]:h-8 min-[520px]:w-8" aria-hidden="true" />
                 </span>
-                <span className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 px-2 text-center">
-                  <span className="flex min-h-6 w-full items-center justify-center text-[10px] font-semibold leading-tight text-gray-700 min-[520px]:text-sm">{label}</span>
+                <span className="relative z-10 ml-10 flex min-w-0 flex-1 flex-col items-center justify-center gap-2 px-1 pb-3 text-center min-[520px]:ml-14">
+                  <span className="flex min-h-6 w-full items-center justify-center text-[10px] font-semibold leading-tight text-gray-700 min-[520px]:text-base">{label}</span>
                   <span className="block w-full text-xl font-bold leading-none text-gray-900 min-[520px]:text-3xl">{value}</span>
                   {subtitle && (
                     <span className="block text-[9px] leading-tight text-gray-500">{subtitle}</span>
                   )}
                 </span>
-                <span title={trend.description} aria-label={trend.description} className={`absolute bottom-1 right-2 z-10 inline-flex items-center gap-0.5 text-[8px] font-bold ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                <span title={trend.description} aria-label={trend.description} className={`absolute bottom-1 right-2 z-10 inline-flex items-center gap-0.5 text-[8px] font-bold min-[520px]:bottom-2 min-[520px]:right-3 min-[520px]:text-sm ${trend.isPositive ? 'text-green-600' : 'text-red-600'}`}>
                   {trend.isPositive
                     ? <TrendingUp size={10} strokeWidth={2.5} aria-hidden="true" />
                     : <TrendingDown size={10} strokeWidth={2.5} aria-hidden="true" />}
